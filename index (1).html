@@ -1,0 +1,59 @@
+<!DOCTYPE html><html lang="en"><head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>oOska4 Games</title>
+    <link rel="icon" href="https://play-lh.googleusercontent.com/SeCmiNJ_7JCiqhTgChS6ItuMIy8qofZCER3fd4OU8s9YSKEI_5aki61v82Ia8RvaY4Y=s188-rw">
+    <link rel="stylesheet" href="styles.css">
+    <meta property="og:title" content="oOska4 Games">
+    <meta property="og:description" content="Creating immersive and engaging gaming experiences. Check out our latest release Flappy Plane!">
+    <meta property="og:image" content="https://play-lh.googleusercontent.com/SeCmiNJ_7JCiqhTgChS6ItuMIy8qofZCER3fd4OU8s9YSKEI_5aki61v82Ia8RvaY4Y=s188-rw">
+    <meta property="og:url" content="https://yourdomain.com/">
+</head>
+<body>
+    <header>
+        <h1>oOska4 Games</h1>
+        <button class="theme-toggle" onclick="toggleTheme()">Dark Mode</button>
+    </header>
+
+    <main class="container">
+        <p class="intro">Creating immersive and engaging gaming experiences.</p>
+
+        <nav class="tabs">
+            <button class="tablink" onclick="openTab(event, 'about')">About Us</button>
+            <button class="tablink" onclick="openTab(event, 'latest-release')">Latest Release</button>
+            <button class="tablink" onclick="openTab(event, 'upcoming-games')">Upcoming Games</button>
+            <button class="tablink" onclick="openTab(event, 'contact')">Contact Us</button>
+        </nav>
+
+        <section id="about" class="tabcontent">
+            <h3>About Us</h3>
+            <p>oOska4 Games is dedicated to developing top-notch games that captivate players worldwide. Our mission is to push the boundaries of gaming and deliver unforgettable adventures.</p>
+        </section>
+
+        <section id="latest-release" class="tabcontent">
+            <h3>Latest Release</h3>
+            <p>Our latest game, <strong>Flappy Plane</strong>, is now available on Google Play!</p>
+            <a href="https://play.google.com/store/apps/details?id=com.ooska4.flappybird" class="btn btn-playstore" target="_blank">Download Flappy Plane</a>
+            <p>Don't have an Android? Use an emulator to play!</p>
+        </section>
+
+        <section id="upcoming-games" class="tabcontent">
+            <h3>Upcoming Games</h3>
+            <ul>
+                <li>Flappy Plane 3D - A thrilling 3D version of the Flappy Plane game.</li>
+            </ul>
+        </section>
+
+        <section id="contact" class="tabcontent">
+            <h3>Contact Us</h3>
+            <a href="https://discord.gg/BEwNe6U3hT" class="btn btn-discord" target="_blank">Join our Discord</a>
+        </section>
+    </main>
+
+    <footer>
+        <button class="privacy-policy-btn" onclick="window.location.href='policy.html';">Privacy Policy</button>
+    </footer>
+
+    <script src="script.js"></script>
+
+</body></html>
