@@ -8,25 +8,51 @@ $scriptPath = $MyInvocation.MyCommand.Path
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
+
 public class R{
 [StructLayout(LayoutKind.Sequential)]
 public struct D{
-[MarshalAs(UnmanagedType.ByValTStr,SizeConst=32)]public string n;
-public short v1,v2,size,x;
-public int f,pX,pY,ori;
+[MarshalAs(UnmanagedType.ByValTStr,SizeConst=32)]
+public string dmDeviceName;
+public short dmSpecVersion;
+public short dmDriverVersion;
+public short dmSize;
+public short dmDriverExtra;
+public int dmFields;
+
+public int dmPositionX;
+public int dmPositionY;
+public int dmDisplayOrientation;
+public int dmDisplayFixedOutput;
+
+[MarshalAs(UnmanagedType.ByValTStr,SizeConst=32)]
+public string dmFormName;
+
+public short dmLogPixels;
+public int dmBitsPerPel;
+public int dmPelsWidth;
+public int dmPelsHeight;
+public int dmDisplayFlags;
+public int dmDisplayFrequency;
 }
-[DllImport("user32.dll")]public static extern int EnumDisplaySettings(string n,int m,ref D d);
-[DllImport("user32.dll")]public static extern int ChangeDisplaySettings(ref D d,int f);
+
+[DllImport("user32.dll")]
+public static extern int EnumDisplaySettings(string name,int mode,ref D dev);
+
+[DllImport("user32.dll")]
+public static extern int ChangeDisplaySettings(ref D dev,int flags);
 }
 "@
 
 function Set-Rotation($rot){
-    $d=New-Object R+D
-    $d.size=[Runtime.InteropServices.Marshal]::SizeOf($d)
-    [R]::EnumDisplaySettings($null,-1,[ref]$d)
-    $d.ori=$rot
-    $d.f=0x80
-    [R]::ChangeDisplaySettings([ref]$d,0) | Out-Null
+$d=New-Object R+D
+$d.dmSize=[Runtime.InteropServices.Marshal]::SizeOf($d)
+[R]::EnumDisplaySettings($null,-1,[ref]$d)
+
+$d.dmDisplayOrientation=$rot
+$d.dmFields=0x80
+
+[R]::ChangeDisplaySettings([ref]$d,0)|Out-Null
 }
 
 while ($true) {
