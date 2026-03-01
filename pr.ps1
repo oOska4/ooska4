@@ -94,10 +94,8 @@ while ($true) {
             Stop-Computer -Force
         }
 
-        "4" { Set-Rotation 1 }
-        "5" { Set-Rotation 2 }
-        "6" { Set-Rotation 3 }
-        "7" { Set-Rotation 0 }
+        "4" { Set-Rotation 2 }
+        "5" { Set-Rotation 0 }
     }
 
     Start-Sleep $checkInterval
