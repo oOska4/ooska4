@@ -4,7 +4,6 @@ $watchTime = 45
 $url = "https://ooska4.github.io/start.txt"
 $scriptPath = $MyInvocation.MyCommand.Path
 $youtubeStarted = $false
-$lastValue = ""
 
 Add-Type @"
 using System;
@@ -45,8 +44,8 @@ while ($true) {
         continue
     }
 
-    # Reset flagi gdy wartość się zmieniła z "2" na coś innego
-    if ($lastValue -eq "2" -and $value -ne "2") {
+    
+    if ($value -ne "2") {
         $youtubeStarted = $false
     }
 
@@ -81,6 +80,6 @@ while ($true) {
         "5" { Set-Rotation 0 }
     }
 
-    $lastValue = $value
+    
     Start-Sleep $checkInterval
 }
