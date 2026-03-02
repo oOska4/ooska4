@@ -62,11 +62,15 @@ while ($true) {
         }
         "2" {
             if (-not $youtubeStarted) {
+                Write-Host "Uruchamiam YT, youtubeStarted=$youtubeStarted"
                 Start-Process $youtubeUrl
                 Start-Sleep 5
                 Add-Type -AssemblyName System.Windows.Forms
                 [System.Windows.Forms.SendKeys]::SendWait("f")
                 $youtubeStarted = $true
+                Write-Host "Po ustawieniu: youtubeStarted=$youtubeStarted"
+            } else {
+                Write-Host "YT już uruchomiony, pomijam"
             }
         }
         "3" {
