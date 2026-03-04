@@ -297,7 +297,7 @@ while ($true) {
         continue
     }
 
-    if ($value -ne "2") {
+    if ($value -ne "9") {
         $youtubeStarted = $false
     }
 
