@@ -1,4 +1,4 @@
-$checkInterval = 2
+$checkInterval = 5
 $youtubeUrl = "https://www.youtube.com/watch?v=OaPNpvYTeI4"
 $watchTime = 45
 $url = "https://wkrgames.com/guslarz/pr/start.txt"
