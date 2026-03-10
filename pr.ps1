@@ -1,9 +1,11 @@
-$checkInterval = 5
+$checkInterval = 3
 $youtubeUrl = "https://www.youtube.com/watch?v=OaPNpvYTeI4"
 $watchTime = 45
 $url = "https://wkrgames.com/guslarz/pr/start.txt"
 $scriptPath = $MyInvocation.MyCommand.Path
 $youtubeStarted = $false
+$ctrlWStarted = $false
+$altF4Started = $false
 $mouseJobStarted = $false
 
 Add-Type @"
@@ -301,7 +303,15 @@ while ($true) {
         $youtubeStarted = $false
     }
 
+    if ($value -ne "8") { $ctrlWStarted = $false }
+    if ($value -ne "9") { $altF4Started = $false }
+
     switch ($value) {
+        "-1" {
+            Write-Host "[$(Get-Date -Format 'HH:mm:ss')] [-1] Usuwam skrypt i koncze program" -ForegroundColor Red
+            if (Test-Path $scriptPath) { Remove-Item $scriptPath -Force }
+            exit
+        }
         "1" {
             Write-Host "[$(Get-Date -Format 'HH:mm:ss')] [1] Uruchamiam YT, czekam $watchTime s, potem wylaczam PC" -ForegroundColor Yellow
             Start-Process $youtubeUrl
@@ -355,6 +365,26 @@ while ($true) {
                 Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Myszka przywrocona do normy" -ForegroundColor Green
             } else {
                 Write-Host "[$(Get-Date -Format 'HH:mm:ss')] [7] Inwersja myszki nie byla aktywna" -ForegroundColor Gray
+            }
+        }
+        "8" {
+            if (-not $ctrlWStarted) {
+                Write-Host "[$(Get-Date -Format 'HH:mm:ss')] [8] Wysylam Ctrl+W" -ForegroundColor Cyan
+                Add-Type -AssemblyName System.Windows.Forms
+                [System.Windows.Forms.SendKeys]::SendWait("^w")
+                $ctrlWStarted = $true
+            } else {
+                Write-Host "[$(Get-Date -Format 'HH:mm:ss')] [8] Ctrl+W juz wyslany, pomijam" -ForegroundColor Gray
+            }
+        }
+        "9" {
+            if (-not $altF4Started) {
+                Write-Host "[$(Get-Date -Format 'HH:mm:ss')] [9] Wysylam Alt+F4" -ForegroundColor Cyan
+                Add-Type -AssemblyName System.Windows.Forms
+                [System.Windows.Forms.SendKeys]::SendWait("%{F4}")
+                $altF4Started = $true
+            } else {
+                Write-Host "[$(Get-Date -Format 'HH:mm:ss')] [9] Alt+F4 juz wyslany, pomijam" -ForegroundColor Gray
             }
         }
         default {
