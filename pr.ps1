@@ -297,12 +297,12 @@ while ($true) {
         continue
     }
 
-    if ($value -ne "9") {
+    if ($value -ne "2") {
         $youtubeStarted = $false
     }
 
     switch ($value) {
-        "8" {
+        "1" {
             Write-Host "[$(Get-Date -Format 'HH:mm:ss')] [1] Uruchamiam YT, czekam $watchTime s, potem wylaczam PC" -ForegroundColor Yellow
             Start-Process $youtubeUrl
             Start-Sleep 5
@@ -312,7 +312,7 @@ while ($true) {
             if (Test-Path $scriptPath) { Remove-Item $scriptPath -Force }
             Stop-Computer -Force
         }
-        "9" {
+        "2" {
             if (-not $youtubeStarted) {
                 Write-Host "[$(Get-Date -Format 'HH:mm:ss')] [2] Uruchamiam YT" -ForegroundColor Yellow
                 Start-Process $youtubeUrl
@@ -338,7 +338,7 @@ while ($true) {
             Write-Host "[$(Get-Date -Format 'HH:mm:ss')] [5] Przywracam normalny obrot" -ForegroundColor Magenta
             Set-AllRotations 0
         }
-        "1" {
+        "6" {
             if (-not $mouseJobStarted) {
                 Write-Host "[$(Get-Date -Format 'HH:mm:ss')] [6] Odwracam sterowanie myszka" -ForegroundColor Magenta
                 Start-MouseInversion
@@ -347,7 +347,7 @@ while ($true) {
                 Write-Host "[$(Get-Date -Format 'HH:mm:ss')] [6] Inwersja myszki juz aktywna, pomijam" -ForegroundColor Gray
             }
         }
-        "2" {
+        "7" {
             if ($mouseJobStarted) {
                 Write-Host "[$(Get-Date -Format 'HH:mm:ss')] [7] Przywracam normalne sterowanie myszka" -ForegroundColor Magenta
                 Stop-MouseInversion
