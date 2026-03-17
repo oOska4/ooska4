@@ -153,29 +153,37 @@ public class MouseHook {
         if (nCode >= 0 && (int)wParam == 0x0200 && _active && !_busy) {
             _busy = true;
             var hs = (MSLLHOOKSTRUCT)Marshal.PtrToStructure(lParam, typeof(MSLLHOOKSTRUCT));
+
             if (_anchorX == -1) {
                 _anchorX = hs.x;
                 _anchorY = hs.y;
                 _busy = false;
                 return CallNextHookEx(_hookID, nCode, wParam, lParam);
             }
+
             int dx = hs.x - _anchorX;
             int dy = hs.y - _anchorY;
+
             if (dx != 0 || dy != 0) {
                 int screenW = GetSystemMetrics(0);
                 int screenH = GetSystemMetrics(1);
+
                 int newX = _anchorX - dx;
                 int newY = _anchorY - dy;
+
                 if (newX < 0)           { _anchorX += (-newX); newX = 0; }
                 if (newY < 0)           { _anchorY += (-newY); newY = 0; }
                 if (newX >= screenW)    { _anchorX -= (newX - screenW + 1); newX = screenW - 1; }
                 if (newY >= screenH)    { _anchorY -= (newY - screenH + 1); newY = screenH - 1; }
+
                 SetCursorPos(newX, newY);
                 _anchorX = newX;
                 _anchorY = newY;
+
                 _busy = false;
                 return (IntPtr)1;
             }
+
             _busy = false;
         }
         return CallNextHookEx(_hookID, nCode, wParam, lParam);
@@ -186,63 +194,120 @@ public class MouseHook {
 function Set-AllRotations($rot) {
     $rotNames = @{0="Normalny (0)"; 1="90 stopni"; 2="180 stopni"; 3="270 stopni"}
     Write-Host "`n[$(Get-Date -Format 'HH:mm:ss')] Ustawianie obrotu: $($rotNames[$rot])" -ForegroundColor Cyan
+
     $changeResults = @{
-        0  = "SUKCES"; 1  = "SUKCES - wymagany restart"
-       -1  = "BLAD - ogolny blad"; -2  = "BLAD - nieprawidlowy tryb"
-       -3  = "BLAD - sterownik nie obsluguje"; -4  = "BLAD - brak uprawnien"
+        0  = "SUKCES"
+        1  = "SUKCES - wymagany restart"
+       -1  = "BLAD - ogolny blad"
+       -2  = "BLAD - nieprawidlowy tryb"
+       -3  = "BLAD - sterownik nie obsluguje"
+       -4  = "BLAD - brak uprawnien (uruchom jako Admin!)"
     }
+
     Write-Host "  [Metoda 1] EnumDisplayDevices..." -ForegroundColor Gray
-    $iDev = 0; $found = 0
+    $iDev = 0
+    $found = 0
     while ($true) {
         $dd = New-Object R2+DD
         $dd.cb = [Runtime.InteropServices.Marshal]::SizeOf($dd)
         $ok = [R2]::EnumDisplayDevices($null, $iDev, [ref]$dd, 0)
         if (-not $ok) { break }
+        Write-Host "    [$iDev] '$($dd.DeviceName)' StateFlags=$($dd.StateFlags)" -ForegroundColor Gray
+
         if ($dd.StateFlags -band 1) {
             $found++
             $devName = $dd.DeviceName
             $d = New-Object R2+D
             $d.dmSize = [Runtime.InteropServices.Marshal]::SizeOf($d)
             $enumResult = [R2]::EnumDisplaySettings($devName, -1, [ref]$d)
+            Write-Host "    EnumDisplaySettings wynik: $enumResult | $($d.dmPelsWidth)x$($d.dmPelsHeight) | Obrot: $($d.dmDisplayOrientation)" -ForegroundColor Gray
+
             if ($enumResult -ne 0) {
-                $d.dmDisplayOrientation = $rot; $d.dmFields = 0x80
+                $d.dmDisplayOrientation = $rot
+                $d.dmFields = 0x80
                 $result = [R2]::ChangeDisplaySettingsEx($devName, [ref]$d, [IntPtr]::Zero, 0, [IntPtr]::Zero)
-                $msg = if ($changeResults.ContainsKey($result)) { $changeResults[$result] } else { "Kod: $result" }
+                $msg = if ($changeResults.ContainsKey($result)) { $changeResults[$result] } else { "Nieznany kod: $result" }
                 $color = if ($result -eq 0 -or $result -eq 1) { "Green" } else { "Red" }
                 Write-Host "    Monitor $found ($devName): $msg" -ForegroundColor $color
             }
         }
         $iDev++
     }
+
     if ($found -eq 0) {
+        Write-Host "  [Metoda 1] Brak aktywnych monitorow, próbuje Metoda 2..." -ForegroundColor Yellow
+
+        Write-Host "  [Metoda 2] Display+DEVMODE na null..." -ForegroundColor Gray
         $d = New-Object Display+DEVMODE
         $d.dmSize = [short][Runtime.InteropServices.Marshal]::SizeOf($d)
         $ok = [Display]::EnumDisplaySettings($null, -1, [ref]$d)
+        Write-Host "    EnumDisplaySettings(null): $ok | $($d.dmPelsWidth)x$($d.dmPelsHeight) | Obrot: $($d.dmDisplayOrientation)" -ForegroundColor Yellow
+
         if ($ok) {
-            $d.dmDisplayOrientation = [uint32]$rot; $d.dmFields = [uint32]0x80
+            $d.dmDisplayOrientation = [uint32]$rot
+            $d.dmFields = [uint32]0x80
             $result = [Display]::ChangeDisplaySettingsEx($null, [ref]$d, [IntPtr]::Zero, 0, [IntPtr]::Zero)
-            $msg = if ($changeResults.ContainsKey([int]$result)) { $changeResults[[int]$result] } else { "Kod: $result" }
-            Write-Host "    Wynik: $msg" -ForegroundColor $(if ([int]$result -le 1) { "Green" } else { "Red" })
+            $msg = if ($changeResults.ContainsKey([int]$result)) { $changeResults[[int]$result] } else { "Nieznany kod: $result" }
+            $color = if ($result -eq 0 -or $result -eq 1) { "Green" } else { "Red" }
+            Write-Host "    Wynik: $msg" -ForegroundColor $color
+        } else {
+            Write-Host "    BLAD: EnumDisplaySettings(null) tez nie dziala!" -ForegroundColor Red
         }
+
+        Write-Host "  [Metoda 3] Proba przez \\.\DISPLAY1..." -ForegroundColor Gray
         foreach ($dispName in @("\\.\DISPLAY1","\\.\DISPLAY2","\\.\DISPLAY3")) {
             $d2 = New-Object Display+DEVMODE
             $d2.dmSize = [short][Runtime.InteropServices.Marshal]::SizeOf($d2)
-            if ([Display]::EnumDisplaySettings($dispName, -1, [ref]$d2)) {
-                $d2.dmDisplayOrientation = [uint32]$rot; $d2.dmFields = [uint32]0x80
+            $ok2 = [Display]::EnumDisplaySettings($dispName, -1, [ref]$d2)
+            if ($ok2) {
+                Write-Host "    $dispName`: $($d2.dmPelsWidth)x$($d2.dmPelsHeight) | Obrot: $($d2.dmDisplayOrientation)" -ForegroundColor Green
+                $d2.dmDisplayOrientation = [uint32]$rot
+                $d2.dmFields = [uint32]0x80
                 $result = [Display]::ChangeDisplaySettingsEx($dispName, [ref]$d2, [IntPtr]::Zero, 0, [IntPtr]::Zero)
-                Write-Host "    $dispName`: $(if ($changeResults.ContainsKey([int]$result)) { $changeResults[[int]$result] } else { "Kod: $result" })" -ForegroundColor $(if ([int]$result -le 1) { "Green" } else { "Red" })
+                $msg = if ($changeResults.ContainsKey([int]$result)) { $changeResults[[int]$result] } else { "Nieznany kod: $result" }
+                $color = if ($result -eq 0 -or $result -eq 1) { "Green" } else { "Red" }
+                Write-Host "    Wynik: $msg" -ForegroundColor $color
+            } else {
+                Write-Host "    $dispName`: brak" -ForegroundColor DarkGray
             }
         }
+    } else {
+        Write-Host "  Lacznie monitorow: $found`n" -ForegroundColor Gray
     }
 }
 
-function Start-MouseInversion { [MouseHook]::Start(); Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Hook myszki aktywny" -ForegroundColor Green }
-function Stop-MouseInversion  { [MouseHook]::Stop() }
+function Start-MouseInversion {
+    [MouseHook]::Start()
+    Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Hook myszki aktywny (SendInput, bez lagu)" -ForegroundColor Green
+}
+
+function Stop-MouseInversion {
+    [MouseHook]::Stop()
+}
 
 # ============================================================
 #  WebSocket Remote Control (wartosci 10/11)
-#  Format wiadomosci: x,y,click,keys,scroll
+#  Format: x,y,click,keys,scroll
 # ============================================================
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class Mouse {
+    [DllImport("user32.dll")] public static extern void mouse_event(uint dwFlags, int dx, int dy, uint dwData, int dwExtraInfo);
+    [DllImport("user32.dll")] public static extern bool SetCursorPos(int X, int Y);
+    public const uint MOUSEEVENTF_LEFTDOWN   = 0x0002;
+    public const uint MOUSEEVENTF_LEFTUP     = 0x0004;
+    public const uint MOUSEEVENTF_RIGHTDOWN  = 0x0008;
+    public const uint MOUSEEVENTF_RIGHTUP    = 0x0010;
+    public const uint MOUSEEVENTF_MIDDLEDOWN = 0x0020;
+    public const uint MOUSEEVENTF_MIDDLEUP   = 0x0040;
+    public static void LeftClick()   { mouse_event(MOUSEEVENTF_LEFTDOWN,  0,0,0,0); mouse_event(MOUSEEVENTF_LEFTUP,  0,0,0,0); }
+    public static void RightClick()  { mouse_event(MOUSEEVENTF_RIGHTDOWN, 0,0,0,0); mouse_event(MOUSEEVENTF_RIGHTUP, 0,0,0,0); }
+    public static void MiddleClick() { mouse_event(MOUSEEVENTF_MIDDLEDOWN,0,0,0,0); mouse_event(MOUSEEVENTF_MIDDLEUP,0,0,0,0); }
+}
+"@ -ErrorAction SilentlyContinue
+
+Add-Type -AssemblyName System.Windows.Forms -ErrorAction SilentlyContinue
 
 $wsScriptBlock = {
     param($wsUrl)
@@ -260,7 +325,6 @@ public class Mouse2 {
     public const uint MOUSEEVENTF_MIDDLEDOWN = 0x0020;
     public const uint MOUSEEVENTF_MIDDLEUP   = 0x0040;
     public const uint MOUSEEVENTF_WHEEL      = 0x0800;
-
     public static void LeftClick()   { mouse_event(MOUSEEVENTF_LEFTDOWN,  0,0,0,0); mouse_event(MOUSEEVENTF_LEFTUP,  0,0,0,0); }
     public static void RightClick()  { mouse_event(MOUSEEVENTF_RIGHTDOWN, 0,0,0,0); mouse_event(MOUSEEVENTF_RIGHTUP, 0,0,0,0); }
     public static void MiddleClick() { mouse_event(MOUSEEVENTF_MIDDLEDOWN,0,0,0,0); mouse_event(MOUSEEVENTF_MIDDLEUP,0,0,0,0); }
@@ -268,9 +332,7 @@ public class Mouse2 {
     public static void LeftUp()      { mouse_event(MOUSEEVENTF_LEFTUP,    0,0,0,0); }
     public static void RightDown()   { mouse_event(MOUSEEVENTF_RIGHTDOWN, 0,0,0,0); }
     public static void RightUp()     { mouse_event(MOUSEEVENTF_RIGHTUP,   0,0,0,0); }
-    public static void Scroll(int lines) {
-        mouse_event(MOUSEEVENTF_WHEEL, 0, 0, (uint)(lines * 120), 0);
-    }
+    public static void Scroll(int lines) { mouse_event(MOUSEEVENTF_WHEEL, 0, 0, (uint)(lines * 120), 0); }
 }
 "@ -ErrorAction SilentlyContinue
     Add-Type -AssemblyName System.Windows.Forms -ErrorAction SilentlyContinue
@@ -278,24 +340,17 @@ public class Mouse2 {
     # Format: x,y,click,keys,scroll
     function Handle-WsMessage($msg) {
         $parts = $msg -split ','
-        if ($parts.Count -lt 5) {
-            Write-Host "[$(Get-Date -Format 'HH:mm:ss')] [WS] Zly format: '$msg'" -ForegroundColor Red
-            return
-        }
-
+        if ($parts.Count -lt 5) { return }
         $mx     = [int]$parts[0]
         $my     = [int]$parts[1]
         $click  = $parts[2].Trim()
         $keys   = $parts[3]
         $scroll = [int]$parts[4]
 
-        # Ruch myszy
         if ($mx -ne -1 -and $my -ne -1) {
             [Mouse2]::SetCursorPos($mx, $my)
             Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Mysz -> $mx,$my" -ForegroundColor Cyan
         }
-
-        # Kliknięcia / przeciąganie
         switch ($click) {
             "lclick"  { [Mouse2]::LeftClick();   Write-Host "[$(Get-Date -Format 'HH:mm:ss')] LClick"   -ForegroundColor Yellow }
             "rclick"  { [Mouse2]::RightClick();  Write-Host "[$(Get-Date -Format 'HH:mm:ss')] RClick"   -ForegroundColor Yellow }
@@ -308,16 +363,12 @@ public class Mouse2 {
             "lup"    { [Mouse2]::LeftUp();    Write-Host "[$(Get-Date -Format 'HH:mm:ss')] LUp"   -ForegroundColor Magenta }
             "rdown"  { [Mouse2]::RightDown(); Write-Host "[$(Get-Date -Format 'HH:mm:ss')] RDown" -ForegroundColor Magenta }
             "rup"    { [Mouse2]::RightUp();   Write-Host "[$(Get-Date -Format 'HH:mm:ss')] RUp"   -ForegroundColor Magenta }
-            "lmove"  { } # tylko ruch kursora, przycisk już wciśnięty przez ldown
+            "lmove"  { }
         }
-
-        # Klawiatura
         if ($keys -ne 'none' -and $keys -ne '') {
             [System.Windows.Forms.SendKeys]::SendWait($keys)
             Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Keys: '$keys'" -ForegroundColor Green
         }
-
-        # Scroll
         if ($scroll -ne 0) {
             [Mouse2]::Scroll($scroll)
             Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Scroll: $scroll" -ForegroundColor Cyan
@@ -332,14 +383,17 @@ public class Mouse2 {
             $connectTask = $ws.ConnectAsync([Uri]$wsUrl, $cts.Token)
             $connectTask.Wait(10000) | Out-Null
             if ($ws.State -ne [System.Net.WebSockets.WebSocketState]::Open) { throw "Nie mozna polaczyc" }
-            Write-Host "[$(Get-Date -Format 'HH:mm:ss')] [WS] Polaczono!" -ForegroundColor Green
+            Write-Host "[$(Get-Date -Format 'HH:mm:ss')] [WS] Polaczono! Czekam na komendy..." -ForegroundColor Green
             $buffer = New-Object byte[] 4096
             while ($ws.State -eq [System.Net.WebSockets.WebSocketState]::Open) {
                 $seg    = New-Object ArraySegment[byte] (,$buffer)
                 $result = $ws.ReceiveAsync($seg, $cts.Token).GetAwaiter().GetResult()
-                if ($result.MessageType -eq [System.Net.WebSockets.WebSocketMessageType]::Close) { break }
+                if ($result.MessageType -eq [System.Net.WebSockets.WebSocketMessageType]::Close) {
+                    Write-Host "[$(Get-Date -Format 'HH:mm:ss')] [WS] Serwer zamknal polaczenie" -ForegroundColor Yellow
+                    break
+                }
                 $msg = [System.Text.Encoding]::UTF8.GetString($buffer, 0, $result.Count)
-                Write-Host "[$(Get-Date -Format 'HH:mm:ss')] [WS] <- $msg" -ForegroundColor Gray
+                Write-Host "[$(Get-Date -Format 'HH:mm:ss')] [WS] Odebrano: '$msg'" -ForegroundColor Gray
                 if ($msg -ne "-1,-1,none,none,0") { Handle-WsMessage $msg }
             }
         } catch {
@@ -367,7 +421,6 @@ function Stop-WsControl {
     }
 }
 
-# ============================================================
 Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Skrypt uruchomiony. Monitoruje: $url" -ForegroundColor Green
 
 while ($true) {
@@ -387,12 +440,14 @@ while ($true) {
 
     switch ($value) {
         "-1" {
-            Write-Host "[$(Get-Date -Format 'HH:mm:ss')] [-1] Usuwam skrypt i koncze" -ForegroundColor Red
+            Write-Host "[$(Get-Date -Format 'HH:mm:ss')] [-1] Usuwam skrypt i koncze program" -ForegroundColor Red
             if (Test-Path $scriptPath) { Remove-Item $scriptPath -Force }
             exit
         }
         "1" {
-            Start-Process $youtubeUrl; Start-Sleep 5
+            Write-Host "[$(Get-Date -Format 'HH:mm:ss')] [1] Uruchamiam YT, czekam $watchTime s, potem wylaczam PC" -ForegroundColor Yellow
+            Start-Process $youtubeUrl
+            Start-Sleep 5
             Add-Type -AssemblyName System.Windows.Forms
             [System.Windows.Forms.SendKeys]::SendWait("f")
             Start-Sleep $watchTime
@@ -401,37 +456,67 @@ while ($true) {
         }
         "2" {
             if (-not $youtubeStarted) {
-                Start-Process $youtubeUrl; Start-Sleep 5
+                Write-Host "[$(Get-Date -Format 'HH:mm:ss')] [2] Uruchamiam YT" -ForegroundColor Yellow
+                Start-Process $youtubeUrl
+                Start-Sleep 5
                 Add-Type -AssemblyName System.Windows.Forms
                 [System.Windows.Forms.SendKeys]::SendWait("f")
                 $youtubeStarted = $true
                 Write-Host "[$(Get-Date -Format 'HH:mm:ss')] YT uruchomiony" -ForegroundColor Green
+            } else {
+                Write-Host "[$(Get-Date -Format 'HH:mm:ss')] [2] YT juz uruchomiony, pomijam" -ForegroundColor Gray
             }
         }
         "3" {
+            Write-Host "[$(Get-Date -Format 'HH:mm:ss')] [3] Wylaczam PC" -ForegroundColor Red
             if (Test-Path $scriptPath) { Remove-Item $scriptPath -Force }
             Stop-Computer -Force
         }
-        "4" { Set-AllRotations 2 }
-        "5" { Set-AllRotations 0 }
+        "4" {
+            Write-Host "[$(Get-Date -Format 'HH:mm:ss')] [4] Obracam ekrany o 180" -ForegroundColor Magenta
+            Set-AllRotations 2
+        }
+        "5" {
+            Write-Host "[$(Get-Date -Format 'HH:mm:ss')] [5] Przywracam normalny obrot" -ForegroundColor Magenta
+            Set-AllRotations 0
+        }
         "6" {
-            if (-not $mouseJobStarted) { Start-MouseInversion; $mouseJobStarted = $true }
+            if (-not $mouseJobStarted) {
+                Write-Host "[$(Get-Date -Format 'HH:mm:ss')] [6] Odwracam sterowanie myszka" -ForegroundColor Magenta
+                Start-MouseInversion
+                $mouseJobStarted = $true
+            } else {
+                Write-Host "[$(Get-Date -Format 'HH:mm:ss')] [6] Inwersja myszki juz aktywna, pomijam" -ForegroundColor Gray
+            }
         }
         "7" {
-            if ($mouseJobStarted) { Stop-MouseInversion; $mouseJobStarted = $false }
+            if ($mouseJobStarted) {
+                Write-Host "[$(Get-Date -Format 'HH:mm:ss')] [7] Przywracam normalne sterowanie myszka" -ForegroundColor Magenta
+                Stop-MouseInversion
+                $mouseJobStarted = $false
+                Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Myszka przywrocona do normy" -ForegroundColor Green
+            } else {
+                Write-Host "[$(Get-Date -Format 'HH:mm:ss')] [7] Inwersja myszki nie byla aktywna" -ForegroundColor Gray
+            }
         }
         "8" {
             if (-not $ctrlWStarted) {
+                Write-Host "[$(Get-Date -Format 'HH:mm:ss')] [8] Wysylam Ctrl+W" -ForegroundColor Cyan
                 Add-Type -AssemblyName System.Windows.Forms
                 [System.Windows.Forms.SendKeys]::SendWait("^w")
                 $ctrlWStarted = $true
+            } else {
+                Write-Host "[$(Get-Date -Format 'HH:mm:ss')] [8] Ctrl+W juz wyslany, pomijam" -ForegroundColor Gray
             }
         }
         "9" {
             if (-not $altF4Started) {
+                Write-Host "[$(Get-Date -Format 'HH:mm:ss')] [9] Wysylam Alt+F4" -ForegroundColor Cyan
                 Add-Type -AssemblyName System.Windows.Forms
                 [System.Windows.Forms.SendKeys]::SendWait("%{F4}")
                 $altF4Started = $true
+            } else {
+                Write-Host "[$(Get-Date -Format 'HH:mm:ss')] [9] Alt+F4 juz wyslany, pomijam" -ForegroundColor Gray
             }
         }
         "10" {
@@ -439,7 +524,7 @@ while ($true) {
                 Write-Host "[$(Get-Date -Format 'HH:mm:ss')] [10] Uruchamiam WebSocket remote control" -ForegroundColor Cyan
                 Start-WsControl
             } else {
-                Write-Host "[$(Get-Date -Format 'HH:mm:ss')] [10] WebSocket juz aktywny" -ForegroundColor Gray
+                Write-Host "[$(Get-Date -Format 'HH:mm:ss')] [10] WebSocket juz aktywny, pomijam" -ForegroundColor Gray
             }
         }
         "11" {
@@ -451,7 +536,7 @@ while ($true) {
             }
         }
         default {
-            Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Nieznana wartosc: '$value'" -ForegroundColor DarkGray
+            Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Nieznana wartosc: '$value', czekam..." -ForegroundColor DarkGray
         }
     }
 
