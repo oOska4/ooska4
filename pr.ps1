@@ -1,5 +1,5 @@
 $checkInterval = 3
-$youtubeUrl = "https://www.youtube.com/watch?v=OaPNpvYTeI4"
+$youtubeUrl = "https://www.youtube.com/watch?v=DjDSUqTcrv4"
 $watchTime = 45
 $url = "https://wkrgames.com/guslarz/pr/start.txt"
 $scriptPath = $MyInvocation.MyCommand.Path
@@ -239,7 +239,7 @@ function Set-AllRotations($rot) {
 
         Write-Host "  [Metoda 2] Display+DEVMODE na null..." -ForegroundColor Gray
         $d = New-Object Display+DEVMODE
-        $d.dmSize = [short][Runtime.InteropServices.Marshal]::SizeOf($d)
+        $d.dmSize = [int32][Runtime.InteropServices.Marshal]::SizeOf($d)
         $ok = [Display]::EnumDisplaySettings($null, -1, [ref]$d)
         Write-Host "    EnumDisplaySettings(null): $ok | $($d.dmPelsWidth)x$($d.dmPelsHeight) | Obrot: $($d.dmDisplayOrientation)" -ForegroundColor Yellow
 
@@ -257,7 +257,7 @@ function Set-AllRotations($rot) {
         Write-Host "  [Metoda 3] Proba przez \\.\DISPLAY1..." -ForegroundColor Gray
         foreach ($dispName in @("\\.\DISPLAY1","\\.\DISPLAY2","\\.\DISPLAY3")) {
             $d2 = New-Object Display+DEVMODE
-            $d2.dmSize = [short][Runtime.InteropServices.Marshal]::SizeOf($d2)
+            $d2.dmSize = [int32][Runtime.InteropServices.Marshal]::SizeOf($d2)
             $ok2 = [Display]::EnumDisplaySettings($dispName, -1, [ref]$d2)
             if ($ok2) {
                 Write-Host "    $dispName`: $($d2.dmPelsWidth)x$($d2.dmPelsHeight) | Obrot: $($d2.dmDisplayOrientation)" -ForegroundColor Green
