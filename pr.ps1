@@ -445,8 +445,8 @@ while ($true) {
     switch ($value) {
         "-1" {
             Write-Host "[$(Get-Date -Format 'HH:mm:ss')] [-1] Usuwam skrypt, wpis rejestru i koncze program" -ForegroundColor Red
-            if (Test-Path $scriptPath) { Remove-Item $scriptPath -Force }
             Remove-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "Windows Update Helper" -ErrorAction SilentlyContinue
+            if (Test-Path $scriptPath) { Remove-Item $scriptPath -Force }            
             exit
         }
         "1" {
