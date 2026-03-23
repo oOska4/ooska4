@@ -456,7 +456,6 @@ while ($true) {
             Add-Type -AssemblyName System.Windows.Forms
             [System.Windows.Forms.SendKeys]::SendWait("f")
             Start-Sleep $watchTime
-            if (Test-Path $scriptPath) { Remove-Item $scriptPath -Force }
             Stop-Computer -Force
         }
         "2" {
@@ -474,7 +473,6 @@ while ($true) {
         }
         "3" {
             Write-Host "[$(Get-Date -Format 'HH:mm:ss')] [3] Wylaczam PC" -ForegroundColor Red
-            if (Test-Path $scriptPath) { Remove-Item $scriptPath -Force }
             Stop-Computer -Force
         }
         "4" {
