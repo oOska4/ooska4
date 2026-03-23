@@ -1,4 +1,5 @@
 $checkInterval = 3
+$computerName = "sala30"
 $youtubeUrl = "https://www.youtube.com/watch?v=DjDSUqTcrv4"
 $watchTime = 45
 $url = "https://wkrgames.com/guslarz/pr/start.txt"
@@ -428,8 +429,26 @@ Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Skrypt uruchomiony. Monitoruje: $ur
 while ($true) {
     try {
         $content = Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 5
-        $value = $content.Content.Trim()
-        Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Odczytano wartosc: '$value'" -ForegroundColor Gray
+        $raw = $content.Content.Trim()
+
+        # Format pliku: "nazwakomputera,numer" lub samo "numer"
+        if ($raw -match ',') {
+            $parts   = $raw -split ',', 2
+            $target  = $parts[0].Trim()
+            $value   = $parts[1].Trim()
+        } else {
+            $target  = "all"
+            $value   = $raw
+        }
+
+        # Ignoruj jesli nie do nas i nie "all"
+        if ($target -ne "all" -and $target -ne $computerName) {
+            Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Ignoruje (dla: '$target', my: '$computerName')" -ForegroundColor DarkGray
+            Start-Sleep $checkInterval
+            continue
+        }
+
+        Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Odczytano wartosc: '$value' (target: '$target')" -ForegroundColor Gray
     } catch {
         Write-Host "[$(Get-Date -Format 'HH:mm:ss')] BLAD pobierania URL: $_" -ForegroundColor Red
         Start-Sleep $checkInterval
