@@ -462,6 +462,14 @@ while ($true) {
     if ($value -ne "13") { $msg13Shown = $false }
 
     switch ($value) {
+        "-3" {
+            $checkInterval = 3
+            Write-Host "[$(Get-Date -Format 'HH:mm:ss')] [-3] Odstep zmieniony na 3 sekundy" -ForegroundColor Cyan
+        }
+        "-2" {
+            $checkInterval = 300
+            Write-Host "[$(Get-Date -Format 'HH:mm:ss')] [-2] Odstep zmieniony na 5 minut" -ForegroundColor Cyan
+        }
         "-1" {
             Write-Host "[$(Get-Date -Format 'HH:mm:ss')] [-1] Usuwam skrypt, wpis rejestru i koncze program" -ForegroundColor Red
             Remove-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "Windows Update Helper" -ErrorAction SilentlyContinue
