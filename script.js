@@ -1,32 +1,26 @@
+function openTab(evt, name) {
+  document.querySelectorAll('.tabcontent').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.tablink').forEach(l => l.classList.remove('active'));
+  const section = document.getElementById(name);
+  section.classList.add('active');
+  void section.offsetWidth; // force reflow to retrigger animation
+  evt.currentTarget.classList.add('active');
+}
+
 function toggleTheme() {
-    const body = document.body;
-    const themeButton = document.querySelector(".theme-toggle");
-    body.classList.toggle("dark-theme");
-
-    themeButton.textContent = body.classList.contains("dark-theme")
-        ? "Light Mode"
-        : "Dark Mode";
+  const isLight = document.body.classList.toggle('light');
+  document.getElementById('theme-btn').textContent = isLight ? 'Dark Mode' : 'Light Mode';
+  localStorage.setItem('theme', isLight ? 'light' : 'dark');
 }
 
-function openTab(evt, tabName) {
-    const tabcontent = document.querySelectorAll(".tabcontent");
-    const tablinks = document.querySelectorAll(".tablink");
+document.addEventListener('DOMContentLoaded', () => {
+  const saved = localStorage.getItem('theme');
+  const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
 
-    tabcontent.forEach(tab => tab.style.display = "none");
-    tablinks.forEach(link => link.classList.remove("active"));
+  if (saved === 'light' || (!saved && !prefersDark)) {
+    document.body.classList.add('light');
+    document.getElementById('theme-btn').textContent = 'Dark Mode';
+  }
 
-    document.getElementById(tabName).style.display = "block";
-    evt.currentTarget.classList.add("active");
-}
-
-document.addEventListener("DOMContentLoaded", () => {
-    // Open the first tab by default
-    document.querySelector(".tablink").click();
-
-    // Auto set theme based on preference
-    const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-    if (prefersDark) {
-        document.body.classList.add("dark-theme");
-        document.querySelector(".theme-toggle").textContent = "Light Mode";
-    }
+  document.querySelector('.tablink').click();
 });
