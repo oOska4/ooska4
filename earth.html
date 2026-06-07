@@ -50,6 +50,7 @@ body { background: #000; overflow: hidden; font-family: monospace; }
 <div id="ctrl">LPM drag = obracaj · scroll = zoom · PPM drag = przesuwaj</div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
+// ─── STAŁE ────────────────────────────────────────────────────────────────────
 const GRID = 160;
 const EXAG = 3.0;
 const Y_SCALE = 0.4;
@@ -57,502 +58,50 @@ const BUILDING_HEIGHT_SCALE = 1.4;
 const TILE_LOAD_SIZE = 7;
 const TILE_LOAD_RADIUS = Math.floor(TILE_LOAD_SIZE / 2);
 const WASD_SPEED = 30;
-const QE_SPEED = 30;
+const QE_SPEED   = 30;
 
-// BUDYNKI – poprawiona konfiguracja
-const BUILDINGS_ENABLED = true;
-const BUILDINGS_MIN_ZOOM = 8;         // było 9 – teraz pojawią się wcześniej
-const BUILDINGS_HIDE_ZOOM = 8;        // poniżej tego zooma chowamy budynki
-const BUILDINGS_TILE_ZOOM = 15;
-const BUILDINGS_TILE_RADIUS = 2;      // było 1 – większy zasięg renderowania
-const BUILDINGS_CACHE_LIMIT = 8;      // większy cache
+const BUILDINGS_ENABLED        = true;
+const BUILDINGS_TILE_ZOOM      = 15;
+const BUILDINGS_TILE_RADIUS    = 2;
+const BUILDINGS_MAX_DIST       = 80000;
+const BUILDINGS_MIN_DIST       = 500;
 const BUILDINGS_REQUEST_TIMEOUT_MS = 12000;
-const BUILDINGS_DATA_KEY = '59fcc2e8';
+const BUILDINGS_DATA_KEY       = '59fcc2e8';
 const BUILDINGS_TILE_SUBDOMAINS = ['a', 'b', 'c'];
-const BUILDINGS_TILE_URLS = BUILDINGS_TILE_SUBDOMAINS.map(s =>
+const BUILDINGS_TILE_URLS      = BUILDINGS_TILE_SUBDOMAINS.map(s =>
   `https://${s}.data.osmbuildings.org/0.2/${BUILDINGS_DATA_KEY}/tile/{z}/{x}/{y}.json`
 );
-const BUILDINGS_DEBUG = false;
+// Ile batoched-tile-meshów trzymamy w scenie
+const BUILDINGS_SCENE_TILE_LIMIT = 6;
+// Ile wpisów w cache danych trzymamy
+const BUILDINGS_DATA_CACHE_LIMIT = 14;
+const BUILDINGS_DEBUG = true;
 
-// POPRAWKA: dystans kamery przy którym pokazujemy budynki
-// Wcześniej zoom był liczony z camDist i przy zbliżeniu zoom rósł powyżej limitu
-// Teraz BUILDINGS_MIN_ZOOM jest niższe i nie chowamy przy dużym zoom
-const BUILDINGS_MAX_DIST = 80000;   // maksymalny dystans kamery do pokazywania budynków
-const BUILDINGS_MIN_DIST = 500;     // minimalny – nie chowaj przy bardzo bliskim podejściu
+// SAT zoom do próbkowania koloru budynków
+const COLOR_SAT_ZOOM = 16;
 
-const SAT = (z,x,y) =>
-  `https://tile.openstreetmap.org/${z}/${x}/${y}.png`;
-
+// ─── URL helpers ──────────────────────────────────────────────────────────────
+const SAT  = (z,x,y) => `https://tile.openstreetmap.org/${z}/${x}/${y}.png`;
 const SAT2 = (z,x,y) =>
   `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${y}/${x}`;
-
-const DEM = (z,x,y) =>
+const DEM  = (z,x,y) =>
   `https://s3.amazonaws.com/elevation-tiles-prod/terrarium/${z}/${x}/${y}.png`;
 
-function deg2tile(lat,lon,z){
-  const n=1<<z, lr=lat*Math.PI/180;
+// ─── GEO helpers ──────────────────────────────────────────────────────────────
+function deg2tile(lat, lon, z) {
+  const n = 1 << z, lr = lat * Math.PI / 180;
   return [
-    Math.floor((lon+180)/360*n),
-    Math.floor((1-Math.log(Math.tan(lr)+1/Math.cos(lr))/Math.PI)/2*n)
+    Math.floor((lon + 180) / 360 * n),
+    Math.floor((1 - Math.log(Math.tan(lr) + 1 / Math.cos(lr)) / Math.PI) / 2 * n)
   ];
 }
-function tile2deg(tx,ty,z){
-  const n=1<<z;
+function tile2deg(tx, ty, z) {
+  const n = 1 << z;
   return [
-    Math.atan(Math.sinh(Math.PI*(1-2*ty/n)))*180/Math.PI,
-    tx/n*360-180
+    Math.atan(Math.sinh(Math.PI * (1 - 2 * ty / n))) * 180 / Math.PI,
+    tx / n * 360 - 180
   ];
 }
-
-const renderer = new THREE.WebGLRenderer({canvas:document.getElementById('c'),antialias:true});
-renderer.setSize(innerWidth,innerHeight);
-renderer.setPixelRatio(Math.min(devicePixelRatio,1.5));
-
-const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x87CEEB);
-scene.fog = new THREE.Fog(0x87CEEB, 500000, 1500000);
-
-const camera = new THREE.PerspectiveCamera(55, innerWidth/innerHeight, 100, 3000000);
-
-const sun = new THREE.DirectionalLight(0xffffff, 1.1);
-sun.position.set(100000, 150000, 80000);
-scene.add(sun);
-scene.add(new THREE.AmbientLight(0xc8e0ff, 0.6));
-
-let camLat=47.03012, camLon=10.74558, camDist=120000, camPitch=45, camYaw=0, camY=0;
-const refLat=47.03012, refLon=10.74558;
-
-const tileMeshes = new Map();
-const loadingTiles = new Set();
-let activeTileZoom = null;
-let tileLoadController = new AbortController();
-let tileLoadEpoch = 0;
-
-// POPRAWKA SEAMS: cache DEM tile'ów z szerszym zasięgiem
-const demDataCache = new Map();
-const DEM_DATA_CACHE_LIMIT = 64;
-
-// buildingMeshes: tileKey → Map(id → Mesh) — pogrupowane per tile, łatwy LRU evict
-const buildingMeshes = new Map();
-// LRU kolejność kluczy tile'ów aktualnie w scenie
-const buildingTileOrder = [];
-// Ile tile'ów budynków trzymamy jednocześnie w scenie
-const BUILDINGS_SCENE_TILE_LIMIT = 6;
-// Ile tile'ów trzymamy w cache danych (JSON) bez renderowania
-const BUILDINGS_DATA_CACHE_LIMIT = 14;
-
-let lastBuildingTileKey = null;
-let buildingLoadController = new AbortController();
-let buildingLoadEpoch = 0;
-// buildingCache: tileKey → Array<item> (same dane, nie meshe)
-const buildingCache = new Map();
-const satColorCache = new Map();
-const SAT_COLOR_CACHE_LIMIT = 128;
-const SAT_TEXTURE_CACHE_LIMIT = 32;
-const satTextureCache = new Map();
-const satTextureKeys = new WeakMap();
-
-function getCachedSatTexture(cacheKey) {
-  if (!satTextureCache.has(cacheKey)) return null;
-  const tex = satTextureCache.get(cacheKey);
-  satTextureCache.delete(cacheKey);
-  satTextureCache.set(cacheKey, tex);
-  return tex;
-}
-
-function putCachedSatTexture(cacheKey, tex) {
-  satTextureKeys.set(tex, cacheKey);
-  satTextureCache.set(cacheKey, tex);
-  while (satTextureCache.size > SAT_TEXTURE_CACHE_LIMIT) {
-    const oldestKey = satTextureCache.keys().next().value;
-    satTextureCache.delete(oldestKey);
-  }
-}
-
-async function loadImageBlob(url, signal) {
-  try {
-    const r = await fetch(url, {mode:'cors', signal});
-    if (!r.ok) return null;
-    const blob = await r.blob();
-    return URL.createObjectURL(blob);
-  } catch(e) {
-    return null;
-  }
-}
-
-async function decodeDEM(url, signal) {
-  return new Promise(async res => {
-    let src = await loadImageBlob(url, signal);
-    if (!src) { res(null); return; }
-    const img = new Image();
-    img.onload = () => {
-      try {
-        const cv = document.createElement('canvas');
-        cv.width = cv.height = 256;
-        const ctx = cv.getContext('2d');
-        ctx.drawImage(img, 0, 0);
-        const px = ctx.getImageData(0,0,256,256).data;
-        const h = new Float32Array(256*256);
-        for(let i=0;i<256*256;i++)
-          h[i] = px[i*4]*256 + px[i*4+1] + px[i*4+2]/256 - 32768;
-        URL.revokeObjectURL(src);
-        res(h);
-      } catch(e) { res(null); }
-    };
-    img.onerror = () => { URL.revokeObjectURL(src); res(null); }
-    img.src = src;
-  });
-}
-
-async function loadSatTex(z, x, y, signal) {
-  const cacheKey = `${z}_${x}_${y}`;
-  const cached = getCachedSatTexture(cacheKey);
-  if (cached) return cached;
-
-  for (const url of [SAT2(z,x,y), SAT(z,x,y)]) {
-    const src = await loadImageBlob(url, signal);
-    if (!src) continue;
-    return new Promise(res => {
-      const loader = new THREE.TextureLoader();
-      loader.load(src, t => {
-        t.minFilter = THREE.LinearMipmapLinearFilter;
-        t.magFilter = THREE.LinearFilter;
-        t.anisotropy = renderer.capabilities.getMaxAnisotropy();
-        t.generateMipmaps = true;
-        URL.revokeObjectURL(src);
-        putCachedSatTexture(cacheKey, t);
-        res(t);
-      }, undefined, () => { URL.revokeObjectURL(src); res(null); });
-    });
-  }
-  return null;
-}
-
-// POPRAWKA SEAMS: pobieramy i cachujemy DEM tile'y
-async function loadDemData(z, x, y, signal) {
-  const key = `${z}_${x}_${y}`;
-  if (demDataCache.has(key)) return demDataCache.get(key);
-  const dem = await decodeDEM(DEM(z, x, y), signal);
-  if (dem) {
-    demDataCache.set(key, dem);
-    while (demDataCache.size > DEM_DATA_CACHE_LIMIT) {
-      demDataCache.delete(demDataCache.keys().next().value);
-    }
-  }
-  return dem;
-}
-
-// POPRAWKA SEAMS: próbkuj wysokość z właściwego tile'a dla danej współrzędnej UV
-// na granicy tile'a (u=1 lub v=1) odwołujemy się do sąsiedniego tile'a
-function sampleHeightWithNeighbors(u, v, mainDem, rightDem, bottomDem, cornerDem) {
-  // Epsilon granicy – pixel na krawędzi
-  const EPS = 1.0 / 256;
-
-  let dem = mainDem;
-  let su = u, sv = v;
-
-  // Prawy sąsiad (u >= 1)
-  if (u >= 1.0 - EPS && rightDem) {
-    dem = rightDem;
-    su = u - 1.0;
-    sv = v;
-    if (sv >= 1.0 - EPS && cornerDem) {
-      dem = cornerDem;
-      su = u - 1.0;
-      sv = v - 1.0;
-    }
-  // Dolny sąsiad (v >= 1)
-  } else if (v >= 1.0 - EPS && bottomDem) {
-    dem = bottomDem;
-    su = u;
-    sv = v - 1.0;
-  }
-
-  if (!dem) return 0;
-  const px = Math.max(0, Math.min(255, Math.floor(Math.max(0, su) * 255)));
-  const py = Math.max(0, Math.min(255, Math.floor(Math.max(0, sv) * 255)));
-  return Math.max(0, dem[py * 256 + px]) * EXAG;
-}
-
-function getCachedSatColor(cacheKey) {
-  if (!satColorCache.has(cacheKey)) return null;
-  const color = satColorCache.get(cacheKey);
-  satColorCache.delete(cacheKey);
-  satColorCache.set(cacheKey, color);
-  return color;
-}
-
-function putCachedSatColor(cacheKey, color) {
-  satColorCache.set(cacheKey, color);
-  while (satColorCache.size > SAT_COLOR_CACHE_LIMIT) {
-    satColorCache.delete(satColorCache.keys().next().value);
-  }
-}
-
-function sampleTextureColor(texture, px, py) {
-  const image = texture && texture.image;
-  if (!image) return null;
-  const w = image.naturalWidth || image.width || 0;
-  const h = image.naturalHeight || image.height || 0;
-  if (!w || !h) return null;
-
-  const canvas = document.createElement('canvas');
-  canvas.width = w;
-  canvas.height = h;
-  const ctx = canvas.getContext('2d', { willReadFrequently: true });
-  try {
-    ctx.drawImage(image, 0, 0, w, h);
-    const x0 = Math.max(0, Math.min(w - 1, px));
-    const y0 = Math.max(0, Math.min(h - 1, py));
-    const radius = 1;
-    let r = 0, g = 0, b = 0, n = 0;
-    for (let oy = -radius; oy <= radius; oy++) {
-      for (let ox = -radius; ox <= radius; ox++) {
-        const x = Math.max(0, Math.min(w - 1, x0 + ox));
-        const y = Math.max(0, Math.min(h - 1, y0 + oy));
-        const d = ctx.getImageData(x, y, 1, 1).data;
-        r += d[0]; g += d[1]; b += d[2]; n++;
-      }
-    }
-    if (!n) return null;
-    return (Math.round(r/n) << 16) | (Math.round(g/n) << 8) | Math.round(b/n);
-  } catch (e) { return null; }
-}
-
-async function groundColorAt(lat, lon, zoom, signal) {
-  const n = 1 << zoom;
-  const latRad = lat * Math.PI / 180;
-  const xf = (lon + 180) / 360 * n;
-  const yf = (1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2 * n;
-  const tx = Math.floor(xf);
-  const ty = Math.floor(yf);
-  const px = Math.max(0, Math.min(255, Math.floor((xf - tx) * 255)));
-  const py = Math.max(0, Math.min(255, Math.floor((yf - ty) * 255)));
-  const cacheKey = `${zoom}_${tx}_${ty}_${px}_${py}`;
-  const cached = getCachedSatColor(cacheKey);
-  if (cached != null) return cached;
-
-  const tex = await loadSatTex(zoom, tx, ty, signal);
-  if (!tex) return 0xb7b0a6;
-  const color = sampleTextureColor(tex, px, py) ?? 0xb7b0a6;
-  putCachedSatColor(cacheKey, color);
-  return color;
-}
-
-function polygonCenter(points) {
-  let lat = 0, lon = 0;
-  for (const p of points) { lat += p[0]; lon += p[1]; }
-  return [lat / points.length, lon / points.length];
-}
-
-async function terrainHeightAt(lat, lon, zoom, signal) {
-  const n = 1 << zoom;
-  const latRad = lat * Math.PI / 180;
-  const xf = (lon + 180) / 360 * n;
-  const yf = (1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2 * n;
-  const tx = Math.floor(xf);
-  const ty = Math.floor(yf);
-  const dem = await loadDemData(zoom, tx, ty, signal);
-  if (!dem) return 0;
-  const px = Math.max(0, Math.min(255, Math.floor((xf - tx) * 255)));
-  const py = Math.max(0, Math.min(255, Math.floor((yf - ty) * 255)));
-  return Math.max(0, dem[py * 256 + px]) * EXAG * Y_SCALE;
-}
-
-async function fetchJsonWithTimeout(url, signal, timeoutMs = BUILDINGS_REQUEST_TIMEOUT_MS) {
-  const timeoutController = new AbortController();
-  const onAbort = () => timeoutController.abort();
-  const timeoutId = setTimeout(() => timeoutController.abort(), timeoutMs);
-  signal.addEventListener('abort', onAbort, { once: true });
-  try {
-    const r = await fetch(url, { method: 'GET', mode: 'cors', signal: timeoutController.signal });
-    if (!r.ok) return null;
-    return await r.json();
-  } catch (e) {
-    if (signal.aborted) throw e;
-    if (e && e.name === 'AbortError') return null;
-    throw e;
-  } finally {
-    clearTimeout(timeoutId);
-    signal.removeEventListener('abort', onAbort);
-  }
-}
-
-// Usuń meshe jednego tile'a ze sceny i zwolnij pamięć GPU
-function evictBuildingTile(tileKey) {
-  const tileMap = buildingMeshes.get(tileKey);
-  if (!tileMap) return;
-  for (const mesh of tileMap.values()) {
-    scene.remove(mesh);
-    mesh.geometry.dispose();
-    mesh.material.dispose();
-  }
-  buildingMeshes.delete(tileKey);
-  const idx = buildingTileOrder.indexOf(tileKey);
-  if (idx !== -1) buildingTileOrder.splice(idx, 1);
-}
-
-// Usuń wszystkie tile'y budynków ze sceny
-function clearAllBuildingTiles() {
-  for (const tileKey of [...buildingMeshes.keys()]) evictBuildingTile(tileKey);
-}
-
-// Dodaj tile do sceny; jeśli jest za dużo – wyrzuć najstarszy (LRU)
-function registerBuildingTile(tileKey, meshMap) {
-  // Jeśli już istnieje, odśwież kolejność LRU
-  if (buildingMeshes.has(tileKey)) evictBuildingTile(tileKey);
-
-  buildingMeshes.set(tileKey, meshMap);
-  buildingTileOrder.push(tileKey);
-
-  // Evict najstarszych dopóki nie zmieścimy się w limicie
-  while (buildingTileOrder.length > BUILDINGS_SCENE_TILE_LIMIT) {
-    const oldest = buildingTileOrder[0];
-    evictBuildingTile(oldest);
-  }
-}
-
-// Wstaw do buildingCache z limitem LRU
-function putBuildingCache(tileKey, items) {
-  if (buildingCache.has(tileKey)) buildingCache.delete(tileKey);
-  buildingCache.set(tileKey, items);
-  while (buildingCache.size > BUILDINGS_DATA_CACHE_LIMIT) {
-    buildingCache.delete(buildingCache.keys().next().value);
-  }
-}
-
-async function loadBuildings(lat, lon, zoom) {
-  const shouldShow = BUILDINGS_ENABLED && camDist <= BUILDINGS_MAX_DIST && camDist >= BUILDINGS_MIN_DIST;
-
-  if (!shouldShow) {
-    if (buildingMeshes.size > 0) {
-      clearAllBuildingTiles();
-      lastBuildingTileKey = null;
-    }
-    return;
-  }
-
-  const [cx, cy] = deg2tile(lat, lon, BUILDINGS_TILE_ZOOM);
-  const buildingKey = `${BUILDINGS_TILE_ZOOM}_${cx}_${cy}`;
-
-  // Nie przeładowuj jeśli ten tile jest już w scenie
-  if (buildingKey === lastBuildingTileKey && buildingMeshes.has(buildingKey)) return;
-
-  lastBuildingTileKey = buildingKey;
-  buildingLoadController.abort();
-  buildingLoadController = new AbortController();
-  buildingLoadEpoch++;
-  const epoch = buildingLoadEpoch;
-
-  // Cache hit – przywróć meshe z danych
-  if (buildingCache.has(buildingKey)) {
-    const cached = buildingCache.get(buildingKey);
-    // Odśwież LRU w cache
-    buildingCache.delete(buildingKey);
-    buildingCache.set(buildingKey, cached);
-
-    const meshMap = new Map();
-    for (const item of cached) {
-      const mesh = createBuildingMesh(item.points, item.height, item.baseY, item.colorHex);
-      if (mesh) { scene.add(mesh); meshMap.set(item.id, mesh); }
-    }
-    registerBuildingTile(buildingKey, meshMap);
-    if (BUILDINGS_DEBUG) console.log('[buildings] cache hit', buildingKey, cached.length, '| scene tiles:', buildingTileOrder.length);
-    return;
-  }
-
-  try {
-    const items = [];
-    const urlsForTile = (tz, tx, ty) => BUILDINGS_TILE_URLS.map(t =>
-      t.replace('{z}', tz).replace('{x}', tx).replace('{y}', ty)
-    );
-
-    const loadTile = async (tx, ty) => {
-      for (const url of urlsForTile(BUILDINGS_TILE_ZOOM, tx, ty)) {
-        let data;
-        try { data = await fetchJsonWithTimeout(url, buildingLoadController.signal); }
-        catch(e) { if (e && e.name === 'AbortError') throw e; continue; }
-        if (!data) continue;
-        const features = Array.isArray(data.features) ? data.features : [];
-        const localItems = [];
-        let localIndex = 0;
-        for (const feature of features) {
-          const props = feature.properties || {};
-          const height = parseBuildingHeight(props) * BUILDING_HEIGHT_SCALE;
-          const geom = feature.geometry || {};
-          const parts = [];
-          if (geom.type === 'Polygon') parts.push(geom.coordinates);
-          else if (geom.type === 'MultiPolygon') parts.push(...geom.coordinates);
-          else continue;
-          for (const poly of parts) {
-            if (!poly || !poly.length || !poly[0] || poly[0].length < 3) continue;
-            const ring = geoRingToLatLon(poly[0]);
-            if (ring.length < 3) continue;
-            const center = polygonCenter(ring);
-            const baseY = await terrainHeightAt(center[0], center[1], BUILDINGS_TILE_ZOOM, buildingLoadController.signal);
-            const colorHex = await groundColorAt(center[0], center[1], BUILDINGS_TILE_ZOOM, buildingLoadController.signal);
-            const idValue = feature.id ?? (props.osm_id ?? localIndex++);
-            localItems.push({ id: `b_${tx}_${ty}_${idValue}`, points: ring, height, baseY, colorHex });
-          }
-        }
-        return localItems;
-      }
-      return [];
-    };
-
-    const tileJobs = [];
-    for (let dy = -BUILDINGS_TILE_RADIUS; dy <= BUILDINGS_TILE_RADIUS; dy++)
-      for (let dx = -BUILDINGS_TILE_RADIUS; dx <= BUILDINGS_TILE_RADIUS; dx++)
-        tileJobs.push(loadTile(cx + dx, cy + dy));
-
-    const tileResults = await Promise.all(tileJobs);
-    if (epoch !== buildingLoadEpoch || buildingLoadController.signal.aborted) return;
-
-    const meshMap = new Map();
-    for (const localItems of tileResults) {
-      if (!localItems) continue;
-      for (const item of localItems) {
-        const mesh = createBuildingMesh(item.points, item.height, item.baseY, item.colorHex);
-        if (!mesh) continue;
-        scene.add(mesh);
-        meshMap.set(item.id, mesh);
-        items.push(item);
-      }
-    }
-
-    putBuildingCache(buildingKey, items);
-    registerBuildingTile(buildingKey, meshMap);
-    if (BUILDINGS_DEBUG) console.log('[buildings] loaded', items.length, '| scene tiles:', buildingTileOrder.length, '| cache:', buildingCache.size);
-  } catch (e) {
-    if (BUILDINGS_DEBUG && !(e && e.name === 'AbortError')) console.error('[buildings] error', e);
-  }
-}
-
-function geoRingToLatLon(ring) {
-  const points = [];
-  for (const coord of ring || []) {
-    if (!Array.isArray(coord) || coord.length < 2) continue;
-    points.push([coord[1], coord[0]]);
-  }
-  if (points.length > 1) {
-    const first = points[0], last = points[points.length - 1];
-    if (first[0] === last[0] && first[1] === last[1]) points.pop();
-  }
-  return points;
-}
-
-function parseBuildingHeight(tags) {
-  if (tags && tags.height) {
-    const h = parseFloat(String(tags.height).replace(',', '.'));
-    if (Number.isFinite(h) && h > 0) return h;
-  }
-  if (tags && tags['building:levels']) {
-    const levels = parseFloat(String(tags['building:levels']).replace(',', '.'));
-    if (Number.isFinite(levels) && levels > 0) return Math.max(4, levels * 3);
-  }
-  return 8;
-}
-
 function latLonToWorld(lat, lon) {
   const R = 6371000, mid = refLat * Math.PI / 180;
   return [
@@ -560,38 +109,566 @@ function latLonToWorld(lat, lon) {
     (lat - refLat) * Math.PI / 180 * R
   ];
 }
-
-function createBuildingMesh(points, height, baseY, colorHex) {
-  if (!points || points.length < 3) return null;
-  const shape = new THREE.Shape();
-  for (let i = 0; i < points.length; i++) {
-    const [x, z] = latLonToWorld(points[i][0], points[i][1]);
-    if (i === 0) shape.moveTo(x, z);
-    else shape.lineTo(x, z);
-  }
-  shape.closePath();
-  const geo = new THREE.ExtrudeGeometry(shape, {
-    depth: height, bevelEnabled: false, steps: 1
-  });
-  geo.rotateX(-Math.PI / 2);
-  const mat = new THREE.MeshLambertMaterial({
-    color: colorHex || 0xb7b0a6, side: THREE.FrontSide
-  });
-  const mesh = new THREE.Mesh(geo, mat);
-  mesh.position.y = baseY + 0.25;
-  return mesh;
+function polygonCenter(points) {
+  let lat = 0, lon = 0;
+  for (const p of points) { lat += p[0]; lon += p[1]; }
+  return [lat / points.length, lon / points.length];
 }
 
-// POPRAWKA SEAMS: buildMesh pobiera sąsiednie DEM tile'y i spaja krawędzie
+// ─── THREE setup ──────────────────────────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('c'), antialias: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x87CEEB);
+scene.fog = new THREE.Fog(0x87CEEB, 500000, 1500000);
+
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 100, 3000000);
+
+const sun = new THREE.DirectionalLight(0xffffff, 1.1);
+sun.position.set(100000, 150000, 80000);
+scene.add(sun);
+scene.add(new THREE.AmbientLight(0xc8e0ff, 0.6));
+
+// ─── Kamera ───────────────────────────────────────────────────────────────────
+let camLat = 47.03012, camLon = 10.74558, camDist = 120000;
+let camPitch = 45, camYaw = 0, camY = 0;
+const refLat = 47.03012, refLon = 10.74558;
+
+// ─── TERRAIN tiles ────────────────────────────────────────────────────────────
+const tileMeshes    = new Map();
+const loadingTiles  = new Set();
+let activeTileZoom  = null;
+let tileLoadController = new AbortController();
+let tileLoadEpoch   = 0;
+const demDataCache  = new Map();
+const DEM_DATA_CACHE_LIMIT = 64;
+
+// ─── SAT texture cache (dla terenu) ───────────────────────────────────────────
+const SAT_TEXTURE_CACHE_LIMIT = 32;
+const satTextureCache = new Map();  // cacheKey → THREE.Texture
+const satTextureCacheKeys = new WeakMap();  // texture → cacheKey
+
+function getCachedSatTexture(key) {
+  if (!satTextureCache.has(key)) return null;
+  const t = satTextureCache.get(key);
+  satTextureCache.delete(key); satTextureCache.set(key, t); // LRU bump
+  return t;
+}
+function putCachedSatTexture(key, t) {
+  satTextureCacheKeys.set(t, key);
+  satTextureCache.set(key, t);
+  while (satTextureCache.size > SAT_TEXTURE_CACHE_LIMIT) {
+    const k = satTextureCache.keys().next().value;
+    satTextureCache.delete(k);
+  }
+}
+
+// ─── TilePixelStore ───────────────────────────────────────────────────────────
+// Promise coalescing: ten sam tile → jedna wspólna Promise (zero duplikatów).
+// Po resolve: lookup = array[offset] → O(1), zero DOM/canvas per budynek.
+const COLOR_PIXEL_CACHE_LIMIT = 48;
+const colorPixelCache    = new Map(); // key → Uint8ClampedArray
+const colorPixelInflight = new Map(); // key → Promise<Uint8ClampedArray|null>
+
+async function loadImageBlob(url, signal) {
+  try {
+    const r = await fetch(url, { mode: 'cors', signal });
+    if (!r.ok) return null;
+    return URL.createObjectURL(await r.blob());
+  } catch { return null; }
+}
+
+function _blobToPixels(src) {
+  return new Promise(res => {
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const cv2 = document.createElement('canvas');
+        cv2.width = cv2.height = 256;
+        const ctx = cv2.getContext('2d', { willReadFrequently: true });
+        ctx.drawImage(img, 0, 0, 256, 256);
+        res(ctx.getImageData(0, 0, 256, 256).data);
+      } catch { res(null); }
+      URL.revokeObjectURL(src);
+    };
+    img.onerror = () => { URL.revokeObjectURL(src); res(null); };
+    img.crossOrigin = 'anonymous';
+    img.src = src;
+  });
+}
+
+// Zwraca Promise<Uint8ClampedArray|null> – zawsze ta sama instancja dla danego tile'a.
+function loadTilePixels(z, x, y, signal) {
+  const key = `${z}_${x}_${y}`;
+  if (colorPixelCache.has(key)) return Promise.resolve(colorPixelCache.get(key));
+  if (colorPixelInflight.has(key)) return colorPixelInflight.get(key);
+  const p = (async () => {
+    for (const url of [SAT2(z, x, y), SAT(z, x, y)]) {
+      if (signal?.aborted) return null;
+      const src = await loadImageBlob(url, signal);
+      if (!src) continue;
+      const pixels = await _blobToPixels(src);
+      if (pixels) {
+        colorPixelCache.set(key, pixels);
+        while (colorPixelCache.size > COLOR_PIXEL_CACHE_LIMIT)
+          colorPixelCache.delete(colorPixelCache.keys().next().value);
+        colorPixelInflight.delete(key);
+        return pixels;
+      }
+    }
+    colorPixelInflight.delete(key);
+    return null;
+  })();
+  colorPixelInflight.set(key, p);
+  return p;
+}
+
+// Oblicz tile + pixel offset (synchronicznie) – potrzebne do prefetchu i lookup
+function latLonToTilePixel(lat, lon, z) {
+  const n = 1 << z;
+  const lr = lat * Math.PI / 180;
+  const xf = (lon + 180) / 360 * n;
+  const yf = (1 - Math.log(Math.tan(lr) + 1 / Math.cos(lr)) / Math.PI) / 2 * n;
+  const tx = Math.floor(xf), ty = Math.floor(yf);
+  return {
+    tx, ty,
+    px: Math.max(0, Math.min(255, Math.floor((xf - tx) * 256))),
+    py: Math.max(0, Math.min(255, Math.floor((yf - ty) * 256)))
+  };
+}
+
+// Synchroniczne próbkowanie koloru z już załadowanego bufora
+function samplePixelColor(pixels, px, py) {
+  if (!pixels) return 0xb7b0a6;
+  const i = (py * 256 + px) * 4;
+  return (pixels[i] << 16) | (pixels[i + 1] << 8) | pixels[i + 2];
+}
+
+// Synchroniczne próbkowanie wysokości z już załadowanego DEM
+function sampleDemHeight(dem, lat, lon, zoom) {
+  if (!dem) return 0;
+  const n = 1 << zoom;
+  const lr = lat * Math.PI / 180;
+  const xf = (lon + 180) / 360 * n;
+  const yf = (1 - Math.log(Math.tan(lr) + 1 / Math.cos(lr)) / Math.PI) / 2 * n;
+  const px = Math.max(0, Math.min(255, Math.floor((xf - Math.floor(xf)) * 255)));
+  const py = Math.max(0, Math.min(255, Math.floor((yf - Math.floor(yf)) * 255)));
+  return Math.max(0, dem[py * 256 + px]) * EXAG * Y_SCALE;
+}
+
+// Async – tylko dla terenu
+async function groundColorAt(lat, lon, signal) {
+  const { tx, ty, px, py } = latLonToTilePixel(lat, lon, COLOR_SAT_ZOOM);
+  const pixels = await loadTilePixels(COLOR_SAT_ZOOM, tx, ty, signal);
+  return samplePixelColor(pixels, px, py);
+}
+
+// ─── SAT texture dla terenu ───────────────────────────────────────────────────
+async function loadSatTex(z, x, y, signal) {
+  const key = `${z}_${x}_${y}`;
+  const cached = getCachedSatTexture(key);
+  if (cached) return cached;
+  for (const url of [SAT2(z, x, y), SAT(z, x, y)]) {
+    const src = await loadImageBlob(url, signal);
+    if (!src) continue;
+    const t = await new Promise(res => {
+      const loader = new THREE.TextureLoader();
+      loader.load(src, tex => {
+        tex.minFilter = THREE.LinearMipmapLinearFilter;
+        tex.magFilter = THREE.LinearFilter;
+        tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+        tex.generateMipmaps = true;
+        URL.revokeObjectURL(src);
+        res(tex);
+      }, undefined, () => { URL.revokeObjectURL(src); res(null); });
+    });
+    if (t) { putCachedSatTexture(key, t); return t; }
+  }
+  return null;
+}
+
+// ─── DEM ──────────────────────────────────────────────────────────────────────
+async function decodeDEM(url, signal) {
+  const src = await loadImageBlob(url, signal);
+  if (!src) return null;
+  return new Promise(res => {
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const cv2 = document.createElement('canvas');
+        cv2.width = cv2.height = 256;
+        const ctx = cv2.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+        const px = ctx.getImageData(0, 0, 256, 256).data;
+        const h = new Float32Array(256 * 256);
+        for (let i = 0; i < 256 * 256; i++)
+          h[i] = px[i * 4] * 256 + px[i * 4 + 1] + px[i * 4 + 2] / 256 - 32768;
+        URL.revokeObjectURL(src);
+        res(h);
+      } catch { res(null); }
+    };
+    img.onerror = () => { URL.revokeObjectURL(src); res(null); };
+    img.src = src;
+  });
+}
+const demInflight = new Map();
+function loadDemData(z, x, y, signal) {
+  const key = `${z}_${x}_${y}`;
+  if (demDataCache.has(key)) return Promise.resolve(demDataCache.get(key));
+  if (demInflight.has(key)) return demInflight.get(key);
+  const p = (async () => {
+    const dem = await decodeDEM(DEM(z, x, y), signal);
+    demInflight.delete(key);
+    if (dem) {
+      demDataCache.set(key, dem);
+      while (demDataCache.size > DEM_DATA_CACHE_LIMIT)
+        demDataCache.delete(demDataCache.keys().next().value);
+    }
+    return dem;
+  })();
+  demInflight.set(key, p);
+  return p;
+}
+
+async function terrainHeightAt(lat, lon, zoom, signal) {
+  const n = 1 << zoom;
+  const lr = lat * Math.PI / 180;
+  const xf = (lon + 180) / 360 * n;
+  const yf = (1 - Math.log(Math.tan(lr) + 1 / Math.cos(lr)) / Math.PI) / 2 * n;
+  const tx = Math.floor(xf), ty = Math.floor(yf);
+  const dem = await loadDemData(zoom, tx, ty, signal);
+  if (!dem) return 0;
+  const px = Math.max(0, Math.min(255, Math.floor((xf - tx) * 255)));
+  const py = Math.max(0, Math.min(255, Math.floor((yf - ty) * 255)));
+  return Math.max(0, dem[py * 256 + px]) * EXAG * Y_SCALE;
+}
+
+// ─── SEAM FIX: sąsiednie DEM ──────────────────────────────────────────────────
+function sampleHeightWithNeighbors(u, v, dem, demR, demB, demC) {
+  const EPS = 1.0 / 256;
+  let d = dem, su = u, sv = v;
+  if (u >= 1.0 - EPS && demR) {
+    d = demR; su = u - 1.0; sv = v;
+    if (sv >= 1.0 - EPS && demC) { d = demC; su = u - 1.0; sv = v - 1.0; }
+  } else if (v >= 1.0 - EPS && demB) {
+    d = demB; su = u; sv = v - 1.0;
+  }
+  if (!d) return 0;
+  const px = Math.max(0, Math.min(255, Math.floor(Math.max(0, su) * 255)));
+  const py = Math.max(0, Math.min(255, Math.floor(Math.max(0, sv) * 255)));
+  return Math.max(0, d[py * 256 + px]) * EXAG;
+}
+
+// ─── BUILDINGS – batched geometry ─────────────────────────────────────────────
+// Budynki w jednym tile są łączone w JEDEN Mesh z vertex colors.
+// Brak osobnych materialów per budynek → ogromna oszczędność draw calls.
+
+// Material współdzielony przez wszystkie batched-tile meshe
+const buildingMaterial = new THREE.MeshLambertMaterial({
+  vertexColors: true,
+  side: THREE.FrontSide
+});
+
+// tileKey → THREE.Mesh (batch)
+const buildingMeshes   = new Map();
+const buildingTileOrder = [];
+// tileKey → Array<{id, points, height, baseY, colorHex}>
+const buildingCache    = new Map();
+let lastBuildingTileKey = null;
+let buildingLoadController = new AbortController();
+let buildingLoadEpoch  = 0;
+
+function evictBuildingTile(tileKey) {
+  const mesh = buildingMeshes.get(tileKey);
+  if (!mesh) return;
+  scene.remove(mesh);
+  mesh.geometry.dispose();
+  buildingMeshes.delete(tileKey);
+  const idx = buildingTileOrder.indexOf(tileKey);
+  if (idx !== -1) buildingTileOrder.splice(idx, 1);
+}
+function clearAllBuildingTiles() {
+  for (const k of [...buildingMeshes.keys()]) evictBuildingTile(k);
+}
+function registerBuildingTile(tileKey, mesh) {
+  if (buildingMeshes.has(tileKey)) evictBuildingTile(tileKey);
+  buildingMeshes.set(tileKey, mesh);
+  buildingTileOrder.push(tileKey);
+  while (buildingTileOrder.length > BUILDINGS_SCENE_TILE_LIMIT) {
+    evictBuildingTile(buildingTileOrder[0]);
+  }
+}
+function putBuildingCache(tileKey, items) {
+  if (buildingCache.has(tileKey)) buildingCache.delete(tileKey);
+  buildingCache.set(tileKey, items);
+  while (buildingCache.size > BUILDINGS_DATA_CACHE_LIMIT)
+    buildingCache.delete(buildingCache.keys().next().value);
+}
+
+// ─── Extruduj jeden budynek do tablic pos/col/idx ─────────────────────────────
+function extrudeBuildingInto(positions, colors, indices, points, height, baseY, colorHex) {
+  if (!points || points.length < 3) return;
+
+  const r = ((colorHex >> 16) & 0xff) / 255;
+  const g = ((colorHex >>  8) & 0xff) / 255;
+  const b = ( colorHex        & 0xff) / 255;
+
+  // Wysokość budynku musi być w tych samych jednostkach co Y terenu.
+  // Teren: dem_metry * EXAG * Y_SCALE. Budynki: metry * Y_SCALE (bez EXAG –
+  // EXAG dotyczy tylko rzeźby terenu, nie obiektów na nim).
+  const scaledHeight = Math.max(1, height) * Y_SCALE;
+
+  // Dolna krawędź budynku zanurzona minimalnie poniżej baseY, żeby nie było
+  // szczelin między budynkiem a terenem gdy teren jest nieregularny.
+  const bottomY = baseY - 1.0;
+  const topY    = baseY + scaledHeight;
+
+  const base = positions.length / 3;
+  const n = points.length;
+  const worldPts = points.map(p => latLonToWorld(p[0], p[1]));
+
+  // Bottom ring (zagłębiony w teren – niewidoczny, zapobiega szczelinom)
+  for (const [wx, wz] of worldPts) {
+    positions.push(wx, bottomY, -wz);
+    colors.push(r * 0.4, g * 0.4, b * 0.4);
+  }
+  // Top ring
+  for (const [wx, wz] of worldPts) {
+    positions.push(wx, topY, -wz);
+    colors.push(r, g, b);
+  }
+  // Roof center
+  let cx = 0, cz = 0;
+  for (const [wx, wz] of worldPts) { cx += wx; cz += wz; }
+  cx /= n; cz /= n;
+  const roofIdx = base + 2 * n;
+  positions.push(cx, topY, -cz);
+  colors.push(Math.min(1, r * 1.15), Math.min(1, g * 1.15), Math.min(1, b * 1.15));
+
+  // Side faces
+  for (let i = 0; i < n; i++) {
+    const j  = (i + 1) % n;
+    const b0 = base + i,     b1 = base + j;
+    const t0 = base + n + i, t1 = base + n + j;
+    indices.push(b0, b1, t1,  b0, t1, t0);
+  }
+  // Roof fan
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    indices.push(roofIdx, base + n + i, base + n + j);
+  }
+}
+
+// Buduje jeden THREE.Mesh ze wszystkich budynków w tablicy items
+function buildBatchedMesh(items) {
+  const positions = [], colors = [], indices = [];
+  for (const item of items) {
+    extrudeBuildingInto(positions, colors, indices,
+      item.points, item.height, item.baseY, item.colorHex);
+  }
+  if (positions.length === 0) return null;
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(positions), 3));
+  geo.setAttribute('color',    new THREE.BufferAttribute(new Float32Array(colors), 3));
+  geo.setIndex(indices);
+  geo.computeVertexNormals();
+  return new THREE.Mesh(geo, buildingMaterial);
+}
+
+// ─── Building loading pipeline ────────────────────────────────────────────────
+async function fetchJsonWithTimeout(url, signal, ms = BUILDINGS_REQUEST_TIMEOUT_MS) {
+  const tc = new AbortController();
+  const tid = setTimeout(() => tc.abort(), ms);
+  signal.addEventListener('abort', () => tc.abort(), { once: true });
+  try {
+    const r = await fetch(url, { method: 'GET', mode: 'cors', signal: tc.signal });
+    if (!r.ok) return null;
+    return await r.json();
+  } catch (e) {
+    if (signal.aborted) throw e;
+    if (e?.name === 'AbortError') return null;
+    throw e;
+  } finally {
+    clearTimeout(tid);
+  }
+}
+
+function geoRingToLatLon(ring) {
+  const pts = [];
+  for (const c of ring || []) {
+    if (!Array.isArray(c) || c.length < 2) continue;
+    pts.push([c[1], c[0]]);
+  }
+  if (pts.length > 1) {
+    const f = pts[0], l = pts[pts.length - 1];
+    if (f[0] === l[0] && f[1] === l[1]) pts.pop();
+  }
+  return pts;
+}
+function parseBuildingHeight(tags) {
+  if (tags?.height) {
+    const h = parseFloat(String(tags.height).replace(',', '.'));
+    if (Number.isFinite(h) && h > 0) return h;
+  }
+  if (tags?.['building:levels']) {
+    const lv = parseFloat(String(tags['building:levels']).replace(',', '.'));
+    if (Number.isFinite(lv) && lv > 0) return Math.max(4, lv * 3);
+  }
+  return 8;
+}
+
+async function loadBuildings(lat, lon) {
+  const shouldShow = BUILDINGS_ENABLED &&
+    camDist <= BUILDINGS_MAX_DIST && camDist >= BUILDINGS_MIN_DIST;
+
+  if (!shouldShow) {
+    if (buildingMeshes.size > 0) { clearAllBuildingTiles(); lastBuildingTileKey = null; }
+    return;
+  }
+
+  const [cx, cy] = deg2tile(lat, lon, BUILDINGS_TILE_ZOOM);
+  const buildingKey = `${BUILDINGS_TILE_ZOOM}_${cx}_${cy}`;
+
+  if (buildingKey === lastBuildingTileKey && buildingMeshes.has(buildingKey)) return;
+  lastBuildingTileKey = buildingKey;
+
+  buildingLoadController.abort();
+  buildingLoadController = new AbortController();
+  buildingLoadEpoch++;
+  const epoch = buildingLoadEpoch;
+  const sig   = buildingLoadController.signal;
+
+  // Cache hit → odbuduj mesh synchronicznie
+  if (buildingCache.has(buildingKey)) {
+    const cached = buildingCache.get(buildingKey);
+    buildingCache.delete(buildingKey); buildingCache.set(buildingKey, cached);
+    const mesh = buildBatchedMesh(cached);
+    if (mesh) { scene.add(mesh); registerBuildingTile(buildingKey, mesh); }
+    if (BUILDINGS_DEBUG) console.log('[buildings] cache hit', buildingKey, cached.length);
+    return;
+  }
+
+  try {
+    // ── FAZA 1: pobierz JSON wszystkich tile'ów budynków równolegle ──────────
+    const tileCoords = [];
+    for (let dy = -BUILDINGS_TILE_RADIUS; dy <= BUILDINGS_TILE_RADIUS; dy++)
+      for (let dx = -BUILDINGS_TILE_RADIUS; dx <= BUILDINGS_TILE_RADIUS; dx++)
+        tileCoords.push([cx + dx, cy + dy]);
+
+    const fetchOneTileJson = async ([tx, ty]) => {
+      for (const urlTpl of BUILDINGS_TILE_URLS) {
+        const url = urlTpl.replace('{z}', BUILDINGS_TILE_ZOOM)
+                          .replace('{x}', tx).replace('{y}', ty);
+        let data;
+        try { data = await fetchJsonWithTimeout(url, sig); }
+        catch (e) { if (e?.name === 'AbortError') throw e; continue; }
+        if (data) return { tx, ty, data };
+      }
+      return null;
+    };
+
+    const jsonResults = await Promise.all(tileCoords.map(fetchOneTileJson));
+    if (epoch !== buildingLoadEpoch || sig.aborted) return;
+
+    // ── FAZA 2: z JSON wyciągnij centra wszystkich budynków ──────────────────
+    // Zbierz unikalne tile DEM i SAT, które będą potrzebne
+    const rawBuildings = []; // { tx, ty, id, ring, height }
+    for (const res of jsonResults) {
+      if (!res) continue;
+      const { tx, ty, data } = res;
+      const features = Array.isArray(data.features) ? data.features : [];
+      let li = 0;
+      for (const feature of features) {
+        const props  = feature.properties || {};
+        const height = parseBuildingHeight(props) * BUILDING_HEIGHT_SCALE;
+        const geom   = feature.geometry || {};
+        const parts  = [];
+        if      (geom.type === 'Polygon')      parts.push(geom.coordinates);
+        else if (geom.type === 'MultiPolygon') parts.push(...geom.coordinates);
+        else continue;
+        for (const poly of parts) {
+          if (!poly?.length || !poly[0] || poly[0].length < 3) continue;
+          const ring = geoRingToLatLon(poly[0]);
+          if (ring.length < 3) continue;
+          rawBuildings.push({
+            id: `b_${tx}_${ty}_${feature.id ?? (props.osm_id ?? li++)}`,
+            ring, height,
+            center: polygonCenter(ring)
+          });
+        }
+      }
+    }
+    if (epoch !== buildingLoadEpoch || sig.aborted) return;
+
+    // ── FAZA 3: zbierz unikalne tile DEM i SAT, załaduj WSZYSTKIE naraz ──────
+    const demTileKeys  = new Set();
+    const satTileKeys  = new Set();
+    for (const b of rawBuildings) {
+      const [clat, clon] = b.center;
+      // DEM tile (zoom BUILDINGS_TILE_ZOOM)
+      const [dtx, dty] = deg2tile(clat, clon, BUILDINGS_TILE_ZOOM);
+      demTileKeys.add(`${BUILDINGS_TILE_ZOOM}_${dtx}_${dty}`);
+      // SAT tile (zoom COLOR_SAT_ZOOM)
+      const { tx: stx, ty: sty } = latLonToTilePixel(clat, clon, COLOR_SAT_ZOOM);
+      satTileKeys.add(`${COLOR_SAT_ZOOM}_${stx}_${sty}`);
+    }
+
+    // Prefetch: uruchom wszystkie równolegle (promise coalescing zapobiega duplikatom)
+    const demPrefetch = [...demTileKeys].map(k => {
+      const [z, x, y] = k.split('_').map(Number);
+      return loadDemData(z, x, y, sig);
+    });
+    const satPrefetch = [...satTileKeys].map(k => {
+      const [z, x, y] = k.split('_').map(Number);
+      return loadTilePixels(z, x, y, sig);
+    });
+    await Promise.all([...demPrefetch, ...satPrefetch]);
+    if (epoch !== buildingLoadEpoch || sig.aborted) return;
+
+    // ── FAZA 4: SYNCHRONICZNA pętla po budynkach – zero await w środku ───────
+    const items = [];
+    for (const b of rawBuildings) {
+      const [clat, clon] = b.center;
+
+      // DEM lookup (synchroniczny – tile jest już w demDataCache)
+      const [dtx, dty] = deg2tile(clat, clon, BUILDINGS_TILE_ZOOM);
+      const demKey = `${BUILDINGS_TILE_ZOOM}_${dtx}_${dty}`;
+      const dem    = demDataCache.get(demKey) ?? null;
+      const baseY  = sampleDemHeight(dem, clat, clon, BUILDINGS_TILE_ZOOM);
+
+      // SAT lookup (synchroniczny – tile jest już w colorPixelCache)
+      const { tx: stx, ty: sty, px, py } = latLonToTilePixel(clat, clon, COLOR_SAT_ZOOM);
+      const satKey  = `${COLOR_SAT_ZOOM}_${stx}_${sty}`;
+      const pixels  = colorPixelCache.get(satKey) ?? null;
+      const colorHex = samplePixelColor(pixels, px, py);
+
+      items.push({ id: b.id, points: b.ring, height: b.height, baseY, colorHex });
+    }
+
+    putBuildingCache(buildingKey, items);
+    const mesh = buildBatchedMesh(items);
+    if (mesh) { scene.add(mesh); registerBuildingTile(buildingKey, mesh); }
+
+    if (BUILDINGS_DEBUG)
+      console.log('[buildings] loaded', items.length, 'buildings |',
+        demTileKeys.size, 'dem tiles |', satTileKeys.size, 'sat tiles |',
+        'scene:', buildingTileOrder.length, '| cache:', buildingCache.size);
+  } catch (e) {
+    if (BUILDINGS_DEBUG && e?.name !== 'AbortError') console.error('[buildings]', e);
+  }
+}
+
+// ─── TERRAIN mesh ─────────────────────────────────────────────────────────────
 async function buildMeshWithNeighbors(tx, ty, zoom, signal) {
-  // Pobierz główny i sąsiednie tile'y DEM równolegle
-  const [dem, demRight, demBottom, demCorner] = await Promise.all([
+  const [dem, demR, demB, demC] = await Promise.all([
     loadDemData(zoom, tx,     ty,     signal),
     loadDemData(zoom, tx + 1, ty,     signal),
     loadDemData(zoom, tx,     ty + 1, signal),
     loadDemData(zoom, tx + 1, ty + 1, signal),
   ]);
-
   const [lat1, lon1] = tile2deg(tx,   ty,   zoom);
   const [lat2, lon2] = tile2deg(tx+1, ty+1, zoom);
   const R = 6371000, mid = refLat * Math.PI / 180;
@@ -603,38 +680,24 @@ async function buildMeshWithNeighbors(tx, ty, zoom, signal) {
   const [x1, y1] = toW(lat2, lon2);
   const G = GRID;
   const pos = [], uv = [], idx = [];
-
   for (let r = 0; r <= G; r++) {
     for (let c = 0; c <= G; c++) {
-      const u = c / G;
-      const v = r / G;
-
-      // KLUCZOWE: używamy sampleHeightWithNeighbors zamiast prostego indeksowania
-      // Dzięki temu krawędzie sąsiednich tile'ów mają IDENTYCZNE wartości Y
-      let wz = 0;
-      if (dem) {
-        wz = sampleHeightWithNeighbors(u, v, dem, demRight, demBottom, demCorner);
-      }
-
-      pos.push(
-        x0 + u * (x1 - x0),
-        wz * Y_SCALE,
-        -(y0 + v * (y1 - y0))
-      );
+      const u = c / G, v = r / G;
+      const wz = dem
+        ? sampleHeightWithNeighbors(u, v, dem, demR, demB, demC)
+        : 0;
+      pos.push(x0 + u * (x1 - x0), wz * Y_SCALE, -(y0 + v * (y1 - y0)));
       uv.push(u, 1 - v);
     }
   }
-
-  for (let r = 0; r < G; r++) {
+  for (let r = 0; r < G; r++)
     for (let c = 0; c < G; c++) {
       const i = r * (G + 1) + c;
       idx.push(i, i + 1, i + G + 2, i, i + G + 2, i + G + 1);
     }
-  }
-
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(pos), 3));
-  geo.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(uv), 2));
+  geo.setAttribute('uv',       new THREE.BufferAttribute(new Float32Array(uv),  2));
   geo.setIndex(idx);
   geo.computeVertexNormals();
   return geo;
@@ -642,21 +705,14 @@ async function buildMeshWithNeighbors(tx, ty, zoom, signal) {
 
 async function loadTile(tx, ty, zoom) {
   const key = `${zoom}_${tx}_${ty}`;
-  if(tileMeshes.has(key) || loadingTiles.has(key)) return;
+  if (tileMeshes.has(key) || loadingTiles.has(key)) return;
   loadingTiles.add(key);
-  const epoch = tileLoadEpoch;
-  const sig = tileLoadController.signal;
-
+  const epoch = tileLoadEpoch, sig = tileLoadController.signal;
   const [geo, tex] = await Promise.all([
     buildMeshWithNeighbors(tx, ty, zoom, sig),
     loadSatTex(zoom, tx, ty, sig)
   ]);
-
-  if (epoch !== tileLoadEpoch || sig.aborted) {
-    loadingTiles.delete(key);
-    return;
-  }
-
+  if (epoch !== tileLoadEpoch || sig.aborted) { loadingTiles.delete(key); return; }
   const mat = new THREE.MeshLambertMaterial({
     map: tex || null,
     color: tex ? 0xffffff : 0x5a8a50,
@@ -668,68 +724,94 @@ async function loadTile(tx, ty, zoom) {
   loadingTiles.delete(key);
 }
 
+// ─── Tile management ──────────────────────────────────────────────────────────
+function getZoom() {
+  return Math.max(7, Math.min(13, Math.round(Math.log2(150000000 / camDist))));
+}
+
+// Tile'y poprzedniego zooma – zostają w scenie jako fallback póki nowe się ładują
+const oldTileMeshes = new Map();
+
+function disposeMesh(mesh) {
+  scene.remove(mesh);
+  mesh.geometry.dispose();
+  if (mesh.material.map) {
+    const ck = satTextureCacheKeys.get(mesh.material.map);
+    if (!ck || satTextureCache.get(ck) !== mesh.material.map)
+      mesh.material.map.dispose();
+  }
+  mesh.material.dispose();
+}
+
+function clearOldTiles() {
+  for (const mesh of oldTileMeshes.values()) disposeMesh(mesh);
+  oldTileMeshes.clear();
+}
+
+function updateTiles() {
+  const zoom = getZoom();
+
+  if (zoom !== activeTileZoom) {
+    tileLoadController.abort();
+    tileLoadController = new AbortController();
+    tileLoadEpoch++;
+    loadingTiles.clear();
+    // Przenieś aktualny zoom do fallbacku – zostają widoczne w scenie
+    clearOldTiles();
+    for (const [key, mesh] of tileMeshes) oldTileMeshes.set(key, mesh);
+    tileMeshes.clear();
+    activeTileZoom = zoom;
+  }
+
+  const [cx, cy] = deg2tile(camLat, camLon, zoom);
+  const n = 1 << zoom;
+
+  // Usuń tile'y nowego zooma które wyszły daleko poza zasięg
+  for (const [key, mesh] of tileMeshes) {
+    const [, kx, ky] = key.split('_').map(Number);
+    if (Math.abs(kx - cx) > TILE_LOAD_RADIUS + 1 || Math.abs(ky - cy) > TILE_LOAD_RADIUS + 1) {
+      disposeMesh(mesh); tileMeshes.delete(key);
+    }
+  }
+
+  // Ładuj nowe tile'y
+  for (let dy = -TILE_LOAD_RADIUS; dy <= TILE_LOAD_RADIUS; dy++)
+    for (let dx = -TILE_LOAD_RADIUS; dx <= TILE_LOAD_RADIUS; dx++) {
+      const tx = cx + dx, ty = cy + dy;
+      if (tx >= 0 && ty >= 0 && tx < n && ty < n) loadTile(tx, ty, zoom);
+    }
+
+  // Gdy cały widoczny obszar nowego zooma załadowany – usuń stary fallback
+  if (oldTileMeshes.size > 0) {
+    let allLoaded = true;
+    outer: for (let dy = -TILE_LOAD_RADIUS; dy <= TILE_LOAD_RADIUS; dy++)
+      for (let dx = -TILE_LOAD_RADIUS; dx <= TILE_LOAD_RADIUS; dx++) {
+        const tx = cx + dx, ty = cy + dy;
+        if (tx < 0 || ty < 0 || tx >= n || ty >= n) continue;
+        if (!tileMeshes.has(`${zoom}_${tx}_${ty}`)) { allLoaded = false; break outer; }
+      }
+    if (allLoaded) clearOldTiles();
+  }
+
+  return zoom;
+}
+
+// ─── Teleport ─────────────────────────────────────────────────────────────────
 function teleportTo(lat, lon, dist) {
-  camLat = lat;
-  camLon = lon;
-  camDist = dist;
-  camY = 0;
-  camPitch = 45;
-  // Wymuś przeładowanie wszystkich tile'ów
+  camLat = lat; camLon = lon; camDist = dist; camY = 0; camPitch = 45;
   tileLoadController.abort();
   tileLoadController = new AbortController();
   tileLoadEpoch++;
   activeTileZoom = null;
   loadingTiles.clear();
-  for (const [key, mesh] of tileMeshes) {
-    scene.remove(mesh);
-    mesh.geometry.dispose();
-    if (mesh.material.map) mesh.material.map.dispose();
-    mesh.material.dispose();
-  }
+  clearOldTiles();
+  for (const [, mesh] of tileMeshes) disposeMesh(mesh);
   tileMeshes.clear();
-  // Wyczyść budynki
   clearAllBuildingTiles();
   lastBuildingTileKey = null;
 }
 
-function getZoom() {
-  return Math.max(7, Math.min(13, Math.round(Math.log2(150000000 / camDist))));
-}
-
-function updateTiles() {
-  const zoom = getZoom();
-  if (zoom !== activeTileZoom) {
-    tileLoadController.abort();
-    tileLoadController = new AbortController();
-    tileLoadEpoch++;
-    activeTileZoom = zoom;
-    loadingTiles.clear();
-  }
-  const [cx, cy] = deg2tile(camLat, camLon, zoom);
-  for(const [key, mesh] of tileMeshes) {
-    const [kz, kx, ky] = key.split('_').map(Number);
-    if(kz !== zoom || Math.abs(kx - cx) > 3 || Math.abs(ky - cy) > 3) {
-      scene.remove(mesh);
-      mesh.geometry.dispose();
-      if(mesh.material.map) {
-        const cacheKey = satTextureKeys.get(mesh.material.map);
-        if (!cacheKey || satTextureCache.get(cacheKey) !== mesh.material.map) {
-          mesh.material.map.dispose();
-        }
-      }
-      mesh.material.dispose();
-      tileMeshes.delete(key);
-    }
-  }
-  for(let dy = -TILE_LOAD_RADIUS; dy <= TILE_LOAD_RADIUS; dy++) {
-    for(let dx = -TILE_LOAD_RADIUS; dx <= TILE_LOAD_RADIUS; dx++) {
-      const tx = cx + dx, ty = cy + dy, n = 1 << zoom;
-      if(tx >= 0 && ty >= 0 && tx < n && ty < n) loadTile(tx, ty, zoom);
-    }
-  }
-  return zoom;
-}
-
+// ─── Kamera ───────────────────────────────────────────────────────────────────
 function applyCamera() {
   const R = 6371000, mid = refLat * Math.PI / 180;
   const p = camPitch * Math.PI / 180, y = camYaw * Math.PI / 180;
@@ -743,43 +825,44 @@ function applyCamera() {
   camera.lookAt(tx, camY, -ty);
 }
 
-// Sterowanie
+// ─── Sterowanie ───────────────────────────────────────────────────────────────
 let mDown = false, rDown = false, lx = 0, ly = 0;
 const keys = new Set();
 const cv = document.getElementById('c');
-cv.addEventListener('mousedown', e=>{
-  if(e.button===0) mDown=true;
-  if(e.button===2) rDown=true;
-  lx=e.clientX; ly=e.clientY;
+
+cv.addEventListener('mousedown', e => {
+  if (e.button === 0) mDown = true;
+  if (e.button === 2) rDown = true;
+  lx = e.clientX; ly = e.clientY;
   e.preventDefault();
 });
-window.addEventListener('mouseup', ()=>{ mDown=false; rDown=false; });
-window.addEventListener('keydown', e=>{
+window.addEventListener('mouseup', () => { mDown = false; rDown = false; });
+window.addEventListener('keydown', e => {
   const k = e.key.toLowerCase();
-  if(['w','a','s','d','q','e'].includes(k)) { keys.add(k); e.preventDefault(); }
+  if (['w','a','s','d','q','e'].includes(k)) { keys.add(k); e.preventDefault(); }
 });
-window.addEventListener('keyup', e=>{ keys.delete(e.key.toLowerCase()); });
-window.addEventListener('mousemove', e=>{
+window.addEventListener('keyup', e => keys.delete(e.key.toLowerCase()));
+window.addEventListener('mousemove', e => {
   const dx = e.clientX - lx, dy = e.clientY - ly;
-  if(mDown){
+  if (mDown) {
     camYaw += dx * 0.3;
     camPitch = Math.max(5, Math.min(89, camPitch + dy * 0.25));
   }
-  if(rDown){
+  if (rDown) {
     const R = 6371000, mid = refLat * Math.PI / 180;
     const spd = camDist / R * 180 / Math.PI * 0.003;
     const yr = camYaw * Math.PI / 180;
     camLon -= (Math.sin(yr) * dy - Math.cos(yr) * dx) * spd / Math.cos(mid);
     camLat -= (Math.cos(yr) * dy + Math.sin(yr) * dx) * spd;
   }
-  lx=e.clientX; ly=e.clientY;
+  lx = e.clientX; ly = e.clientY;
 });
-cv.addEventListener('wheel', e=>{
+cv.addEventListener('wheel', e => {
   camDist = Math.max(500, Math.min(2500000, camDist * (1 + e.deltaY * 0.001)));
   e.preventDefault();
-}, {passive:false});
-cv.addEventListener('contextmenu', e=>e.preventDefault());
-window.addEventListener('resize', ()=>{
+}, { passive: false });
+cv.addEventListener('contextmenu', e => e.preventDefault());
+window.addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(innerWidth, innerHeight);
@@ -787,64 +870,61 @@ window.addEventListener('resize', ()=>{
 
 // Touch
 let touches = {};
-cv.addEventListener('touchstart', e=>{
-  [...e.changedTouches].forEach(t => touches[t.identifier] = {x: t.clientX, y: t.clientY});
+cv.addEventListener('touchstart', e => {
+  [...e.changedTouches].forEach(t => touches[t.identifier] = { x: t.clientX, y: t.clientY });
   e.preventDefault();
-},{passive:false});
-cv.addEventListener('touchmove', e=>{
-  if(Object.keys(touches).length === 1){
+}, { passive: false });
+cv.addEventListener('touchmove', e => {
+  if (Object.keys(touches).length === 1) {
     const t = e.changedTouches[0];
     const dx = t.clientX - touches[t.identifier].x;
     const dy = t.clientY - touches[t.identifier].y;
     camYaw += dx * 0.3;
     camPitch = Math.max(5, Math.min(89, camPitch - dy * 0.25));
-    touches[t.identifier] = {x: t.clientX, y: t.clientY};
+    touches[t.identifier] = { x: t.clientX, y: t.clientY };
   }
   e.preventDefault();
-},{passive:false});
-cv.addEventListener('touchend', e=>{
+}, { passive: false });
+cv.addEventListener('touchend', e => {
   [...e.changedTouches].forEach(t => delete touches[t.identifier]);
-},{passive:false});
+}, { passive: false });
 
+// ─── Loop ─────────────────────────────────────────────────────────────────────
 const hPos   = document.getElementById('h-pos');
 const hAlt   = document.getElementById('h-alt');
 const hTiles = document.getElementById('h-tiles');
-let fc = 0;
-let lastT = performance.now();
+let fc = 0, lastT = performance.now();
 
 function updateKeyboard(dt) {
   const forward = (keys.has('s') ? 1 : 0) - (keys.has('w') ? 1 : 0);
   const strafe  = (keys.has('a') ? 1 : 0) - (keys.has('d') ? 1 : 0);
   const climb   = (keys.has('e') ? 1 : 0) - (keys.has('q') ? 1 : 0);
   if (!forward && !strafe && !climb) return;
-
-  const R = 6371000;
+  const R = 6371000, mid = refLat * Math.PI / 180;
   const yr = camYaw * Math.PI / 180;
-  const mid = refLat * Math.PI / 180;
-  const baseMetersPerSec = Math.max(50, camDist * 0.0015);
-  const horizontalMeters = baseMetersPerSec * WASD_SPEED * dt;
-  const verticalMeters = baseMetersPerSec * QE_SPEED * dt;
-  const east  = (forward * Math.sin(yr) + strafe * Math.cos(yr)) * horizontalMeters;
-  const north = (forward * Math.cos(yr) - strafe * Math.sin(yr)) * horizontalMeters;
-  camLon += (east / (R * Math.cos(mid))) * 180 / Math.PI;
+  const base = Math.max(50, camDist * 0.0015);
+  const hm = base * WASD_SPEED * dt;
+  const vm = base * QE_SPEED * dt;
+  const east  = (forward * Math.sin(yr) + strafe * Math.cos(yr)) * hm;
+  const north = (forward * Math.cos(yr) - strafe * Math.sin(yr)) * hm;
+  camLon += (east  / (R * Math.cos(mid))) * 180 / Math.PI;
   camLat += (north / R) * 180 / Math.PI;
-  camY += climb * verticalMeters;
+  camY   += climb * vm;
 }
 
-function animate(t){
+function animate(t) {
   requestAnimationFrame(animate);
   const dt = Math.min(0.05, (t - lastT) / 1000);
-  lastT = t;
-  fc++;
+  lastT = t; fc++;
   updateKeyboard(dt);
   applyCamera();
-  if(fc % 30 === 0){
+  if (fc % 30 === 0) {
     const z = updateTiles();
-    void loadBuildings(camLat, camLon, z);
+    void loadBuildings(camLat, camLon);
     hPos.textContent   = `Lat: ${camLat.toFixed(4)}°  Lon: ${camLon.toFixed(4)}°`;
-    hAlt.textContent   = `Dystans: ${Math.round(camDist/1000)} km  |  Zoom: ${z}`;
-    const totalMeshes = [...buildingMeshes.values()].reduce((s, m) => s + m.size, 0);
-    hTiles.textContent = `Tile'y: ${tileMeshes.size} załad., ${loadingTiles.size} ładuje… | Budynki: ${totalMeshes} (${buildingTileOrder.length}/${BUILDINGS_SCENE_TILE_LIMIT} tiles, cache: ${buildingCache.size}/${BUILDINGS_DATA_CACHE_LIMIT})`;
+    hAlt.textContent   = `Dystans: ${Math.round(camDist / 1000)} km  |  Zoom: ${z}`;
+    const totalB = [...buildingMeshes.values()].length; // każdy tile = 1 mesh
+    hTiles.textContent = `Tile'y: ${tileMeshes.size} załad., ${loadingTiles.size} ład. | Budynki: ${totalB} batched tiles (cache: ${buildingCache.size}/${BUILDINGS_DATA_CACHE_LIMIT})`;
   }
   renderer.render(scene, camera);
 }
