@@ -55,7 +55,7 @@ const GRID = 160;
 const EXAG = 3.0;
 const Y_SCALE = 0.4;
 const BUILDING_HEIGHT_SCALE = 1.4;
-const TILE_LOAD_SIZE = 7;
+const TILE_LOAD_SIZE = 9;
 const TILE_LOAD_RADIUS = Math.floor(TILE_LOAD_SIZE / 2);
 const WASD_SPEED = 30;
 const QE_SPEED   = 30;
@@ -122,7 +122,7 @@ renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x87CEEB);
-scene.fog = new THREE.Fog(0x87CEEB, 500000, 1500000);
+scene.fog = null;
 
 const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 100, 3000000);
 
@@ -276,10 +276,14 @@ async function loadSatTex(z, x, y, signal) {
     const t = await new Promise(res => {
       const loader = new THREE.TextureLoader();
       loader.load(src, tex => {
+        tex.wrapS     = THREE.ClampToEdgeWrapping;
+        tex.wrapT     = THREE.ClampToEdgeWrapping;
         tex.minFilter = THREE.LinearMipmapLinearFilter;
         tex.magFilter = THREE.LinearFilter;
         tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
         tex.generateMipmaps = true;
+        // Wymuś regenerację mipmap już po ustawieniu wrappingu
+        tex.needsUpdate = true;
         URL.revokeObjectURL(src);
         res(tex);
       }, undefined, () => { URL.revokeObjectURL(src); res(null); });
@@ -679,6 +683,11 @@ async function buildMeshWithNeighbors(tx, ty, zoom, signal) {
   const [x0, y0] = toW(lat1, lon1);
   const [x1, y1] = toW(lat2, lon2);
   const G = GRID;
+  // UV inset: przesuwamy UV o pół teksela od krawędzi tile'a.
+  // Bez tego GPU przy mipmap-filter blenduje krawędziowy teksel z tym co jest
+  // "za" granicą UV (ClampToEdge zwraca ostatni rząd/kolumnę, ale mipmap
+  // generowany jest z sąsiadów których nie ma → jasna smuga na seam).
+  const UV_INSET = 0.5 / 256; // pół teksela dla tekstury 256×256
   const pos = [], uv = [], idx = [];
   for (let r = 0; r <= G; r++) {
     for (let c = 0; c <= G; c++) {
@@ -687,13 +696,17 @@ async function buildMeshWithNeighbors(tx, ty, zoom, signal) {
         ? sampleHeightWithNeighbors(u, v, dem, demR, demB, demC)
         : 0;
       pos.push(x0 + u * (x1 - x0), wz * Y_SCALE, -(y0 + v * (y1 - y0)));
-      uv.push(u, 1 - v);
+      // UV z insetem: mapujemy [0,1] → [UV_INSET, 1-UV_INSET]
+      const us = UV_INSET + u * (1 - 2 * UV_INSET);
+      const vs = UV_INSET + v * (1 - 2 * UV_INSET);
+      uv.push(us, 1 - vs);
     }
   }
   for (let r = 0; r < G; r++)
     for (let c = 0; c < G; c++) {
       const i = r * (G + 1) + c;
-      idx.push(i, i + 1, i + G + 2, i, i + G + 2, i + G + 1);
+      // FrontSide + CCW winding (normals up)
+      idx.push(i, i + G + 1, i + G + 2,  i, i + G + 2, i + 1);
     }
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(pos), 3));
@@ -716,7 +729,7 @@ async function loadTile(tx, ty, zoom) {
   const mat = new THREE.MeshLambertMaterial({
     map: tex || null,
     color: tex ? 0xffffff : 0x5a8a50,
-    side: THREE.BackSide
+    side: THREE.FrontSide
   });
   const mesh = new THREE.Mesh(geo, mat);
   scene.add(mesh);
@@ -726,7 +739,7 @@ async function loadTile(tx, ty, zoom) {
 
 // ─── Tile management ──────────────────────────────────────────────────────────
 function getZoom() {
-  return Math.max(7, Math.min(13, Math.round(Math.log2(150000000 / camDist))));
+  return Math.max(7, Math.min(15, Math.round(Math.log2(150000000 / camDist))));
 }
 
 // Tile'y poprzedniego zooma – zostają w scenie jako fallback póki nowe się ładują
