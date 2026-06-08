@@ -1101,7 +1101,7 @@ cv.addEventListener('touchmove', e => {
     const pr = prevT.get(t.identifier);
     if (pr) {
       camYaw  += (t.clientX - pr.x) * 0.3;
-      camPitch = Math.max(5, Math.min(89, camPitch - (t.clientY - pr.y) * 0.25));
+      camPitch = Math.max(5, Math.min(89, camPitch + (t.clientY - pr.y) * 0.25));
     }
   } else if (activeT.size === 2) {
     const [a,b] = [...activeT.values()];
@@ -1168,8 +1168,14 @@ function applyJoystick(dt) {
   if (!joyActive || (!joyDelta.x && !joyDelta.y)) return;
   const R=6371000, mid=refLat*Math.PI/180, yr=camYaw*Math.PI/180;
   const spd=Math.max(50,camDist*0.0015)*WASD_SPEED*dt;
-  camLon += ((joyDelta.x*Math.cos(yr) - joyDelta.y*Math.sin(yr))*spd / (R*Math.cos(mid))) * 180/Math.PI;
-  camLat += ((joyDelta.x*Math.sin(yr) + joyDelta.y*Math.cos(yr))*spd / R) * 180/Math.PI;
+  // joyDelta.y > 0 = joystick w dół = ruch do przodu (jak W)
+  // joyDelta.x > 0 = joystick w prawo = strafe prawo (jak D)
+  const forward = joyDelta.y;
+  const strafe  = joyDelta.x;
+  const east  = (forward*Math.sin(yr) + strafe*Math.cos(yr)) * spd;
+  const north = (forward*Math.cos(yr) - strafe*Math.sin(yr)) * spd;
+  camLon += (east  / (R*Math.cos(mid))) * 180/Math.PI;
+  camLat += (north / R) * 180/Math.PI;
 }
 
 // ─── Mobile zoom buttons ──────────────────────────────────────────────────────
