@@ -2,10 +2,11 @@
 <html>
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <title>Mapa 3D</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
-body { background: #000; overflow: hidden; font-family: monospace; }
+body { background: #000; overflow: hidden; font-family: monospace; touch-action: none; }
 #c { display: block; width: 100vw; height: 100vh; }
 #hud {
   position: absolute; top: 10px; left: 10px;
@@ -33,7 +34,48 @@ body { background: #000; overflow: hidden; font-family: monospace; }
   cursor: pointer; white-space: nowrap;
   transition: background 0.15s;
 }
-#teleport button:hover { background: rgba(255,255,255,0.18); }
+#teleport button:hover, #teleport button:active { background: rgba(255,255,255,0.18); }
+
+/* ── Mobile joystick ── */
+#joy-wrap {
+  display: none;
+  position: absolute; bottom: 24px; left: 24px;
+}
+#joy-base {
+  width: 110px; height: 110px; border-radius: 50%;
+  background: rgba(255,255,255,0.12);
+  border: 2px solid rgba(255,255,255,0.3);
+  position: relative;
+}
+#joy-knob {
+  width: 44px; height: 44px; border-radius: 50%;
+  background: rgba(255,255,255,0.45);
+  border: 2px solid rgba(255,255,255,0.7);
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  transition: background 0.1s;
+}
+/* zoom buttons */
+#zoom-btns {
+  display: none;
+  position: absolute; bottom: 24px; right: 24px;
+  flex-direction: column; gap: 8px;
+}
+.zoom-btn {
+  width: 52px; height: 52px; border-radius: 50%;
+  background: rgba(0,0,0,0.6); color: #fff;
+  border: 1px solid rgba(255,255,255,0.3);
+  font-size: 26px; line-height: 1; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  user-select: none; -webkit-user-select: none;
+}
+.zoom-btn:active { background: rgba(255,255,255,0.2); }
+@media (pointer: coarse) {
+  #joy-wrap  { display: block; }
+  #zoom-btns { display: flex; }
+  #ctrl { display: none; }
+}
 </style>
 </head>
 <body>
@@ -48,12 +90,22 @@ body { background: #000; overflow: hidden; font-family: monospace; }
   <button onclick="teleportTo(51.107, 17.038, 25000)">🏙 Wrocław</button>
 </div>
 <div id="ctrl">LPM drag = obracaj · scroll = zoom · PPM drag = przesuwaj</div>
+
+<!-- Mobile joystick (przesuwa mapę) -->
+<div id="joy-wrap">
+  <div id="joy-base"><div id="joy-knob"></div></div>
+</div>
+<!-- Mobile zoom buttons -->
+<div id="zoom-btns">
+  <div class="zoom-btn" id="btn-zoom-in">+</div>
+  <div class="zoom-btn" id="btn-zoom-out">−</div>
+</div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
 // ─── STAŁE ────────────────────────────────────────────────────────────────────
 const EXAG = 3.0;
 const Y_SCALE = 0.4;
-const BUILDING_HEIGHT_SCALE = 2;
+const BUILDING_HEIGHT_SCALE = 2.0;
 const TILE_LOAD_SIZE = 9;
 const TILE_LOAD_RADIUS = Math.floor(TILE_LOAD_SIZE / 2);
 const WASD_SPEED = 30;
@@ -1015,26 +1067,123 @@ window.addEventListener('resize', () => {
   renderer.setSize(innerWidth, innerHeight);
 });
 
-// Touch
-let touches = {};
+// ─── Touch (mobile) ───────────────────────────────────────────────────────────
+const activeT  = new Map(); // id → {x,y} aktualna
+const prevT    = new Map(); // id → {x,y} poprzednia (dla delty 1 palca)
+let lastPinchDist = null;
+let lastPanMid    = null;
+
+function touchDist(a,b){ return Math.hypot(a.x-b.x, a.y-b.y); }
+function touchMid(a,b) { return {x:(a.x+b.x)/2, y:(a.y+b.y)/2}; }
+
 cv.addEventListener('touchstart', e => {
-  [...e.changedTouches].forEach(t => touches[t.identifier] = { x: t.clientX, y: t.clientY });
-  e.preventDefault();
-}, { passive: false });
-cv.addEventListener('touchmove', e => {
-  if (Object.keys(touches).length === 1) {
-    const t = e.changedTouches[0];
-    const dx = t.clientX - touches[t.identifier].x;
-    const dy = t.clientY - touches[t.identifier].y;
-    camYaw += dx * 0.3;
-    camPitch = Math.max(5, Math.min(89, camPitch - dy * 0.25));
-    touches[t.identifier] = { x: t.clientX, y: t.clientY };
+  [...e.changedTouches].forEach(t => {
+    const p = {x:t.clientX, y:t.clientY};
+    prevT.set(t.identifier, activeT.has(t.identifier) ? {...activeT.get(t.identifier)} : p);
+    activeT.set(t.identifier, p);
+  });
+  if (activeT.size === 2) {
+    const [a,b] = [...activeT.values()];
+    lastPinchDist = touchDist(a,b);
+    lastPanMid    = touchMid(a,b);
   }
   e.preventDefault();
-}, { passive: false });
+}, {passive:false});
+
+cv.addEventListener('touchmove', e => {
+  [...e.changedTouches].forEach(t => {
+    prevT.set(t.identifier, activeT.has(t.identifier) ? {...activeT.get(t.identifier)} : {x:t.clientX,y:t.clientY});
+    activeT.set(t.identifier, {x:t.clientX, y:t.clientY});
+  });
+
+  if (activeT.size === 1) {
+    const t  = e.changedTouches[0];
+    const pr = prevT.get(t.identifier);
+    if (pr) {
+      camYaw  += (t.clientX - pr.x) * 0.3;
+      camPitch = Math.max(5, Math.min(89, camPitch - (t.clientY - pr.y) * 0.25));
+    }
+  } else if (activeT.size === 2) {
+    const [a,b] = [...activeT.values()];
+    const dist  = touchDist(a,b);
+    const mid   = touchMid(a,b);
+    if (lastPinchDist !== null)
+      camDist = Math.max(500, Math.min(2500000, camDist * (lastPinchDist / dist)));
+    if (lastPanMid !== null) {
+      const R=6371000, mlt=refLat*Math.PI/180, yr=camYaw*Math.PI/180;
+      const spd = camDist/R*180/Math.PI*0.003;
+      const dx=mid.x-lastPanMid.x, dy=mid.y-lastPanMid.y;
+      camLon -= (Math.sin(yr)*dy - Math.cos(yr)*dx)*spd/Math.cos(mlt);
+      camLat -= (Math.cos(yr)*dy + Math.sin(yr)*dx)*spd;
+    }
+    lastPinchDist = dist;
+    lastPanMid    = mid;
+  }
+  e.preventDefault();
+}, {passive:false});
+
 cv.addEventListener('touchend', e => {
-  [...e.changedTouches].forEach(t => delete touches[t.identifier]);
-}, { passive: false });
+  [...e.changedTouches].forEach(t => { activeT.delete(t.identifier); prevT.delete(t.identifier); });
+  if (activeT.size < 2) { lastPinchDist=null; lastPanMid=null; }
+}, {passive:false});
+cv.addEventListener('touchcancel', e => {
+  [...e.changedTouches].forEach(t => { activeT.delete(t.identifier); prevT.delete(t.identifier); });
+  lastPinchDist=null; lastPanMid=null;
+}, {passive:false});
+
+// ─── Mobile joystick ──────────────────────────────────────────────────────────
+const joyBase = document.getElementById('joy-base');
+const joyKnob = document.getElementById('joy-knob');
+let joyActive=false, joyId=null, joyOrigin={x:0,y:0}, joyDelta={x:0,y:0};
+const JOY_R = 33;
+
+joyBase.addEventListener('touchstart', e => {
+  const t = e.changedTouches[0];
+  joyActive=true; joyId=t.identifier;
+  const r = joyBase.getBoundingClientRect();
+  joyOrigin = {x: r.left+r.width/2, y: r.top+r.height/2};
+  e.stopPropagation(); e.preventDefault();
+}, {passive:false});
+window.addEventListener('touchmove', e => {
+  if (!joyActive) return;
+  for (const t of e.changedTouches) {
+    if (t.identifier !== joyId) continue;
+    const dx=t.clientX-joyOrigin.x, dy=t.clientY-joyOrigin.y;
+    const len=Math.hypot(dx,dy), c=Math.min(len,JOY_R);
+    const nx=len>0?dx/len*c:0, ny=len>0?dy/len*c:0;
+    joyKnob.style.transform=`translate(calc(-50% + ${nx}px),calc(-50% + ${ny}px))`;
+    joyDelta={x:nx/JOY_R, y:ny/JOY_R};
+  }
+  e.preventDefault();
+}, {passive:false});
+window.addEventListener('touchend', e => {
+  for (const t of e.changedTouches) {
+    if (t.identifier!==joyId) continue;
+    joyActive=false; joyId=null; joyDelta={x:0,y:0};
+    joyKnob.style.transform='translate(-50%,-50%)';
+  }
+});
+
+function applyJoystick(dt) {
+  if (!joyActive || (!joyDelta.x && !joyDelta.y)) return;
+  const R=6371000, mid=refLat*Math.PI/180, yr=camYaw*Math.PI/180;
+  const spd=Math.max(50,camDist*0.0015)*WASD_SPEED*dt;
+  camLon += ((joyDelta.x*Math.cos(yr) - joyDelta.y*Math.sin(yr))*spd / (R*Math.cos(mid))) * 180/Math.PI;
+  camLat += ((joyDelta.x*Math.sin(yr) + joyDelta.y*Math.cos(yr))*spd / R) * 180/Math.PI;
+}
+
+// ─── Mobile zoom buttons ──────────────────────────────────────────────────────
+let zoomInHeld=false, zoomOutHeld=false;
+const btnIn  = document.getElementById('btn-zoom-in');
+const btnOut = document.getElementById('btn-zoom-out');
+btnIn.addEventListener('touchstart',  e=>{zoomInHeld=true;  e.preventDefault();},{passive:false});
+btnIn.addEventListener('touchend',    ()=>{zoomInHeld=false;});
+btnOut.addEventListener('touchstart', e=>{zoomOutHeld=true; e.preventDefault();},{passive:false});
+btnOut.addEventListener('touchend',   ()=>{zoomOutHeld=false;});
+function applyZoomButtons(dt) {
+  if (zoomInHeld)  camDist=Math.max(500,     camDist*(1-1.5*dt));
+  if (zoomOutHeld) camDist=Math.min(2500000, camDist*(1+1.5*dt));
+}
 
 // ─── Loop ─────────────────────────────────────────────────────────────────────
 const hPos   = document.getElementById('h-pos');
@@ -1064,6 +1213,8 @@ function animate(t) {
   const dt = Math.min(0.05, (t - lastT) / 1000);
   lastT = t; fc++;
   updateKeyboard(dt);
+  applyJoystick(dt);
+  applyZoomButtons(dt);
   applyCamera();
   let z = activeTileZoom ?? getZoom();
   if (fc % 2 === 0)  z = updateTiles();
