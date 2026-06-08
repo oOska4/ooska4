@@ -1171,7 +1171,7 @@ function applyJoystick(dt) {
   // joyDelta.y > 0 = joystick w dół = ruch do przodu (jak W)
   // joyDelta.x > 0 = joystick w prawo = strafe prawo (jak D)
   const forward = joyDelta.y;
-  const strafe  = joyDelta.x;
+  const strafe  = -joyDelta.x;
   const east  = (forward*Math.sin(yr) + strafe*Math.cos(yr)) * spd;
   const north = (forward*Math.cos(yr) - strafe*Math.sin(yr)) * spd;
   camLon += (east  / (R*Math.cos(mid))) * 180/Math.PI;
