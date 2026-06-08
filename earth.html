@@ -51,7 +51,6 @@ body { background: #000; overflow: hidden; font-family: monospace; }
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
 // ─── STAŁE ────────────────────────────────────────────────────────────────────
-const GRID = 160;
 const EXAG = 3.0;
 const Y_SCALE = 0.4;
 const BUILDING_HEIGHT_SCALE = 1.4;
@@ -59,6 +58,14 @@ const TILE_LOAD_SIZE = 9;
 const TILE_LOAD_RADIUS = Math.floor(TILE_LOAD_SIZE / 2);
 const WASD_SPEED = 30;
 const QE_SPEED   = 30;
+
+// GRID adaptacyjny – daleko mniej wierzchołków, blisko więcej szczegółów
+function gridForZoom(z) {
+  if (z <= 9)  return 48;
+  if (z <= 11) return 80;
+  if (z <= 13) return 112;
+  return 128;
+}
 
 const BUILDINGS_ENABLED        = true;
 const BUILDINGS_TILE_ZOOM      = 15;
@@ -77,8 +84,9 @@ const BUILDINGS_SCENE_TILE_LIMIT = 6;
 const BUILDINGS_DATA_CACHE_LIMIT = 14;
 const BUILDINGS_DEBUG = true;
 
-// SAT zoom do próbkowania koloru budynków
-const COLOR_SAT_ZOOM = 16;
+// SAT zoom do próbkowania koloru budynków – taki sam jak maksymalny zoom terenu,
+// żeby tile'y były już w cache z pipeline terenu
+const COLOR_SAT_ZOOM = 15;
 
 // ─── URL helpers ──────────────────────────────────────────────────────────────
 const SAT  = (z,x,y) => `https://tile.openstreetmap.org/${z}/${x}/${y}.png`;
@@ -116,7 +124,11 @@ function polygonCenter(points) {
 }
 
 // ─── THREE setup ──────────────────────────────────────────────────────────────
-const renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('c'), antialias: true });
+const renderer = new THREE.WebGLRenderer({
+  canvas: document.getElementById('c'),
+  antialias: false,
+  powerPreference: 'high-performance'
+});
 renderer.setSize(innerWidth, innerHeight);
 renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
 
@@ -126,10 +138,11 @@ scene.fog = null;
 
 const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 100, 3000000);
 
+// MeshBasicMaterial nie używa świateł – zostawiamy tylko ambient dla budynków (Lambert)
 const sun = new THREE.DirectionalLight(0xffffff, 1.1);
 sun.position.set(100000, 150000, 80000);
 scene.add(sun);
-scene.add(new THREE.AmbientLight(0xc8e0ff, 0.6));
+scene.add(new THREE.AmbientLight(0xffffff, 1.0));
 
 // ─── Kamera ───────────────────────────────────────────────────────────────────
 let camLat = 47.03012, camLon = 10.74558, camDist = 120000;
@@ -168,7 +181,7 @@ function putCachedSatTexture(key, t) {
 // ─── TilePixelStore ───────────────────────────────────────────────────────────
 // Promise coalescing: ten sam tile → jedna wspólna Promise (zero duplikatów).
 // Po resolve: lookup = array[offset] → O(1), zero DOM/canvas per budynek.
-const COLOR_PIXEL_CACHE_LIMIT = 48;
+const COLOR_PIXEL_CACHE_LIMIT = 256;
 const colorPixelCache    = new Map(); // key → Uint8ClampedArray
 const colorPixelInflight = new Map(); // key → Promise<Uint8ClampedArray|null>
 
@@ -273,22 +286,40 @@ async function loadSatTex(z, x, y, signal) {
   for (const url of [SAT2(z, x, y), SAT(z, x, y)]) {
     const src = await loadImageBlob(url, signal);
     if (!src) continue;
-    const t = await new Promise(res => {
-      const loader = new THREE.TextureLoader();
-      loader.load(src, tex => {
+    const result = await new Promise(res => {
+      const img = new Image();
+      img.onload = () => {
+        // Rysuj na canvasie raz – wyciągnij i pixel data (CPU) i teksturę (GPU)
+        const cv2 = document.createElement('canvas');
+        cv2.width = cv2.height = 256;
+        const ctx = cv2.getContext('2d', { willReadFrequently: true });
+        ctx.drawImage(img, 0, 0, 256, 256);
+
+        // Pixel data do colorPixelCache
+        try {
+          const pixels = ctx.getImageData(0, 0, 256, 256).data;
+          if (!colorPixelCache.has(key)) {
+            colorPixelCache.set(key, pixels);
+            while (colorPixelCache.size > COLOR_PIXEL_CACHE_LIMIT)
+              colorPixelCache.delete(colorPixelCache.keys().next().value);
+          }
+        } catch(e) { /* tainted canvas – ignoruj */ }
+
+        // Tekstura Three.js z tego samego obrazu
+        const tex = new THREE.CanvasTexture(cv2);
         tex.wrapS     = THREE.ClampToEdgeWrapping;
         tex.wrapT     = THREE.ClampToEdgeWrapping;
         tex.minFilter = THREE.LinearMipmapLinearFilter;
         tex.magFilter = THREE.LinearFilter;
         tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
-        tex.generateMipmaps = true;
-        // Wymuś regenerację mipmap już po ustawieniu wrappingu
-        tex.needsUpdate = true;
         URL.revokeObjectURL(src);
         res(tex);
-      }, undefined, () => { URL.revokeObjectURL(src); res(null); });
+      };
+      img.onerror = () => { URL.revokeObjectURL(src); res(null); };
+      img.crossOrigin = 'anonymous';
+      img.src = src;
     });
-    if (t) { putCachedSatTexture(key, t); return t; }
+    if (result) { putCachedSatTexture(key, result); return result; }
   }
   return null;
 }
@@ -309,6 +340,21 @@ async function decodeDEM(url, signal) {
         const h = new Float32Array(256 * 256);
         for (let i = 0; i < 256 * 256; i++)
           h[i] = px[i * 4] * 256 + px[i * 4 + 1] + px[i * 4 + 2] / 256 - 32768;
+
+        // ── Spike filter ──────────────────────────────────────────────────────
+        // Dla każdego piksela (z pominięciem krawędzi): jeśli wartość odstaje od
+        // średniej 4 sąsiadów o więcej niż SPIKE_THRESHOLD metrów, zastąp ją
+        // tą średnią. Eliminuje pojedyncze błędne piksele DEM bez wpływu na
+        // prawdziwe szczyty (które mają spójne sąsiedztwo).
+        const SPIKE_THRESHOLD = 200; // metry – większe różnice to błąd danych
+        for (let y = 1; y < 255; y++) {
+          for (let x = 1; x < 255; x++) {
+            const i   = y * 256 + x;
+            const avg = (h[i - 1] + h[i + 1] + h[i - 256] + h[i + 256]) * 0.25;
+            if (Math.abs(h[i] - avg) > SPIKE_THRESHOLD) h[i] = avg;
+          }
+        }
+
         URL.revokeObjectURL(src);
         res(h);
       } catch { res(null); }
@@ -369,8 +415,9 @@ function sampleHeightWithNeighbors(u, v, dem, demR, demB, demC) {
 // Budynki w jednym tile są łączone w JEDEN Mesh z vertex colors.
 // Brak osobnych materialów per budynek → ogromna oszczędność draw calls.
 
-// Material współdzielony przez wszystkie batched-tile meshe
-const buildingMaterial = new THREE.MeshLambertMaterial({
+// Material budynków – Basic zamiast Lambert: kolor vertex bez oświetlenia,
+// zero problemów z normalnymi/białością przy złym windingu GeoJSON
+const buildingMaterial = new THREE.MeshBasicMaterial({
   vertexColors: true,
   side: THREE.FrontSide
 });
@@ -524,6 +571,37 @@ function parseBuildingHeight(tags) {
   return 8;
 }
 
+// Kolor budynku: deterministyczny hash ID → naturalny kolor miejski w HSL.
+// Hue: ciepłe odcienie (0-60° żółto-czerwone) + chłodne szarości (180-240°)
+// Saturation: niska (miasto = wyblakłe kolory)
+// Lightness: średnia-wysoka (jasne elewacje)
+function buildingColor(id) {
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = (Math.imul(31, h) + id.charCodeAt(i)) | 0;
+  const u = (h >>> 0) / 0xffffffff; // [0,1] unsigned
+
+  // Podziel na 3 strefy hue: ciepłe (ceglane/beżowe), neutralne (szare), chłodne (kamienne)
+  const hueRanges = [[15, 45], [25, 55], [200, 230], [30, 50], [10, 40]];
+  const range = hueRanges[Math.abs(h) % hueRanges.length];
+  const hue = range[0] + ((h >> 8) & 0xff) / 255 * (range[1] - range[0]);
+  const sat = 8 + ((h >> 16) & 0xff) / 255 * 22;   // 8–30% – wyblakłe
+  const lit = 52 + ((h >> 4)  & 0xff) / 255 * 28;  // 52–80% – jasne elewacje
+
+  // HSL → RGB
+  const s = sat / 100, l = lit / 100;
+  const c = (1 - Math.abs(2 * l - 1)) * s;
+  const x = c * (1 - Math.abs((hue / 60) % 2 - 1));
+  const m = l - c / 2;
+  let r, g, b;
+  if      (hue < 60)  { r=c; g=x; b=0; }
+  else if (hue < 120) { r=x; g=c; b=0; }
+  else if (hue < 180) { r=0; g=c; b=x; }
+  else if (hue < 240) { r=0; g=x; b=c; }
+  else if (hue < 300) { r=x; g=0; b=c; }
+  else                { r=c; g=0; b=x; }
+  return (Math.round((r+m)*255) << 16) | (Math.round((g+m)*255) << 8) | Math.round((b+m)*255);
+}
+
 async function loadBuildings(lat, lon) {
   const shouldShow = BUILDINGS_ENABLED &&
     camDist <= BUILDINGS_MAX_DIST && camDist >= BUILDINGS_MIN_DIST;
@@ -607,47 +685,40 @@ async function loadBuildings(lat, lon) {
     }
     if (epoch !== buildingLoadEpoch || sig.aborted) return;
 
-    // ── FAZA 3: zbierz unikalne tile DEM i SAT, załaduj WSZYSTKIE naraz ──────
-    const demTileKeys  = new Set();
-    const satTileKeys  = new Set();
+    // ── FAZA 3: prefetch DEM + SAT pixel tile'ów ─────────────────────────────
+    // SAT zoom = activeTileZoom – te tile'y są już w colorPixelCache z loadSatTex.
+    // loadTilePixels ma promise coalescing – nie robi duplikatów requestów.
+    const satZ = activeTileZoom ?? COLOR_SAT_ZOOM;
+    const demTileKeys = new Set();
+    const satTileKeys = new Set();
     for (const b of rawBuildings) {
       const [clat, clon] = b.center;
-      // DEM tile (zoom BUILDINGS_TILE_ZOOM)
       const [dtx, dty] = deg2tile(clat, clon, BUILDINGS_TILE_ZOOM);
       demTileKeys.add(`${BUILDINGS_TILE_ZOOM}_${dtx}_${dty}`);
-      // SAT tile (zoom COLOR_SAT_ZOOM)
-      const { tx: stx, ty: sty } = latLonToTilePixel(clat, clon, COLOR_SAT_ZOOM);
-      satTileKeys.add(`${COLOR_SAT_ZOOM}_${stx}_${sty}`);
+      const { tx: stx, ty: sty } = latLonToTilePixel(clat, clon, satZ);
+      satTileKeys.add(`${satZ}_${stx}_${sty}`);
     }
-
-    // Prefetch: uruchom wszystkie równolegle (promise coalescing zapobiega duplikatom)
-    const demPrefetch = [...demTileKeys].map(k => {
-      const [z, x, y] = k.split('_').map(Number);
-      return loadDemData(z, x, y, sig);
-    });
-    const satPrefetch = [...satTileKeys].map(k => {
-      const [z, x, y] = k.split('_').map(Number);
-      return loadTilePixels(z, x, y, sig);
-    });
-    await Promise.all([...demPrefetch, ...satPrefetch]);
+    await Promise.all([
+      ...[...demTileKeys].map(k => { const [z,x,y] = k.split('_').map(Number); return loadDemData(z,x,y,sig); }),
+      ...[...satTileKeys].map(k => { const [z,x,y] = k.split('_').map(Number); return loadTilePixels(z,x,y,sig); }),
+    ]);
     if (epoch !== buildingLoadEpoch || sig.aborted) return;
 
-    // ── FAZA 4: SYNCHRONICZNA pętla po budynkach – zero await w środku ───────
+    // ── FAZA 4: SYNCHRONICZNA pętla po budynkach ──────────────────────────────
     const items = [];
     for (const b of rawBuildings) {
       const [clat, clon] = b.center;
 
-      // DEM lookup (synchroniczny – tile jest już w demDataCache)
+      // DEM lookup – pomiń gdy brak (unikamy kopii na Y=0)
       const [dtx, dty] = deg2tile(clat, clon, BUILDINGS_TILE_ZOOM);
-      const demKey = `${BUILDINGS_TILE_ZOOM}_${dtx}_${dty}`;
-      const dem    = demDataCache.get(demKey) ?? null;
-      const baseY  = sampleDemHeight(dem, clat, clon, BUILDINGS_TILE_ZOOM);
+      const dem = demDataCache.get(`${BUILDINGS_TILE_ZOOM}_${dtx}_${dty}`) ?? null;
+      if (!dem) continue;
+      const baseY = sampleDemHeight(dem, clat, clon, BUILDINGS_TILE_ZOOM);
 
-      // SAT lookup (synchroniczny – tile jest już w colorPixelCache)
-      const { tx: stx, ty: sty, px, py } = latLonToTilePixel(clat, clon, COLOR_SAT_ZOOM);
-      const satKey  = `${COLOR_SAT_ZOOM}_${stx}_${sty}`;
-      const pixels  = colorPixelCache.get(satKey) ?? null;
-      const colorHex = samplePixelColor(pixels, px, py);
+      // SAT kolor – z pixel cache załadowanego przez terrain pipeline
+      const { tx: stx, ty: sty, px, py } = latLonToTilePixel(clat, clon, satZ);
+      const pixels   = colorPixelCache.get(`${satZ}_${stx}_${sty}`) ?? null;
+      const colorHex = pixels ? samplePixelColor(pixels, px, py) : buildingColor(b.id);
 
       items.push({ id: b.id, points: b.ring, height: b.height, baseY, colorHex });
     }
@@ -658,14 +729,37 @@ async function loadBuildings(lat, lon) {
 
     if (BUILDINGS_DEBUG)
       console.log('[buildings] loaded', items.length, 'buildings |',
-        demTileKeys.size, 'dem tiles |', satTileKeys.size, 'sat tiles |',
-        'scene:', buildingTileOrder.length, '| cache:', buildingCache.size);
+        demTileKeys.size, 'dem tiles |', satTileKeys.size, 'sat tiles | scene:',
+        buildingTileOrder.length, '| cache:', buildingCache.size);
   } catch (e) {
     if (BUILDINGS_DEBUG && e?.name !== 'AbortError') console.error('[buildings]', e);
   }
 }
 
 // ─── TERRAIN mesh ─────────────────────────────────────────────────────────────
+// Prealokowane bufory robocze – największy możliwy GRID=128 → (129)²=16641 werteksów
+const _MAX_G   = 128;
+const _MAX_G1  = _MAX_G + 1;
+const _posBuf  = new Float32Array(_MAX_G1 * _MAX_G1 * 3);
+const _uvBuf   = new Float32Array(_MAX_G1 * _MAX_G1 * 2);
+
+// Cache index bufferów per GRID – budowane raz, potem reużywane (SharedBuffer trick)
+const _idxCache = new Map(); // GRID → Uint32Array
+function getIdxBuf(G) {
+  if (_idxCache.has(G)) return _idxCache.get(G);
+  const G1  = G + 1;
+  const buf = new Uint32Array(G * G * 6);
+  let i = 0;
+  for (let r = 0; r < G; r++)
+    for (let c = 0; c < G; c++) {
+      const v = r * G1 + c;
+      buf[i++] = v;     buf[i++] = v + G1;     buf[i++] = v + G1 + 1;
+      buf[i++] = v;     buf[i++] = v + G1 + 1; buf[i++] = v + 1;
+    }
+  _idxCache.set(G, buf);
+  return buf;
+}
+
 async function buildMeshWithNeighbors(tx, ty, zoom, signal) {
   const [dem, demR, demB, demC] = await Promise.all([
     loadDemData(zoom, tx,     ty,     signal),
@@ -673,45 +767,53 @@ async function buildMeshWithNeighbors(tx, ty, zoom, signal) {
     loadDemData(zoom, tx,     ty + 1, signal),
     loadDemData(zoom, tx + 1, ty + 1, signal),
   ]);
+
+  const GRID  = gridForZoom(zoom);
+  const G1    = GRID + 1;
+  const INV_G = 1 / GRID;
+
   const [lat1, lon1] = tile2deg(tx,   ty,   zoom);
   const [lat2, lon2] = tile2deg(tx+1, ty+1, zoom);
-  const R = 6371000, mid = refLat * Math.PI / 180;
-  const toW = (la, lo) => [
-    (lo - refLon) * Math.PI / 180 * R * Math.cos(mid),
-    (la - refLat) * Math.PI / 180 * R
-  ];
-  const [x0, y0] = toW(lat1, lon1);
-  const [x1, y1] = toW(lat2, lon2);
-  const G = GRID;
-  // UV inset: przesuwamy UV o pół teksela od krawędzi tile'a.
-  // Bez tego GPU przy mipmap-filter blenduje krawędziowy teksel z tym co jest
-  // "za" granicą UV (ClampToEdge zwraca ostatni rząd/kolumnę, ale mipmap
-  // generowany jest z sąsiadów których nie ma → jasna smuga na seam).
-  const UV_INSET = 0.5 / 256; // pół teksela dla tekstury 256×256
-  const pos = [], uv = [], idx = [];
-  for (let r = 0; r <= G; r++) {
-    for (let c = 0; c <= G; c++) {
-      const u = c / G, v = r / G;
-      const wz = dem
-        ? sampleHeightWithNeighbors(u, v, dem, demR, demB, demC)
-        : 0;
-      pos.push(x0 + u * (x1 - x0), wz * Y_SCALE, -(y0 + v * (y1 - y0)));
-      // UV z insetem: mapujemy [0,1] → [UV_INSET, 1-UV_INSET]
-      const us = UV_INSET + u * (1 - 2 * UV_INSET);
-      const vs = UV_INSET + v * (1 - 2 * UV_INSET);
-      uv.push(us, 1 - vs);
+  const R    = 6371000, mid = refLat * Math.PI / 180;
+  const cosM = Math.cos(mid);
+  const x0   = (lon1 - refLon) * Math.PI / 180 * R * cosM;
+  const y0   = (lat1 - refLat) * Math.PI / 180 * R;
+  const dx   = (lon2 - lon1)   * Math.PI / 180 * R * cosM;
+  const dy   = (lat2 - lat1)   * Math.PI / 180 * R;
+
+  const UV_INSET = 0.5 / 256;
+  const UV_SCALE = 1 - 2 * UV_INSET;
+  const EPS      = 1.0 / 256;
+
+  let vi = 0, ui = 0;
+  for (let r = 0; r <= GRID; r++) {
+    for (let c = 0; c <= GRID; c++) {
+      const u = c * INV_G;
+      const v = r * INV_G;
+      let wz = 0;
+      if (dem) {
+        let d = dem, su = u, sv = v;
+        if      (u >= 1.0 - EPS && demR) { d = demR; su = u - 1.0; sv = v;
+          if    (sv >= 1.0 - EPS && demC) { d = demC; su = u - 1.0; sv = v - 1.0; }
+        } else if (v >= 1.0 - EPS && demB) { d = demB; su = u; sv = v - 1.0; }
+        const px  = su < 0 ? 0 : su > 1 ? 255 : (su * 255) | 0;
+        const py  = sv < 0 ? 0 : sv > 1 ? 255 : (sv * 255) | 0;
+        const raw = d[py * 256 + px];
+        wz = raw > 0 ? raw * EXAG * Y_SCALE : 0;
+      }
+      _posBuf[vi++] = x0 + u * dx;
+      _posBuf[vi++] = wz;
+      _posBuf[vi++] = -(y0 + v * dy);
+      _uvBuf[ui++]  = UV_INSET + u * UV_SCALE;
+      _uvBuf[ui++]  = UV_INSET + (1 - v) * UV_SCALE;
     }
   }
-  for (let r = 0; r < G; r++)
-    for (let c = 0; c < G; c++) {
-      const i = r * (G + 1) + c;
-      // FrontSide + CCW winding (normals up)
-      idx.push(i, i + G + 1, i + G + 2,  i, i + G + 2, i + 1);
-    }
+
+  const idxBuf = getIdxBuf(GRID); // shared – nie kopiujemy, THREE dostaje widok
   const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(pos), 3));
-  geo.setAttribute('uv',       new THREE.BufferAttribute(new Float32Array(uv),  2));
-  geo.setIndex(idx);
+  geo.setAttribute('position', new THREE.BufferAttribute(_posBuf.slice(0, vi), 3));
+  geo.setAttribute('uv',       new THREE.BufferAttribute(_uvBuf.slice(0, ui),  2));
+  geo.setIndex(new THREE.BufferAttribute(new Uint32Array(idxBuf), 1));
   geo.computeVertexNormals();
   return geo;
 }
@@ -726,10 +828,11 @@ async function loadTile(tx, ty, zoom) {
     loadSatTex(zoom, tx, ty, sig)
   ]);
   if (epoch !== tileLoadEpoch || sig.aborted) { loadingTiles.delete(key); return; }
-  const mat = new THREE.MeshLambertMaterial({
+  // MeshBasicMaterial – zero obliczeń oświetlenia per pixel (vs Lambert).
+  // Teren i tak wygląda dobrze bo kolor pochodzi z tekstury SAT.
+  const mat = new THREE.MeshBasicMaterial({
     map: tex || null,
     color: tex ? 0xffffff : 0x5a8a50,
-    side: THREE.FrontSide
   });
   const mesh = new THREE.Mesh(geo, mat);
   scene.add(mesh);
@@ -744,6 +847,11 @@ function getZoom() {
 
 // Tile'y poprzedniego zooma – zostają w scenie jako fallback póki nowe się ładują
 const oldTileMeshes = new Map();
+
+// Debounce zmiany zooma – czekamy N klatek stabilnego zooma zanim zmienimy
+let pendingZoom     = null;
+let pendingZoomAge  = 0;
+const ZOOM_DEBOUNCE_FRAMES = 8; // ~270ms przy 30fps update
 
 function disposeMesh(mesh) {
   scene.remove(mesh);
@@ -762,24 +870,50 @@ function clearOldTiles() {
 }
 
 function updateTiles() {
-  const zoom = getZoom();
+  const rawZoom = getZoom();
 
-  if (zoom !== activeTileZoom) {
-    tileLoadController.abort();
-    tileLoadController = new AbortController();
-    tileLoadEpoch++;
-    loadingTiles.clear();
-    // Przenieś aktualny zoom do fallbacku – zostają widoczne w scenie
-    clearOldTiles();
-    for (const [key, mesh] of tileMeshes) oldTileMeshes.set(key, mesh);
-    tileMeshes.clear();
-    activeTileZoom = zoom;
+  // Debounce: zmień activeTileZoom dopiero gdy ten sam zoom utrzymuje się
+  // przez ZOOM_DEBOUNCE_FRAMES klatek – eliminuje miganie przy szybkim scrollu
+  if (rawZoom !== activeTileZoom) {
+    if (rawZoom === pendingZoom) {
+      pendingZoomAge++;
+    } else {
+      pendingZoom    = rawZoom;
+      pendingZoomAge = 1;
+    }
+
+    if (pendingZoomAge >= ZOOM_DEBOUNCE_FRAMES) {
+      // Zoom stabilny – przełącz
+      tileLoadController.abort();
+      tileLoadController = new AbortController();
+      tileLoadEpoch++;
+      loadingTiles.clear();
+      // Stare tile'y → fallback (nadal widoczne w scenie)
+      clearOldTiles();
+      for (const [key, mesh] of tileMeshes) oldTileMeshes.set(key, mesh);
+      tileMeshes.clear();
+      activeTileZoom = rawZoom;
+      pendingZoom    = null;
+      pendingZoomAge = 0;
+    }
+
+    if (activeTileZoom === null) {
+      activeTileZoom = rawZoom;
+      pendingZoom    = null;
+      pendingZoomAge = 0;
+    } else if (activeTileZoom !== rawZoom) {
+      return activeTileZoom; // czekamy na debounce
+    }
+  } else {
+    pendingZoom    = null;
+    pendingZoomAge = 0;
   }
 
+  const zoom = activeTileZoom;
   const [cx, cy] = deg2tile(camLat, camLon, zoom);
   const n = 1 << zoom;
 
-  // Usuń tile'y nowego zooma które wyszły daleko poza zasięg
+  // Usuń tile'y aktywnego zooma które wyszły za daleko
   for (const [key, mesh] of tileMeshes) {
     const [, kx, ky] = key.split('_').map(Number);
     if (Math.abs(kx - cx) > TILE_LOAD_RADIUS + 1 || Math.abs(ky - cy) > TILE_LOAD_RADIUS + 1) {
@@ -794,7 +928,7 @@ function updateTiles() {
       if (tx >= 0 && ty >= 0 && tx < n && ty < n) loadTile(tx, ty, zoom);
     }
 
-  // Gdy cały widoczny obszar nowego zooma załadowany – usuń stary fallback
+  // Usuń stare tile'y dopiero gdy CAŁY widoczny obszar nowego zooma jest załadowany
   if (oldTileMeshes.size > 0) {
     let allLoaded = true;
     outer: for (let dy = -TILE_LOAD_RADIUS; dy <= TILE_LOAD_RADIUS; dy++)
@@ -931,12 +1065,13 @@ function animate(t) {
   lastT = t; fc++;
   updateKeyboard(dt);
   applyCamera();
+  let z = activeTileZoom ?? getZoom();
+  if (fc % 2 === 0)  z = updateTiles();
+  if (fc % 10 === 0) void loadBuildings(camLat, camLon);
   if (fc % 30 === 0) {
-    const z = updateTiles();
-    void loadBuildings(camLat, camLon);
     hPos.textContent   = `Lat: ${camLat.toFixed(4)}°  Lon: ${camLon.toFixed(4)}°`;
     hAlt.textContent   = `Dystans: ${Math.round(camDist / 1000)} km  |  Zoom: ${z}`;
-    const totalB = [...buildingMeshes.values()].length; // każdy tile = 1 mesh
+    const totalB = [...buildingMeshes.values()].length;
     hTiles.textContent = `Tile'y: ${tileMeshes.size} załad., ${loadingTiles.size} ład. | Budynki: ${totalB} batched tiles (cache: ${buildingCache.size}/${BUILDINGS_DATA_CACHE_LIMIT})`;
   }
   renderer.render(scene, camera);
