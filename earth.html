@@ -1166,16 +1166,16 @@ window.addEventListener('touchend', e => {
 
 function applyJoystick(dt) {
   if (!joyActive || (!joyDelta.x && !joyDelta.y)) return;
-  const R=6371000, mid=refLat*Math.PI/180, yr=camYaw*Math.PI/180;
-  const spd=Math.max(50,camDist*0.0015)*WASD_SPEED*dt;
-  // joyDelta.y > 0 = joystick w dół = ruch do przodu (jak W)
-  // joyDelta.x > 0 = joystick w prawo = strafe prawo (jak D)
-  const forward = joyDelta.y;
-  const strafe  = joyDelta.x;
-  const east  = (forward*Math.sin(yr) + strafe*Math.cos(yr)) * spd;
-  const north = (forward*Math.cos(yr) - strafe*Math.sin(yr)) * spd;
-  camLon -= (east  / (R*Math.cos(mid))) * 180/Math.PI;
-  camLat += (north / R) * 180/Math.PI;
+  const R   = 6371000, mid = refLat * Math.PI / 180;
+  const yr  = camYaw * Math.PI / 180;
+  const hm  = Math.max(50, camDist * 0.0015) * WASD_SPEED * dt;
+  // Mapuj 1:1 jak klawiatura: joystick góra = W (forward=-1), prawo = D (strafe=-1)
+  const forward = -joyDelta.y;
+  const strafe  = -joyDelta.x;
+  const east  = (forward * Math.sin(yr) + strafe * Math.cos(yr)) * hm;
+  const north = (forward * Math.cos(yr) - strafe * Math.sin(yr)) * hm;
+  camLon += (east  / (R * Math.cos(mid))) * 180 / Math.PI;
+  camLat += (north / R) * 180 / Math.PI;
 }
 
 // ─── Mobile zoom buttons ──────────────────────────────────────────────────────
