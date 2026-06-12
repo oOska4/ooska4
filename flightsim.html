@@ -119,6 +119,8 @@
     <div>ALT <span id="alt-val" style="color:#c8e8ff">0 ft</span></div>
     <div>AGL <span id="agl-val" style="color:#c8e8ff">0 ft</span></div>
     <div>AoA <span id="aoa-val" style="color:#c8e8ff">0°</span></div>
+    <div>FLAPS <span id="flaps-val" style="color:#c8e8ff">1</span></div>
+    <div>SPOILERS <span id="spoilers-val" style="color:#c8e8ff">OFF</span></div>
   </div>
   <div id="controls">
     <span class="ctrl-header">Sterowanie</span>
@@ -126,6 +128,7 @@
     <div><span>↑ / ↓</span> — Nos w górę / dół</div>
     <div><span>← / →</span> — Roll L/R</div>
     <div><span>Q / E</span> — Ruder L/R</div>
+    <div><span>B</span> — Speedbrake</div>
     <div><span>F</span> — Klapy (0/1/2/3)</div>
     <div><span>G</span> — Podwozie</div>
     <div><span>C</span> — Kamera</div>
@@ -406,6 +409,16 @@ function buildA321() {
     flap.position.set(4.5,-0.2,side*4.5);
     flap.name=`flap_${side>0?'R':'L'}`; wGrp.add(flap);
 
+    // Speedbrake spoiler
+    const spoilerGroup=new THREE.Group();
+    const spoilerGeo=new THREE.BoxGeometry(3.0,0.05,1.6);
+    const spoiler=new THREE.Mesh(spoilerGeo,new THREE.MeshPhongMaterial({color:0x999999,shininess:40}));
+    spoiler.position.set(1.5,0,0);
+    spoilerGroup.add(spoiler);
+    spoilerGroup.position.set(3.7,0.05,side*7.5);
+    spoilerGroup.name=`spoiler_${side>0?'R':'L'}`;
+    wGrp.add(spoilerGroup);
+
     // Aileron
     const ailGeo=new THREE.BoxGeometry(0.12,3.5,2.2); ailGeo.rotateX(-Math.PI/2);
     const ail=new THREE.Mesh(ailGeo,new THREE.MeshPhongMaterial({color:0xdedede}));
@@ -584,6 +597,7 @@ const phys = {
   agl: 0,
   vs: 0,
   forward: new THREE.Vector3(0,0,1),
+  spoilers: false,
   // dodatkowy stan
   autoRotateArmed: false, // true gdy prędkość >= VR
 };
@@ -620,6 +634,8 @@ const A321 = {
   flapStall:  [0.285, 0.32, 0.36, 0.40], // kąt krytyczny rośnie z klapami
   // Podwozie
   cdGear:     0.060,
+  spoilerCd:  0.30,
+  spoilerLiftLoss: 0.35,
   // Prędkości (m/s)
   V1:  69.4,   // ~135kt
   VR:  74.7,   // ~145kt (rotacja)
@@ -666,6 +682,7 @@ window.addEventListener('keyup', e => {
     phys.gearDown=!phys.gearDown;
     updateGearVisibility();
   }
+  if (e.code==='KeyB') phys.spoilers=!phys.spoilers;
   if (e.code==='KeyC') camMode=(camMode+1)%3;
   if (e.code==='KeyR') resetPlane();
 });
@@ -681,6 +698,7 @@ function resetPlane() {
   phys.throttle=0;
   phys.flaps=1;
   phys.gearDown=true;
+  phys.spoilers=false;
   phys.onGround=true;
   phys.autoRotateArmed=false;
   airplane.position.copy(phys.pos);
@@ -797,13 +815,14 @@ function physicsStep(dt) {
     cl = Math.sign(alpha) * Math.max(0.15, (A321.clMax + A321.flapCl[flap]) - over * 4.0);
   } else {
     cl = A321.cl0 + A321.flapCl[flap] + A321.clAlpha * alpha;
-    cl = Math.max(-0.3, Math.min(A321.clMax + A321.flapCl[flap], cl));
   }
+  if (phys.spoilers) cl -= A321.spoilerLiftLoss;
+  cl = Math.max(-0.3, Math.min(A321.clMax + A321.flapCl[flap], cl));
 
   const agl_now = phys.pos.y - getGroundHeight(phys.pos.x, phys.pos.z) - (phys.gearDown ? 3.15 : 0.5);
   const gef     = groundEffectFactor(agl_now);
   const cdi     = (cl*cl) / (Math.PI * A321.eOswald * A321.AR) * gef;
-  const cd      = A321.cdMin + A321.flapCd[flap] + (phys.gearDown ? A321.cdGear : 0) + cdi + A321.cdAlpha * alpha * alpha;
+  const cd      = A321.cdMin + A321.flapCd[flap] + (phys.gearDown ? A321.cdGear : 0) + cdi + A321.cdAlpha * alpha * alpha + (phys.spoilers ? A321.spoilerCd : 0);
 
   const q       = 0.5 * RHO * airspeed * airspeed;
   const liftMag = q * A321.wingArea * cl;
@@ -829,8 +848,10 @@ function physicsStep(dt) {
     } else {
       const hs = Math.sqrt(phys.vel.x**2 + phys.vel.z**2);
       const brake = keys['KeyS'] ? 5.0 : 0.06;
-      phys.vel.x += ((thrustVec.x + dragVec.x) / A321.mass - (hs > 0.05 ? phys.vel.x/hs*brake : 0)) * dtCap;
-      phys.vel.z += ((thrustVec.z + dragVec.z) / A321.mass - (hs > 0.05 ? phys.vel.z/hs*brake : 0)) * dtCap;
+      const spoilerBrake = phys.spoilers ? 8.0 : 0;
+      const totalBrake = brake + spoilerBrake;
+      phys.vel.x += ((thrustVec.x + dragVec.x) / A321.mass - (hs > 0.05 ? phys.vel.x/hs*totalBrake : 0)) * dtCap;
+      phys.vel.z += ((thrustVec.z + dragVec.z) / A321.mass - (hs > 0.05 ? phys.vel.z/hs*totalBrake : 0)) * dtCap;
       phys.vel.y  = 0;
       phys.pos.y  = groundH + gearOffset;
     }
@@ -1119,6 +1140,8 @@ function updateHUD() {
   document.getElementById('agl-val').textContent=agl_ft.toFixed(0)+' ft';
   document.getElementById('hdg-val').textContent=hdg.toFixed(0)+'°';
   document.getElementById('aoa-val').textContent=((phys._alpha||0)*180/Math.PI).toFixed(1)+'°';
+  document.getElementById('flaps-val').textContent=phys.flaps.toString();
+  document.getElementById('spoilers-val').textContent=phys.spoilers?'ON':'OFF';
 
   const tPct=(phys.throttle*100).toFixed(0);
   document.getElementById('throttle-bar').style.width=tPct+'%';
@@ -1157,6 +1180,8 @@ function animateModel(dt) {
   const flapTarget=phys.flaps*12*Math.PI/180;
   prevFlapPos+=(flapTarget-prevFlapPos)*Math.min(1,dt*4);
   ['flap_R','flap_L'].forEach(n=>{ const f=airplane.getObjectByName(n); if(f) f.rotation.x=prevFlapPos; });
+  const spoilerTarget=phys.spoilers?35*Math.PI/180:0;
+  ['spoiler_R','spoiler_L'].forEach(n=>{ const s=airplane.getObjectByName(n); if(s) s.rotation.x=-spoilerTarget; });
   const elevDefl=-phys.pitchRate*0.8;
   ['elevator_R','elevator_L'].forEach(n=>{ const e=airplane.getObjectByName(n); if(e) e.rotation.x=elevDefl; });
   const rudder=airplane.getObjectByName('rudder');
