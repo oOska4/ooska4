@@ -1,0 +1,2368 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>A321 World Flight Sim</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { background:#0a0a12; overflow:hidden; font-family:'Courier New', monospace; touch-action:none; }
+canvas { display:block; }
+#c { width:100vw; height:100vh; }
+
+#hud { position:fixed; inset:0; pointer-events:none; z-index:10; }
+
+/* ── Generic panel ── */
+.panel {
+  background:rgba(5,10,20,0.88); border:1px solid #1a3a5c;
+  border-radius:4px; padding:8px 12px; color:#e0f0ff;
+}
+.panel h3 {
+  font-size:9px; letter-spacing:3px; color:#4a8fbf; text-transform:uppercase;
+  margin-bottom:8px; border-bottom:1px solid #1a3a5c; padding-bottom:5px;
+}
+
+/* ── Top-left: status / debug ── */
+#statusbar { position:absolute; top:10px; left:10px; min-width:180px; font-size:10px; line-height:1.7; }
+#statusbar .phase { font-size:11px; color:#44ff88; font-weight:bold; letter-spacing:2px; }
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.2} }
+.stall-warn { color:#ff4444 !important; animation:blink 0.5s infinite; }
+.warn-line { color:#ff8800; font-size:10px; letter-spacing:2px; display:none; }
+
+/* ── Top-right: controls / teleport ── */
+#controls { position:absolute; top:10px; right:10px; font-size:10px; line-height:1.85; min-width:205px; pointer-events:all; }
+#controls span { color:#c8e8ff; }
+#controls button {
+  margin-top:6px; width:100%; border:1px solid #1a3a5c; border-radius:4px;
+  background:#1a3a5c; color:#c8e8ff; padding:7px 8px; font-size:10px; cursor:pointer;
+}
+#controls button:hover { background:#22345a; }
+#controls .v-row { display:flex; gap:6px; margin-top:6px; }
+#controls .v-row button { margin-top:0; }
+#controls hr { border:none; border-top:1px solid #1a3a5c; margin:8px 0; }
+
+/* ── PFD bottom-left ── */
+#pfd { position:absolute; bottom:24px; left:24px; width:215px; }
+.pfd-row { display:flex; justify-content:space-between; align-items:center; margin-bottom:5px; }
+.pfd-label { font-size:9px; color:#4a8fbf; letter-spacing:1px; text-transform:uppercase; }
+.pfd-value { font-size:14px; font-weight:bold; color:#c8e8ff; min-width:80px; text-align:right; }
+.pfd-value.warn { color:#ffaa00; }
+.pfd-value.danger { color:#ff4444; }
+.pfd-value.green { color:#44ff88; }
+#attitude-canvas { display:block; margin:6px auto 8px; border:1px solid #1a4a7a; border-radius:50%; }
+
+/* ── ND bottom-right ── */
+#nd { position:absolute; bottom:24px; right:24px; width:190px; text-align:center; }
+#compass-canvas { display:block; margin:0 auto; }
+
+/* ── Throttle bottom-center ── */
+#throttle-display { position:absolute; bottom:24px; left:50%; transform:translateX(-50%); width:150px; text-align:center; }
+#throttle-display label { font-size:9px; letter-spacing:2px; color:#4a8fbf; text-transform:uppercase; display:block; margin-bottom:6px; }
+#throttle-bar-bg { height:8px; background:#0a1a2a; border:1px solid #1a3a5c; border-radius:2px; overflow:hidden; margin-bottom:4px; }
+#throttle-bar { height:100%; background:linear-gradient(90deg,#1a7a3a,#44ff88); width:0%; transition:width 0.1s; border-radius:2px; }
+#throttle-pct { font-size:16px; font-weight:bold; color:#44ff88; }
+
+/* ── Speed / Alt tapes ── */
+#speedtape { position:absolute; top:50%; left:24px; transform:translateY(-50%); width:60px; height:200px; overflow:hidden; border-radius:4px; }
+#alt-tape   { position:absolute; top:50%; right:24px; transform:translateY(-50%); width:60px; height:200px; overflow:hidden; border-radius:4px; }
+.tape-canvas { display:block; }
+
+/* ── Loading screen ── */
+#loading {
+  position:fixed; inset:0; background:#050810; display:flex; flex-direction:column;
+  align-items:center; justify-content:center; z-index:100; color:#c8e8ff;
+}
+#loading h1 { font-size:28px; letter-spacing:6px; margin-bottom:6px; color:#fff; }
+#loading p { font-size:11px; letter-spacing:3px; color:#4a8fbf; margin-bottom:32px; text-align:center; }
+.load-bar-bg { width:260px; height:3px; background:#1a2a3a; border-radius:2px; }
+.load-bar { height:100%; background:linear-gradient(90deg,#1a7aff,#44ccff); border-radius:2px; width:0%; transition:width 0.3s; }
+
+/* ── Mobile flight controls ── */
+#flight-touch { display:none; position:absolute; inset:0; pointer-events:none; }
+.ft-pad {
+  position:absolute; bottom:24px; width:150px; height:150px; pointer-events:all;
+  display:grid; grid-template-columns:repeat(3,1fr); grid-template-rows:repeat(3,1fr); gap:4px;
+}
+#ft-pitchroll { left:24px; }
+#ft-yawthr { right:24px; }
+.ft-btn {
+  background:rgba(20,40,70,0.65); border:1px solid #2a5a8a; border-radius:6px;
+  color:#c8e8ff; font-size:16px; display:flex; align-items:center; justify-content:center;
+  user-select:none; -webkit-user-select:none;
+}
+.ft-btn:active { background:rgba(80,150,220,0.5); }
+.ft-btn.small { font-size:10px; letter-spacing:1px; }
+#ft-toggles {
+  display:none; position:absolute; top:auto; bottom:185px; left:24px; pointer-events:all;
+  flex-direction:row; gap:6px;
+}
+.ft-toggle {
+  background:rgba(20,40,70,0.75); border:1px solid #2a5a8a; border-radius:6px;
+  color:#c8e8ff; font-size:10px; letter-spacing:1px; padding:8px 10px;
+  user-select:none; -webkit-user-select:none;
+}
+.ft-toggle.active { background:rgba(68,255,136,0.35); border-color:#44ff88; }
+
+@media (pointer:coarse) {
+  #flight-touch.active { display:block; }
+  #ft-toggles.active { display:flex; }
+  #controls .kb-only { display:none; }
+}
+</style>
+</head>
+<body>
+<div id="loading">
+  <h1>A321</h1>
+  <p>WORLD FLIGHT SIMULATOR<br>ŁADOWANIE TERENU EPWR · WROCŁAW</p>
+  <div class="load-bar-bg"><div class="load-bar" id="loadbar"></div></div>
+</div>
+
+<canvas id="c"></canvas>
+
+<div id="hud" style="display:none">
+
+  <div id="speedtape" class="panel" style="padding:0"><canvas id="speed-canvas" class="tape-canvas" width="60" height="200"></canvas></div>
+  <div id="alt-tape" class="panel" style="padding:0"><canvas id="alt-canvas" class="tape-canvas" width="60" height="200"></canvas></div>
+
+  <div id="pfd" class="panel">
+    <h3>PFD · A321 · <span id="hud-cam-badge">CHASE</span></h3>
+    <canvas id="attitude-canvas" width="120" height="120"></canvas>
+    <div>
+      <div class="pfd-row"><span class="pfd-label">IAS</span><span class="pfd-value" id="ias-val">0 kt</span></div>
+      <div class="pfd-row"><span class="pfd-label">VS</span><span class="pfd-value" id="vs-val">0 fpm</span></div>
+      <div class="pfd-row"><span class="pfd-label">PITCH</span><span class="pfd-value" id="pitch-val">0°</span></div>
+      <div class="pfd-row"><span class="pfd-label">BANK</span><span class="pfd-value" id="bank-val">0°</span></div>
+      <div class="pfd-row"><span class="pfd-label">G/S</span><span class="pfd-value green" id="gs-val">0 kt</span></div>
+    </div>
+  </div>
+
+  <div id="nd" class="panel">
+    <h3>ND · HDG</h3>
+    <canvas id="compass-canvas" width="160" height="160"></canvas>
+    <div style="margin-top:6px;font-size:9px;color:#4a8fbf;letter-spacing:2px">
+      HDG <span id="hdg-val" style="color:#c8e8ff;font-size:13px;font-weight:bold">360°</span>
+    </div>
+    <div style="margin-top:4px;font-size:9px;color:#4a8fbf;letter-spacing:1px">
+      LAT <span id="lat-val" style="color:#c8e8ff">--</span> &nbsp; LON <span id="lon-val" style="color:#c8e8ff">--</span>
+    </div>
+  </div>
+
+  <div id="throttle-display" class="panel">
+    <label>N1 THRUST</label>
+    <div id="throttle-bar-bg"><div id="throttle-bar"></div></div>
+    <div id="throttle-pct">0%</div>
+  </div>
+
+  <div id="statusbar" class="panel">
+    <div class="phase" id="phase-disp">ON GROUND</div>
+    <div id="stall-disp" class="stall-warn" style="display:none">⚠ STALL</div>
+    <div id="overspeed-disp" class="warn-line stall-warn" style="display:none">⚠ OVERSPEED</div>
+    <div>ALT <span id="alt-val" style="color:#c8e8ff">0 ft</span> &nbsp;(<span id="alt-m-val" style="color:#4a8fbf">0 m MSL</span>)</div>
+    <div>AGL <span id="agl-val" style="color:#c8e8ff">0 ft</span></div>
+    <div>TERRAIN <span id="terr-val" style="color:#4a8fbf">0 m</span></div>
+    <div>AoA <span id="aoa-val" style="color:#c8e8ff">0°</span></div>
+    <div>CAM POS <span id="cam-pos-val" style="color:#c8e8ff">0.0,0.0,0.0</span></div>
+    <div>CAM ROT <span id="cam-rot-val" style="color:#c8e8ff">0.0/0.0/0.0</span></div>
+    <div>PLN ROT <span id="plane-rot-val" style="color:#c8e8ff">0.0/0.0/0.0</span></div>
+    <div>ΔROT <span id="cam-drot-val" style="color:#c8e8ff">0.0/0.0/0.0</span></div>
+    <div>ΔPOS <span id="cam-dpos-val" style="color:#c8e8ff">0.0</span></div>
+    <div>FLAPS <span id="flaps-val" style="color:#c8e8ff">1</span> &nbsp; GEAR <span id="gear-val" style="color:#c8e8ff">DOWN</span></div>
+    <div>SPOILERS <span id="spoilers-val" style="color:#c8e8ff">OFF</span></div>
+    <div style="margin-top:4px;color:#336699">Tiles: <span id="h-tiles">–</span></div>
+  </div>
+
+  <div id="controls" class="panel">
+    <h3>Sterowanie</h3>
+    <div class="kb-only"><span>W / S</span> — Gaz / Hamulce</div>
+    <div class="kb-only"><span>↑ / ↓</span> — Nos góra / dół</div>
+    <div class="kb-only"><span>← / →</span> — Przechylenie L/P</div>
+    <div class="kb-only"><span>Q / E</span> — Ster kierunku L/P</div>
+    <div class="kb-only"><span>F</span> — Klapy (0-3) &nbsp; <span>G</span> — Podwozie &nbsp; <span>B</span> — Spoilery</div>
+    <div class="kb-only"><span>C</span> — Kamera (Orbit/Chase/Cockpit) &nbsp; <span>R</span> — Reset</div>
+    <hr>
+    <div class="v-row">
+      <button id="btn-reset">Reset na EPWR</button>
+      <button id="btn-approach">Spawn approach</button>
+    </div>
+    <div class="v-row">
+      <button id="btn-camera">📷 Kamera</button>
+      <button id="btn-orbit-free">🌍 Wolna mapa</button>
+    </div>
+    <div style="margin-top:8px;border-top:1px solid #1a3a5c;padding-top:6px;color:#336633;font-size:9px">
+      V1=<span style="color:#ffaa00">135kt</span> VR=<span style="color:#ffaa00">145kt</span> V2=<span style="color:#44ff88">155kt</span>
+    </div>
+  </div>
+
+</div>
+
+<!-- Mobile flight controls -->
+<div id="flight-touch">
+  <div id="ft-toggles">
+    <div class="ft-toggle" id="ft-flaps">FLAPS</div>
+    <div class="ft-toggle" id="ft-gear">GEAR</div>
+    <div class="ft-toggle" id="ft-spoilers">SPLR</div>
+    <div class="ft-toggle" id="ft-cam">CAM</div>
+  </div>
+  <div class="ft-pad" id="ft-pitchroll">
+    <div></div><div class="ft-btn" data-act="pitchup">▲</div><div></div>
+    <div class="ft-btn" data-act="rollL">◀</div><div></div><div class="ft-btn" data-act="rollR">▶</div>
+    <div></div><div class="ft-btn" data-act="pitchdn">▼</div><div></div>
+  </div>
+  <div class="ft-pad" id="ft-yawthr">
+    <div class="ft-btn small" data-act="thrup">THR+</div><div class="ft-btn" data-act="yawL">↺</div><div></div>
+    <div></div><div></div><div class="ft-btn" data-act="yawR">↻</div>
+    <div class="ft-btn small" data-act="thrdn">THR-</div><div></div><div></div>
+  </div>
+</div>
+
+<!-- Mobile map joystick / zoom (orbit mode only) -->
+<div id="joy-wrap" style="display:none;position:absolute;bottom:24px;left:24px;pointer-events:all;">
+  <div id="joy-base" style="width:110px;height:110px;border-radius:50%;background:rgba(255,255,255,0.12);border:2px solid rgba(255,255,255,0.3);position:relative;">
+    <div id="joy-knob" style="width:44px;height:44px;border-radius:50%;background:rgba(255,255,255,0.45);border:2px solid rgba(255,255,255,0.7);position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);"></div>
+  </div>
+</div>
+<div id="zoom-btns" style="display:none;position:absolute;bottom:24px;right:24px;flex-direction:column;gap:8px;pointer-events:all;">
+  <div class="zoom-btn" id="btn-zoom-in" style="width:52px;height:52px;border-radius:50%;background:rgba(0,0,0,0.6);color:#fff;border:1px solid rgba(255,255,255,0.3);font-size:26px;cursor:pointer;display:flex;align-items:center;justify-content:center;user-select:none;-webkit-user-select:none;">+</div>
+  <div class="zoom-btn" id="btn-zoom-out" style="width:52px;height:52px;border-radius:50%;background:rgba(0,0,0,0.6);color:#fff;border:1px solid rgba(255,255,255,0.3);font-size:26px;cursor:pointer;display:flex;align-items:center;justify-content:center;user-select:none;-webkit-user-select:none;">−</div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+'use strict';
+// ═══════════════════════════════════════════════════════════════════════════════
+// WORLD CONSTANTS
+// ═══════════════════════════════════════════════════════════════════════════════
+const EARTH_RADIUS     = 6_371_000;   // m
+const DEM_EXAG         = 3.0;         // wizualne wyolbrzymienie rzeźby terenu
+const Y_SCALE          = 0.4;         // skala osi Y sceny
+const BUILDING_H_SCALE = 2.0;
+
+// Punkt startowy: Wrocław-Strachowice (EPWR), próg RWY 29
+let refLat = 51.10219;
+let refLon = 16.88560;
+
+const SPAWN_LAT = 51.09919149901774;
+const SPAWN_LON = 16.897240753263095;
+// Kurs startowy ~296° (RWY 29)
+const SPAWN_HEADING_DEG = 296;
+
+const Units = {
+  mToFt:   m  => m  * 3.28084,
+  ftToM:   ft => ft * 0.3048,
+  msToKt:  ms => ms * 1.94384,
+  ktToMs:  kt => kt * 0.514444,
+  msToFpm: ms => ms * 196.85,
+  fpmToMs: fpm => fpm * 0.00508,
+  radToDeg: r => r * 180 / Math.PI,
+  degToRad: d => d * Math.PI / 180,
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// GEO ↔ WORLD TRANSFORMS
+// ═══════════════════════════════════════════════════════════════════════════════
+function geoToWorld(lat, lon, altM = 0) {
+  const cosRef = Math.cos(Units.degToRad(refLat));
+  const x = (lon - refLon) * Math.PI / 180 * EARTH_RADIUS * cosRef;
+  const z = (lat - refLat) * Math.PI / 180 * EARTH_RADIUS;
+  return new THREE.Vector3(x, altM * Y_SCALE, -z);
+}
+function worldToGeo(p) {
+  const cosRef = Math.cos(Units.degToRad(refLat));
+  const lon = refLon + (p.x / (EARTH_RADIUS * cosRef)) * 180 / Math.PI;
+  const lat = refLat - (p.z / EARTH_RADIUS)             * 180 / Math.PI;
+  const altM = p.y / Y_SCALE;
+  return { lat, lon, altM };
+}
+function geoDistM(lat1, lon1, lat2, lon2) {
+  const R = EARTH_RADIUS;
+  const dLat = Units.degToRad(lat2 - lat1);
+  const dLon = Units.degToRad(lon2 - lon1);
+  const a = Math.sin(dLat/2)**2
+          + Math.cos(Units.degToRad(lat1)) * Math.cos(Units.degToRad(lat2)) * Math.sin(dLon/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+function geoBearing(lat1, lon1, lat2, lon2) {
+  const dLon = Units.degToRad(lon2 - lon1);
+  const y = Math.sin(dLon) * Math.cos(Units.degToRad(lat2));
+  const x = Math.cos(Units.degToRad(lat1)) * Math.sin(Units.degToRad(lat2))
+           - Math.sin(Units.degToRad(lat1)) * Math.cos(Units.degToRad(lat2)) * Math.cos(dLon);
+  return (Units.radToDeg(Math.atan2(y, x)) + 360) % 360;
+}
+function latLonToWorld(lat, lon) {
+  const cosRef = Math.cos(Units.degToRad(refLat));
+  return [
+    (lon - refLon) * Math.PI / 180 * EARTH_RADIUS * cosRef,
+    (lat - refLat) * Math.PI / 180 * EARTH_RADIUS
+  ];
+}
+// Przesuń punkt geo o dx (east, m) / dz (north, m)
+function offsetGeo(lat, lon, dEastM, dNorthM) {
+  const cosLat = Math.cos(Units.degToRad(lat));
+  return {
+    lat: lat + (dNorthM / EARTH_RADIUS) * 180 / Math.PI,
+    lon: lon + (dEastM / (EARTH_RADIUS * cosLat)) * 180 / Math.PI,
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// TILE HELPERS
+// ═══════════════════════════════════════════════════════════════════════════════
+function deg2tile(lat, lon, z) {
+  const n = 1 << z, lr = lat * Math.PI / 180;
+  return [
+    Math.floor((lon + 180) / 360 * n),
+    Math.floor((1 - Math.log(Math.tan(lr) + 1 / Math.cos(lr)) / Math.PI) / 2 * n)
+  ];
+}
+function tile2deg(tx, ty, z) {
+  const n = 1 << z;
+  return [
+    Math.atan(Math.sinh(Math.PI * (1 - 2 * ty / n))) * 180 / Math.PI,
+    tx / n * 360 - 180
+  ];
+}
+function polygonCenter(points) {
+  let lat = 0, lon = 0;
+  for (const p of points) { lat += p[0]; lon += p[1]; }
+  return [lat / points.length, lon / points.length];
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// THREE.JS SETUP
+// ═══════════════════════════════════════════════════════════════════════════════
+const renderer = new THREE.WebGLRenderer({
+  canvas: document.getElementById('c'),
+  antialias: true,
+  logarithmicDepthBuffer: true,
+  powerPreference: 'high-performance'
+});
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.1;
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x9fc3e6);
+scene.fog = new THREE.Fog(0x9fc3e6, 30_000, 220_000);
+
+const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.5, 1_000_000);
+
+// ── Gradient sky dome ──
+(function buildSky() {
+  const skyGeo = new THREE.SphereGeometry(900_000, 32, 16);
+  const skyMat = new THREE.ShaderMaterial({
+    side: THREE.BackSide,
+    uniforms: {
+      topColor:   { value: new THREE.Color(0x0d2a6b) },
+      horizColor: { value: new THREE.Color(0x9fc3e6) },
+    },
+    vertexShader: `varying vec3 vWorldPos;
+      void main() {
+        vec4 wp = modelMatrix * vec4(position,1.0); vWorldPos = wp.xyz;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0);
+      }`,
+    fragmentShader: `uniform vec3 topColor; uniform vec3 horizColor;
+      varying vec3 vWorldPos;
+      void main() {
+        float h = normalize(vWorldPos).y;
+        float t = max(0.0, min(1.0, pow(max(h + 0.05, 0.0), 0.45)));
+        gl_FragColor = vec4(mix(horizColor, topColor, t), 1.0);
+      }`
+  });
+  scene.add(new THREE.Mesh(skyGeo, skyMat));
+})();
+
+const sun = new THREE.DirectionalLight(0xfff0d8, 1.6);
+sun.position.set(100_000, 150_000, 80_000);
+scene.add(sun);
+scene.add(new THREE.AmbientLight(0xffffff, 0.85));
+scene.add(new THREE.HemisphereLight(0x9fc3e6, 0x33442a, 0.35));
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// TERRAIN HEIGHT API
+// ═══════════════════════════════════════════════════════════════════════════════
+const DEM_URL  = (z,x,y) => `https://s3.amazonaws.com/elevation-tiles-prod/terrarium/${z}/${x}/${y}.png`;
+const SAT_URL  = (z,x,y) => `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${y}/${x}`;
+const SAT_OSM  = (z,x,y) => `https://tile.openstreetmap.org/${z}/${x}/${y}.png`;
+
+const demDataCache  = new Map();
+const demInflight   = new Map();
+const DEM_CACHE_MAX = 160;
+
+async function loadImageBlob(url, signal) {
+  try {
+    const r = await fetch(url, { mode: 'cors', signal });
+    if (!r.ok) return null;
+    return URL.createObjectURL(await r.blob());
+  } catch { return null; }
+}
+
+function _decodeDEM(src) {
+  return new Promise(res => {
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const cv2 = document.createElement('canvas');
+        cv2.width = cv2.height = 256;
+        cv2.getContext('2d').drawImage(img, 0, 0);
+        const px = cv2.getContext('2d').getImageData(0,0,256,256).data;
+        const h  = new Float32Array(256*256);
+        for (let i = 0; i < 256*256; i++)
+          h[i] = px[i*4]*256 + px[i*4+1] + px[i*4+2]/256 - 32768;
+        const SPK = 200;
+        for (let y=1;y<255;y++) for (let x=1;x<255;x++) {
+          const i = y*256+x;
+          const avg = (h[i-1]+h[i+1]+h[i-256]+h[i+256])*0.25;
+          if (Math.abs(h[i]-avg) > SPK) h[i] = avg;
+        }
+        URL.revokeObjectURL(src);
+        res(h);
+      } catch { res(null); }
+    };
+    img.onerror = () => { URL.revokeObjectURL(src); res(null); };
+    img.crossOrigin = 'anonymous';
+    img.src = src;
+  });
+}
+
+function loadDemData(z, x, y, signal) {
+  const key = `${z}_${x}_${y}`;
+  if (demDataCache.has(key)) return Promise.resolve(demDataCache.get(key));
+  if (demInflight.has(key))  return demInflight.get(key);
+  const p = (async () => {
+    const src = await loadImageBlob(DEM_URL(z,x,y), signal);
+    demInflight.delete(key);
+    if (!src) return null;
+    const dem = await _decodeDEM(src);
+    if (dem) {
+      demDataCache.set(key, dem);
+      while (demDataCache.size > DEM_CACHE_MAX)
+        demDataCache.delete(demDataCache.keys().next().value);
+    }
+    return dem;
+  })();
+  demInflight.set(key, p);
+  return p;
+}
+
+function _sampleDem(dem, lat, lon, zoom) {
+  const n  = 1 << zoom;
+  const lr = Math.PI / 180 * lat;
+  const xf = (lon + 180) / 360 * n;
+  const yf = (1 - Math.log(Math.tan(lr) + 1/Math.cos(lr)) / Math.PI) / 2 * n;
+  const tx = Math.floor(xf), ty = Math.floor(yf);
+  const px = Math.max(0, Math.min(255, Math.floor((xf-tx)*255)));
+  const py = Math.max(0, Math.min(255, Math.floor((yf-ty)*255)));
+  return { tx, ty, px, py };
+}
+
+function terrainHeightM(lat, lon, zoom = 12) {
+  const { tx, ty, px, py } = _sampleDem(null, lat, lon, zoom);
+  const dem = demDataCache.get(`${zoom}_${tx}_${ty}`);
+  if (!dem) return 0;
+  return Math.max(0, dem[py*256+px]);
+}
+
+// Próbuje kilku poziomów zoom (od najdokładniejszego), zwraca pierwszy dostępny
+function terrainHeightBest(lat, lon, zooms = [14,13,12,11,10,9,8,7]) {
+  for (const z of zooms) {
+    const { tx, ty, px, py } = _sampleDem(null, lat, lon, z);
+    const dem = demDataCache.get(`${z}_${tx}_${ty}`);
+    if (dem) return Math.max(0, dem[py*256+px]);
+  }
+  return 0;
+}
+
+async function terrainHeightMAsync(lat, lon, zoom = 12, signal = null) {
+  const { tx, ty, px, py } = _sampleDem(null, lat, lon, zoom);
+  const dem = await loadDemData(zoom, tx, ty, signal);
+  if (!dem) return 0;
+  return Math.max(0, dem[py*256+px]);
+}
+
+function terrainHeightScene(lat, lon, zoom = 12) {
+  return terrainHeightM(lat, lon, zoom) * DEM_EXAG * Y_SCALE;
+}
+
+async function prefetchDEM(lat, lon, radius = 2, zoom = 12, signal = null) {
+  const [cx, cy] = deg2tile(lat, lon, zoom);
+  const promises = [];
+  for (let dy = -radius; dy <= radius; dy++)
+    for (let dx = -radius; dx <= radius; dx++)
+      promises.push(loadDemData(zoom, cx+dx, cy+dy, signal));
+  await Promise.all(promises);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SAT TEXTURE CACHE
+// ═══════════════════════════════════════════════════════════════════════════════
+const SAT_TEX_MAX = 48;
+const satTextureCache = new Map();
+const satTextureCacheKey = new WeakMap();
+
+function getCachedSatTex(key) {
+  if (!satTextureCache.has(key)) return null;
+  const t = satTextureCache.get(key);
+  satTextureCache.delete(key); satTextureCache.set(key, t);
+  return t;
+}
+function putCachedSatTex(key, t) {
+  satTextureCacheKey.set(t, key);
+  satTextureCache.set(key, t);
+  while (satTextureCache.size > SAT_TEX_MAX)
+    satTextureCache.delete(satTextureCache.keys().next().value);
+}
+
+const COLOR_PIX_MAX   = 256;
+const colorPixelCache = new Map();
+const colorPixelInfl  = new Map();
+
+function latLonToTilePixel(lat, lon, z) {
+  const n = 1 << z;
+  const lr = lat * Math.PI / 180;
+  const xf = (lon + 180) / 360 * n;
+  const yf = (1 - Math.log(Math.tan(lr) + 1/Math.cos(lr)) / Math.PI) / 2 * n;
+  const tx = Math.floor(xf), ty = Math.floor(yf);
+  return {
+    tx, ty,
+    px: Math.max(0, Math.min(255, Math.floor((xf-tx)*256))),
+    py: Math.max(0, Math.min(255, Math.floor((yf-ty)*256)))
+  };
+}
+function samplePixelColor(pixels, px, py) {
+  if (!pixels) return 0xb7b0a6;
+  const i = (py*256+px)*4;
+  return (pixels[i]<<16)|(pixels[i+1]<<8)|pixels[i+2];
+}
+
+function loadTilePixels(z, x, y, signal) {
+  const key = `${z}_${x}_${y}`;
+  if (colorPixelCache.has(key)) return Promise.resolve(colorPixelCache.get(key));
+  if (colorPixelInfl.has(key))  return colorPixelInfl.get(key);
+  const p = (async () => {
+    for (const url of [SAT_URL(z,x,y), SAT_OSM(z,x,y)]) {
+      if (signal?.aborted) return null;
+      const src = await loadImageBlob(url, signal);
+      if (!src) continue;
+      const pixels = await new Promise(res => {
+        const img = new Image();
+        img.onload = () => {
+          try {
+            const cv2 = document.createElement('canvas');
+            cv2.width = cv2.height = 256;
+            cv2.getContext('2d',{willReadFrequently:true}).drawImage(img,0,0,256,256);
+            res(cv2.getContext('2d').getImageData(0,0,256,256).data);
+          } catch { res(null); }
+          URL.revokeObjectURL(src);
+        };
+        img.onerror = () => { URL.revokeObjectURL(src); res(null); };
+        img.crossOrigin='anonymous'; img.src=src;
+      });
+      if (pixels) {
+        colorPixelCache.set(key, pixels);
+        while (colorPixelCache.size > COLOR_PIX_MAX)
+          colorPixelCache.delete(colorPixelCache.keys().next().value);
+        colorPixelInfl.delete(key);
+        return pixels;
+      }
+    }
+    colorPixelInfl.delete(key);
+    return null;
+  })();
+  colorPixelInfl.set(key, p);
+  return p;
+}
+
+async function loadSatTex(z, x, y, signal) {
+  const key = `${z}_${x}_${y}`;
+  const cached = getCachedSatTex(key);
+  if (cached) return cached;
+  for (const url of [SAT_URL(z,x,y), SAT_OSM(z,x,y)]) {
+    const src = await loadImageBlob(url, signal);
+    if (!src) continue;
+    const result = await new Promise(res => {
+      const img = new Image();
+      img.onload = () => {
+        const cv2 = document.createElement('canvas');
+        cv2.width = cv2.height = 256;
+        const ctx = cv2.getContext('2d',{willReadFrequently:true});
+        ctx.drawImage(img,0,0,256,256);
+        try {
+          const pixels = ctx.getImageData(0,0,256,256).data;
+          if (!colorPixelCache.has(key)) {
+            colorPixelCache.set(key, pixels);
+            while (colorPixelCache.size > COLOR_PIX_MAX)
+              colorPixelCache.delete(colorPixelCache.keys().next().value);
+          }
+        } catch {}
+        const tex = new THREE.CanvasTexture(cv2);
+        tex.wrapS     = THREE.ClampToEdgeWrapping;
+        tex.wrapT     = THREE.ClampToEdgeWrapping;
+        tex.minFilter = THREE.LinearMipmapLinearFilter;
+        tex.magFilter = THREE.LinearFilter;
+        tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+        URL.revokeObjectURL(src);
+        res(tex);
+      };
+      img.onerror = () => { URL.revokeObjectURL(src); res(null); };
+      img.crossOrigin='anonymous'; img.src=src;
+    });
+    if (result) { putCachedSatTex(key, result); return result; }
+  }
+  return null;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// TERRAIN MESH
+// ═══════════════════════════════════════════════════════════════════════════════
+const TILE_LOAD_RADIUS = 4;
+
+function gridForZoom(z) {
+  if (z<=9)  return 48;
+  if (z<=11) return 80;
+  if (z<=13) return 112;
+  return 128;
+}
+
+const _MAX_G  = 128;
+const _posBuf = new Float32Array((_MAX_G+1)*(_MAX_G+1)*3);
+const _uvBuf  = new Float32Array((_MAX_G+1)*(_MAX_G+1)*2);
+const _idxCache = new Map();
+function getIdxBuf(G) {
+  if (_idxCache.has(G)) return _idxCache.get(G);
+  const G1 = G+1;
+  const buf = new Uint32Array(G*G*6);
+  let i = 0;
+  for (let r=0;r<G;r++) for (let c=0;c<G;c++) {
+    const v = r*G1+c;
+    buf[i++]=v; buf[i++]=v+G1; buf[i++]=v+G1+1;
+    buf[i++]=v; buf[i++]=v+G1+1; buf[i++]=v+1;
+  }
+  _idxCache.set(G,buf);
+  return buf;
+}
+
+async function buildMeshWithNeighbors(tx, ty, zoom, signal) {
+  const [dem,demR,demB,demC] = await Promise.all([
+    loadDemData(zoom,tx,ty,signal),
+    loadDemData(zoom,tx+1,ty,signal),
+    loadDemData(zoom,tx,ty+1,signal),
+    loadDemData(zoom,tx+1,ty+1,signal),
+  ]);
+  const GRID=gridForZoom(zoom), G1=GRID+1, INV=1/GRID;
+  const EPS=1/256, UV_IN=0.5/256, UV_SC=1-2*UV_IN;
+  const [lat1,lon1]=tile2deg(tx,ty,zoom);
+  const [lat2,lon2]=tile2deg(tx+1,ty+1,zoom);
+  const cosRef=Math.cos(Units.degToRad(refLat));
+  const x0=(lon1-refLon)*Math.PI/180*EARTH_RADIUS*cosRef;
+  const y0=(lat1-refLat)*Math.PI/180*EARTH_RADIUS;
+  const dx=(lon2-lon1)*Math.PI/180*EARTH_RADIUS*cosRef;
+  const dy=(lat2-lat1)*Math.PI/180*EARTH_RADIUS;
+  let vi=0,ui=0;
+  for (let r=0;r<=GRID;r++) for (let c=0;c<=GRID;c++) {
+    const u=c*INV, v=r*INV;
+    let wz=0;
+    if (dem) {
+      let d=dem,su=u,sv=v;
+      if (u>=1-EPS&&demR) { d=demR;su=u-1;sv=v; if(sv>=1-EPS&&demC){d=demC;su=u-1;sv=v-1;} }
+      else if (v>=1-EPS&&demB) { d=demB;su=u;sv=v-1; }
+      const px=su<0?0:su>1?255:(su*255)|0;
+      const py=sv<0?0:sv>1?255:(sv*255)|0;
+      const raw=d[py*256+px];
+      wz=raw>0?raw*DEM_EXAG*Y_SCALE:0;
+    }
+    _posBuf[vi++]=x0+u*dx; _posBuf[vi++]=wz; _posBuf[vi++]=-(y0+v*dy);
+    _uvBuf[ui++]=UV_IN+u*UV_SC; _uvBuf[ui++]=UV_IN+(1-v)*UV_SC;
+  }
+  const geo=new THREE.BufferGeometry();
+  geo.setAttribute('position',new THREE.BufferAttribute(_posBuf.slice(0,vi),3));
+  geo.setAttribute('uv',      new THREE.BufferAttribute(_uvBuf.slice(0,ui),2));
+  geo.setIndex(new THREE.BufferAttribute(new Uint32Array(getIdxBuf(GRID)),1));
+  geo.computeVertexNormals();
+  return geo;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// BUILDINGS
+// ═══════════════════════════════════════════════════════════════════════════════
+const BLDG_ZOOM    = 15;
+const BLDG_RADIUS  = 2;
+const BLDG_MAX_DIST = 80_000;
+const BLDG_MIN_DIST = 500;
+const BLDG_TIMEOUT  = 12_000;
+const BLDG_SCENE_MAX = 6;
+const BLDG_CACHE_MAX = 14;
+const COLOR_SAT_ZOOM = 15;
+const BLDG_KEY = '59fcc2e8';
+const BLDG_URLS = ['a','b','c'].map(s =>
+  `https://${s}.data.osmbuildings.org/0.2/${BLDG_KEY}/tile/{z}/{x}/{y}.json`);
+
+const buildingMat  = new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.FrontSide });
+const buildingMeshes = new Map();
+const buildingOrder  = [];
+const buildingCache  = new Map();
+let lastBldgKey = null;
+let bldgCtrl    = new AbortController();
+let bldgEpoch   = 0;
+
+function evictBldgTile(k) {
+  const m=buildingMeshes.get(k); if (!m) return;
+  scene.remove(m); m.geometry.dispose(); buildingMeshes.delete(k);
+  const i=buildingOrder.indexOf(k); if(i!==-1) buildingOrder.splice(i,1);
+}
+function clearAllBldg() { for (const k of [...buildingMeshes.keys()]) evictBldgTile(k); }
+function registerBldgTile(k, m) {
+  if (buildingMeshes.has(k)) evictBldgTile(k);
+  buildingMeshes.set(k,m); buildingOrder.push(k);
+  while (buildingOrder.length > BLDG_SCENE_MAX) evictBldgTile(buildingOrder[0]);
+}
+function putBldgCache(k, items) {
+  if (buildingCache.has(k)) buildingCache.delete(k);
+  buildingCache.set(k, items);
+  while (buildingCache.size > BLDG_CACHE_MAX) buildingCache.delete(buildingCache.keys().next().value);
+}
+
+function sampleDemHeight(dem, lat, lon, zoom) {
+  if (!dem) return 0;
+  const n=1<<zoom, lr=lat*Math.PI/180;
+  const xf=(lon+180)/360*n;
+  const yf=(1-Math.log(Math.tan(lr)+1/Math.cos(lr))/Math.PI)/2*n;
+  const px=Math.max(0,Math.min(255,Math.floor((xf-Math.floor(xf))*255)));
+  const py=Math.max(0,Math.min(255,Math.floor((yf-Math.floor(yf))*255)));
+  return Math.max(0,dem[py*256+px])*DEM_EXAG*Y_SCALE;
+}
+
+function buildingColor(id) {
+  let h=0; for(let i=0;i<id.length;i++) h=(Math.imul(31,h)+id.charCodeAt(i))|0;
+  const ranges=[[15,45],[25,55],[200,230],[30,50],[10,40]];
+  const range=ranges[Math.abs(h)%ranges.length];
+  const hue=range[0]+((h>>8)&0xff)/255*(range[1]-range[0]);
+  const sat=8+((h>>16)&0xff)/255*22, lit=52+((h>>4)&0xff)/255*28;
+  const s=sat/100,l=lit/100,c=(1-Math.abs(2*l-1))*s,x2=c*(1-Math.abs((hue/60)%2-1)),m=l-c/2;
+  let r,g,b;
+  if(hue<60){r=c;g=x2;b=0;}else if(hue<120){r=x2;g=c;b=0;}
+  else if(hue<180){r=0;g=c;b=x2;}else if(hue<240){r=0;g=x2;b=c;}
+  else if(hue<300){r=x2;g=0;b=c;}else{r=c;g=0;b=x2;}
+  return(Math.round((r+m)*255)<<16)|(Math.round((g+m)*255)<<8)|Math.round((b+m)*255);
+}
+
+function extrudeBldgInto(positions,colors,indices,points,height,baseY,colorHex) {
+  if (!points||points.length<3) return;
+  const r=((colorHex>>16)&0xff)/255, g=((colorHex>>8)&0xff)/255, b=(colorHex&0xff)/255;
+  const scaledH=Math.max(1,height)*Y_SCALE;
+  const botY=baseY-1, topY=baseY+scaledH;
+  const base=positions.length/3, n=points.length;
+  const wp=points.map(p=>latLonToWorld(p[0],p[1]));
+  for (const[wx,wz] of wp) { positions.push(wx,botY,-wz); colors.push(r*.4,g*.4,b*.4); }
+  for (const[wx,wz] of wp) { positions.push(wx,topY,-wz); colors.push(r,g,b); }
+  let cx=0,cz=0; for(const[wx,wz] of wp){cx+=wx;cz+=wz;} cx/=n;cz/=n;
+  const ri=base+2*n;
+  positions.push(cx,topY,-cz); colors.push(Math.min(1,r*1.15),Math.min(1,g*1.15),Math.min(1,b*1.15));
+  for(let i=0;i<n;i++){const j=(i+1)%n,b0=base+i,b1=base+j,t0=base+n+i,t1=base+n+j;indices.push(b0,b1,t1,b0,t1,t0);}
+  for(let i=0;i<n;i++){const j=(i+1)%n;indices.push(ri,base+n+i,base+n+j);}
+}
+
+function buildBatchMesh(items) {
+  const pos=[],col=[],idx=[];
+  for(const it of items) extrudeBldgInto(pos,col,idx,it.points,it.height,it.baseY,it.colorHex);
+  if(!pos.length) return null;
+  const geo=new THREE.BufferGeometry();
+  geo.setAttribute('position',new THREE.BufferAttribute(new Float32Array(pos),3));
+  geo.setAttribute('color',   new THREE.BufferAttribute(new Float32Array(col),3));
+  geo.setIndex(idx); geo.computeVertexNormals();
+  return new THREE.Mesh(geo, buildingMat);
+}
+
+async function fetchBldgJson(url,signal,ms=BLDG_TIMEOUT) {
+  const tc=new AbortController();
+  const tid=setTimeout(()=>tc.abort(),ms);
+  signal.addEventListener('abort',()=>tc.abort(),{once:true});
+  try {
+    const r=await fetch(url,{method:'GET',mode:'cors',signal:tc.signal});
+    if(!r.ok) return null;
+    return await r.json();
+  } catch(e) { if(signal.aborted)throw e; if(e?.name==='AbortError')return null; throw e; }
+  finally { clearTimeout(tid); }
+}
+
+function geoRingToLatLon(ring) {
+  const pts=[];
+  for(const c of ring||[]){if(!Array.isArray(c)||c.length<2)continue;pts.push([c[1],c[0]]);}
+  if(pts.length>1){const f=pts[0],l=pts[pts.length-1];if(f[0]===l[0]&&f[1]===l[1])pts.pop();}
+  return pts;
+}
+function parseBldgHeight(tags) {
+  if(tags?.height){const h=parseFloat(String(tags.height).replace(',','.'));if(Number.isFinite(h)&&h>0)return h;}
+  if(tags?.['building:levels']){const lv=parseFloat(String(tags['building:levels']).replace(',','.'));if(Number.isFinite(lv)&&lv>0)return Math.max(4,lv*3);}
+  return 8;
+}
+
+async function loadBuildings(lat, lon, dist) {
+  const shouldShow = dist <= BLDG_MAX_DIST && dist >= BLDG_MIN_DIST;
+  if (!shouldShow) { if(buildingMeshes.size>0){clearAllBldg();lastBldgKey=null;} return; }
+  const [cx,cy]=deg2tile(lat,lon,BLDG_ZOOM);
+  const bKey=`${BLDG_ZOOM}_${cx}_${cy}`;
+  if(bKey===lastBldgKey&&buildingMeshes.has(bKey)) return;
+  lastBldgKey=bKey;
+  bldgCtrl.abort(); bldgCtrl=new AbortController(); bldgEpoch++;
+  const epoch=bldgEpoch, sig=bldgCtrl.signal;
+  if(buildingCache.has(bKey)) {
+    const cached=buildingCache.get(bKey);
+    buildingCache.delete(bKey); buildingCache.set(bKey,cached);
+    const m=buildBatchMesh(cached);
+    if(m){scene.add(m);registerBldgTile(bKey,m);}
+    return;
+  }
+  try {
+    const tileCoords=[];
+    for(let dy=-BLDG_RADIUS;dy<=BLDG_RADIUS;dy++)
+      for(let dx=-BLDG_RADIUS;dx<=BLDG_RADIUS;dx++) tileCoords.push([cx+dx,cy+dy]);
+    const jsonResults=await Promise.all(tileCoords.map(async([tx,ty])=>{
+      for(const tpl of BLDG_URLS){
+        const url=tpl.replace('{z}',BLDG_ZOOM).replace('{x}',tx).replace('{y}',ty);
+        let data; try{data=await fetchBldgJson(url,sig);}catch(e){if(e?.name==='AbortError')throw e;continue;}
+        if(data) return{tx,ty,data};
+      }
+      return null;
+    }));
+    if(epoch!==bldgEpoch||sig.aborted) return;
+    const raw=[];
+    for(const res of jsonResults){
+      if(!res) continue;
+      const{tx,ty,data}=res;
+      const features=Array.isArray(data.features)?data.features:[];
+      let li=0;
+      for(const f of features){
+        const props=f.properties||{};
+        const height=parseBldgHeight(props)*BUILDING_H_SCALE;
+        const geom=f.geometry||{};
+        const parts=[];
+        if(geom.type==='Polygon') parts.push(geom.coordinates);
+        else if(geom.type==='MultiPolygon') parts.push(...geom.coordinates);
+        else continue;
+        for(const poly of parts){
+          if(!poly?.length||!poly[0]||poly[0].length<3) continue;
+          const ring=geoRingToLatLon(poly[0]);
+          if(ring.length<3) continue;
+          raw.push({id:`b_${tx}_${ty}_${f.id??(props.osm_id??li++)}`,ring,height,center:polygonCenter(ring)});
+        }
+      }
+    }
+    if(epoch!==bldgEpoch||sig.aborted) return;
+    const satZ=activeTileZoom??COLOR_SAT_ZOOM;
+    const demKeys=new Set(),satKeys=new Set();
+    for(const b of raw){
+      const[cl,co]=b.center;
+      const[dtx,dty]=deg2tile(cl,co,BLDG_ZOOM);
+      demKeys.add(`${BLDG_ZOOM}_${dtx}_${dty}`);
+      const{tx:stx,ty:sty}=latLonToTilePixel(cl,co,satZ);
+      satKeys.add(`${satZ}_${stx}_${sty}`);
+    }
+    await Promise.all([
+      ...[...demKeys].map(k=>{const[z,x,y]=k.split('_').map(Number);return loadDemData(z,x,y,sig);}),
+      ...[...satKeys].map(k=>{const[z,x,y]=k.split('_').map(Number);return loadTilePixels(z,x,y,sig);}),
+    ]);
+    if(epoch!==bldgEpoch||sig.aborted) return;
+    const items=[];
+    for(const b of raw){
+      const[cl,co]=b.center;
+      const[dtx,dty]=deg2tile(cl,co,BLDG_ZOOM);
+      const dem=demDataCache.get(`${BLDG_ZOOM}_${dtx}_${dty}`)??null;
+      if(!dem) continue;
+      const baseY=sampleDemHeight(dem,cl,co,BLDG_ZOOM);
+      const{tx:stx,ty:sty,px,py}=latLonToTilePixel(cl,co,satZ);
+      const pixels=colorPixelCache.get(`${satZ}_${stx}_${sty}`)??null;
+      const colorHex=pixels?samplePixelColor(pixels,px,py):buildingColor(b.id);
+      items.push({id:b.id,points:b.ring,height:b.height,baseY,colorHex});
+    }
+    putBldgCache(bKey,items);
+    const m=buildBatchMesh(items);
+    if(m){scene.add(m);registerBldgTile(bKey,m);}
+  } catch(e){ if(e?.name!=='AbortError') console.error('[buildings]',e); }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// TILE MANAGER
+// ═══════════════════════════════════════════════════════════════════════════════
+const tileMeshes    = new Map();
+const loadingTiles  = new Set();
+const oldTileMeshes = new Map();
+let activeTileZoom  = null;
+let tileCtrl        = new AbortController();
+let tileEpoch       = 0;
+let pendingZoom     = null, pendingZoomAge = 0;
+const ZOOM_DEBOUNCE = 8;
+
+function getZoom(dist) {
+  return Math.max(7, Math.min(15, Math.round(Math.log2(150_000_000 / dist))));
+}
+
+function disposeMesh(mesh) {
+  scene.remove(mesh);
+  mesh.geometry.dispose();
+  if (mesh.material.map) {
+    const ck=satTextureCacheKey.get(mesh.material.map);
+    if(!ck||satTextureCache.get(ck)!==mesh.material.map) mesh.material.map.dispose();
+  }
+  mesh.material.dispose();
+}
+function clearOldTiles() {
+  for(const m of oldTileMeshes.values()) disposeMesh(m);
+  oldTileMeshes.clear();
+}
+
+async function loadTile(tx, ty, zoom) {
+  const key=`${zoom}_${tx}_${ty}`;
+  if(tileMeshes.has(key)||loadingTiles.has(key)) return;
+  loadingTiles.add(key);
+  const epoch=tileEpoch, sig=tileCtrl.signal;
+  const[geo,tex]=await Promise.all([
+    buildMeshWithNeighbors(tx,ty,zoom,sig),
+    loadSatTex(zoom,tx,ty,sig)
+  ]);
+  if(epoch!==tileEpoch||sig.aborted){loadingTiles.delete(key);return;}
+  const mat=new THREE.MeshBasicMaterial({map:tex||null,color:tex?0xffffff:0x5a8a50});
+  const mesh=new THREE.Mesh(geo,mat);
+  scene.add(mesh); tileMeshes.set(key,mesh); loadingTiles.delete(key);
+}
+
+function updateTiles(lat, lon, dist) {
+  const rawZoom=getZoom(dist);
+  if(rawZoom!==activeTileZoom){
+    if(rawZoom===pendingZoom){pendingZoomAge++;}else{pendingZoom=rawZoom;pendingZoomAge=1;}
+    if(pendingZoomAge>=ZOOM_DEBOUNCE){
+      tileCtrl.abort(); tileCtrl=new AbortController(); tileEpoch++;
+      loadingTiles.clear(); clearOldTiles();
+      for(const[k,m] of tileMeshes) oldTileMeshes.set(k,m);
+      tileMeshes.clear(); activeTileZoom=rawZoom; pendingZoom=null; pendingZoomAge=0;
+    }
+    if(activeTileZoom===null){activeTileZoom=rawZoom;pendingZoom=null;pendingZoomAge=0;}
+    else if(activeTileZoom!==rawZoom) return activeTileZoom;
+  } else { pendingZoom=null; pendingZoomAge=0; }
+
+  const zoom=activeTileZoom;
+  const[cx,cy]=deg2tile(lat,lon,zoom);
+  const n=1<<zoom;
+
+  for(const[key,mesh] of tileMeshes){
+    const[,kx,ky]=key.split('_').map(Number);
+    if(Math.abs(kx-cx)>TILE_LOAD_RADIUS+1||Math.abs(ky-cy)>TILE_LOAD_RADIUS+1){
+      disposeMesh(mesh); tileMeshes.delete(key);
+    }
+  }
+  for(let dy=-TILE_LOAD_RADIUS;dy<=TILE_LOAD_RADIUS;dy++)
+    for(let dx=-TILE_LOAD_RADIUS;dx<=TILE_LOAD_RADIUS;dx++){
+      const tx=cx+dx,ty=cy+dy;
+      if(tx>=0&&ty>=0&&tx<n&&ty<n) loadTile(tx,ty,zoom);
+    }
+
+  if(oldTileMeshes.size>0){
+    let all=true;
+    outer: for(let dy=-TILE_LOAD_RADIUS;dy<=TILE_LOAD_RADIUS;dy++)
+      for(let dx=-TILE_LOAD_RADIUS;dx<=TILE_LOAD_RADIUS;dx++){
+        const tx=cx+dx,ty=cy+dy;
+        if(tx<0||ty<0||tx>=n||ty>=n) continue;
+        if(!tileMeshes.has(`${zoom}_${tx}_${ty}`)){all=false;break outer;}
+      }
+    if(all) clearOldTiles();
+  }
+  return zoom;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ENTITY SYSTEM
+// ═══════════════════════════════════════════════════════════════════════════════
+class Entity {
+  constructor(opts = {}) {
+    this.id      = opts.id      ?? `entity_${Date.now()}`;
+    this.type    = opts.type    ?? 'generic';
+    this.lat     = opts.lat     ?? refLat;
+    this.lon     = opts.lon     ?? refLon;
+    this.altM    = opts.altM    ?? 1000;
+    this.heading = opts.heading ?? 0;
+    this.pitch   = opts.pitch   ?? 0;
+    this.roll    = opts.roll    ?? 0;
+    this.velNED  = opts.velNED  ?? { n: 0, e: 0, d: 0 };
+    this.terrainM = 0;
+    this.agl      = 0;
+    this.mesh    = opts.mesh ?? null;
+    this.active  = true;
+  }
+  get speedMsH() { return Math.hypot(this.velNED.n, this.velNED.e); }
+  get speedMs()  { return Math.hypot(this.velNED.n, this.velNED.e, this.velNED.d); }
+  get speedKt()  { return Units.msToKt(this.speedMs); }
+  get climbMs()  { return -this.velNED.d; }
+  get climbFpm() { return Units.msToFpm(this.climbMs); }
+  get worldPos() { return geoToWorld(this.lat, this.lon, this.altM); }
+  updateTerrain(zoom = 12) {
+    this.terrainM = terrainHeightM(this.lat, this.lon, zoom);
+    this.agl = Math.max(0, this.altM - this.terrainM);
+  }
+  integrate(dt) {
+    if (!this.active) return;
+    const R = EARTH_RADIUS;
+    const cosLat = Math.cos(Units.degToRad(this.lat));
+    this.lat  += (this.velNED.n / R) * (180 / Math.PI) * dt;
+    this.lon  += (this.velNED.e / (R * cosLat)) * (180 / Math.PI) * dt;
+    this.altM -= this.velNED.d * dt;
+  }
+  syncMesh() {
+    if (!this.mesh) return;
+    const p = this.worldPos;
+    this.mesh.position.copy(p);
+    this.mesh.rotation.set(
+      -Units.degToRad(this.pitch),
+       Units.degToRad(this.heading),
+       Units.degToRad(this.roll),
+      'YXZ'
+    );
+  }
+  physicsUpdate(dt, input) {}
+  renderUpdate(dt) {}
+}
+
+const entities   = new Map();
+let activeEntity = null;
+function addEntity(e) { entities.set(e.id, e); return e; }
+function removeEntity(id) {
+  const e = entities.get(id);
+  if (!e) return;
+  if (e.mesh) { scene.remove(e.mesh); }
+  entities.delete(id);
+  if (activeEntity === e) activeEntity = null;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PHYSICS TICK (fixed timestep)
+// ═══════════════════════════════════════════════════════════════════════════════
+const PHYS_DT    = 1 / 60;
+const PHYS_DT_MS = PHYS_DT * 1000;
+let   physAccum    = 0;
+let   physLastTime = performance.now();
+
+function physicsTick(now) {
+  const elapsed = now - physLastTime;
+  physLastTime  = now;
+  physAccum    += elapsed;
+  while (physAccum >= PHYS_DT_MS) {
+    physAccum -= PHYS_DT_MS;
+    for (const entity of entities.values()) {
+      if (!entity.active) continue;
+      entity.physicsUpdate(PHYS_DT, planeInput);
+      entity.integrate(PHYS_DT);
+    }
+  }
+}
+// ═══════════════════════════════════════════════════════════════════════════════
+// A321 3D MODEL
+// ═══════════════════════════════════════════════════════════════════════════════
+function buildA321() {
+  const plane = new THREE.Group();
+  const fusMat = new THREE.MeshPhongMaterial({color:0xf0f0f0,shininess:60});
+  const wingMat = new THREE.MeshPhongMaterial({color:0xe8e8e8,shininess:40});
+  const engineMat = new THREE.MeshPhongMaterial({color:0x555560,shininess:80});
+  const glassMat = new THREE.MeshPhongMaterial({color:0x224466,shininess:200,transparent:true,opacity:0.85});
+  const accentMat = new THREE.MeshBasicMaterial({color:0x0055aa});
+
+  const fusGeo = new THREE.CylinderGeometry(2.0,2.0,34,20); fusGeo.rotateZ(Math.PI/2);
+  const fuselage = new THREE.Mesh(fusGeo,fusMat); fuselage.castShadow=true; plane.add(fuselage);
+  const noseGeo = new THREE.ConeGeometry(2.0,8,20); noseGeo.rotateZ(-Math.PI/2);
+  const nose = new THREE.Mesh(noseGeo,new THREE.MeshPhongMaterial({color:0xcccccc,shininess:40}));
+  nose.position.x=21; nose.castShadow=true; plane.add(nose);
+  const tailGeo = new THREE.CylinderGeometry(0.6,2.0,8,16); tailGeo.rotateZ(Math.PI/2);
+  const tailCone = new THREE.Mesh(tailGeo,fusMat); tailCone.position.x=-21; plane.add(tailCone);
+
+  const ws = new THREE.Mesh(new THREE.BoxGeometry(28,0.5,0.1),glassMat);
+  ws.position.set(0,0.8,2.02); plane.add(ws);
+  const ws2=ws.clone(); ws2.position.z=-2.02; plane.add(ws2);
+  const cw=new THREE.Mesh(new THREE.BoxGeometry(2.5,1.0,0.1),glassMat);
+  cw.position.set(19.5,0.7,1.4); cw.rotation.y=0.3; plane.add(cw);
+  const cw2=cw.clone(); cw2.position.z=-1.4; cw2.rotation.y=-0.3; plane.add(cw2);
+
+  const cheat=new THREE.Mesh(new THREE.CylinderGeometry(2.02,2.02,30,20,1,true,-0.12,0.22),accentMat);
+  cheat.rotateZ(Math.PI/2); plane.add(cheat);
+
+  function makeWing(side) {
+    const wGrp=new THREE.Group();
+    const verts=new Float32Array([
+      5.5,0,0, -2,0,0,
+      4.5,0,side*5, -1,0,side*5,
+      3,0,side*9, 0.5,0,side*9,
+      2.5,0,side*13, 1.5,0,side*13,
+    ]);
+    const idx=[0,1,3,0,3,2, 2,3,5,2,5,4, 4,5,7,4,7,6];
+    const wGeo=new THREE.BufferGeometry();
+    wGeo.setAttribute('position',new THREE.BufferAttribute(verts,3));
+    wGeo.setIndex(idx); wGeo.computeVertexNormals();
+    const wing=new THREE.Mesh(wGeo,wingMat); wing.castShadow=true; wGrp.add(wing);
+    const wGeo2=wGeo.clone();
+    const p2=wGeo2.attributes.position;
+    for (let i=0;i<p2.count;i++) p2.setY(i,p2.getY(i)-0.35);
+    wGeo2.computeVertexNormals();
+    wGrp.add(new THREE.Mesh(wGeo2,wingMat));
+
+    const wlet=new THREE.Mesh(new THREE.BoxGeometry(0.3,2.2,0.8),wingMat);
+    wlet.position.set(2.0,1.0,side*13.2); wlet.rotation.z=side*0.3; wGrp.add(wlet);
+
+    const flapGeo=new THREE.BoxGeometry(0.15,5,3.5); flapGeo.rotateX(-Math.PI/2);
+    const flap=new THREE.Mesh(flapGeo,new THREE.MeshPhongMaterial({color:0xe0e0e0}));
+    flap.position.set(4.5,-0.2,side*4.5);
+    flap.name=`flap_${side>0?'R':'L'}`; wGrp.add(flap);
+
+    const spoilerGroup=new THREE.Group();
+    const spoilerGeo=new THREE.BoxGeometry(3.0,0.05,1.6);
+    const spoiler=new THREE.Mesh(spoilerGeo,new THREE.MeshPhongMaterial({color:0x999999,shininess:40}));
+    spoiler.position.set(1.5,0,0);
+    spoilerGroup.add(spoiler);
+    spoilerGroup.position.set(3.7,0.05,side*7.5);
+    spoilerGroup.name=`spoiler_${side>0?'R':'L'}`;
+    wGrp.add(spoilerGroup);
+
+    const ailGeo=new THREE.BoxGeometry(0.12,3.5,2.2); ailGeo.rotateX(-Math.PI/2);
+    const ail=new THREE.Mesh(ailGeo,new THREE.MeshPhongMaterial({color:0xdedede}));
+    ail.position.set(3.2,-0.15,side*10);
+    ail.name=`aileron_${side>0?'R':'L'}`; wGrp.add(ail);
+
+    const engGrp=new THREE.Group();
+    const engGeo=new THREE.CylinderGeometry(1.1,0.9,5.5,16); engGeo.rotateZ(Math.PI/2);
+    engGrp.add(new THREE.Mesh(engGeo,engineMat));
+    const inGeo=new THREE.TorusGeometry(1.1,0.12,10,20); inGeo.rotateY(Math.PI/2);
+    const inl=new THREE.Mesh(inGeo,engineMat); inl.position.x=2.75; engGrp.add(inl);
+    const fanGeo=new THREE.CylinderGeometry(0.96,0.96,0.2,16); fanGeo.rotateZ(Math.PI/2);
+    const fan=new THREE.Mesh(fanGeo,new THREE.MeshBasicMaterial({color:0x333340}));
+    fan.position.x=2.6; fan.name=`fan_${side>0?'R':'L'}`; engGrp.add(fan);
+    const pyl=new THREE.Mesh(new THREE.BoxGeometry(3,0.6,1),new THREE.MeshPhongMaterial({color:0xcccccc}));
+    pyl.position.set(0,0.85,0); engGrp.add(pyl);
+    engGrp.position.set(1.0,-1.0,side*5);
+    engGrp.name=`engine_${side>0?'R':'L'}`;
+    wGrp.add(engGrp);
+    return wGrp;
+  }
+  const wingR=makeWing(1); const wingL=makeWing(-1);
+  wingR.position.y=-0.2; wingL.position.y=-0.2;
+  plane.add(wingR); plane.add(wingL);
+
+  const vtVerts=new Float32Array([-25,0,0,-20,0,0,-20,6,0,-26.5,6,0]);
+  const vtGeo=new THREE.BufferGeometry();
+  vtGeo.setAttribute('position',new THREE.BufferAttribute(vtVerts,3));
+  vtGeo.setIndex([0,1,2,0,2,3]); vtGeo.computeVertexNormals();
+  plane.add(new THREE.Mesh(vtGeo,new THREE.MeshPhongMaterial({color:0xf0f0f0,side:THREE.DoubleSide})));
+
+  const rudVerts=new Float32Array([-26,0.4,-0.05,-24.5,0.4,-0.05,-24.5,4.5,-0.05,-27,4.5,-0.05]);
+  const rudGeo=new THREE.BufferGeometry();
+  rudGeo.setAttribute('position',new THREE.BufferAttribute(rudVerts,3));
+  rudGeo.setIndex([0,1,2,0,2,3]); rudGeo.computeVertexNormals();
+  const rudder=new THREE.Mesh(rudGeo,new THREE.MeshPhongMaterial({color:0xe8e8e8,side:THREE.DoubleSide}));
+  rudder.name='rudder'; plane.add(rudder);
+
+  function makeHStab(side) {
+    const hVerts=new Float32Array([-23,1.5,0,-20,1.5,0,-21,1.5,side*6,-24,1.5,side*6]);
+    const hGeo=new THREE.BufferGeometry();
+    hGeo.setAttribute('position',new THREE.BufferAttribute(hVerts,3));
+    hGeo.setIndex([0,1,2,0,2,3]); hGeo.computeVertexNormals();
+    const grp=new THREE.Group();
+    grp.add(new THREE.Mesh(hGeo,new THREE.MeshPhongMaterial({color:0xeeeeee,side:THREE.DoubleSide})));
+    const eGeo=hGeo.clone();
+    const ep=eGeo.attributes.position;
+    for (let i=0;i<ep.count;i++) ep.setX(i,ep.getX(i)-1.5);
+    eGeo.computeVertexNormals();
+    const elev=new THREE.Mesh(eGeo,new THREE.MeshPhongMaterial({color:0xe2e2e2,side:THREE.DoubleSide}));
+    elev.name=`elevator_${side>0?'R':'L'}`; grp.add(elev);
+    return grp;
+  }
+  plane.add(makeHStab(1)); plane.add(makeHStab(-1));
+
+  function makeLandingGear(x,z,h) {
+    const grp=new THREE.Group();
+    const sm=new THREE.MeshPhongMaterial({color:0x444444});
+    const strut=new THREE.Mesh(new THREE.CylinderGeometry(0.18,0.18,h,8),sm);
+    strut.position.y=-h/2; grp.add(strut);
+    const axle=new THREE.Mesh(new THREE.CylinderGeometry(0.12,0.12,1.6,8),sm);
+    axle.rotation.z=Math.PI/2; axle.position.y=-h; grp.add(axle);
+    [-0.7,0.7].forEach(wo => {
+      const wheel=new THREE.Mesh(new THREE.CylinderGeometry(0.52,0.52,0.55,16),new THREE.MeshPhongMaterial({color:0x111111}));
+      wheel.rotation.z=Math.PI/2; wheel.position.set(wo,-h,0); grp.add(wheel);
+    });
+    grp.position.set(x,0,z); return grp;
+  }
+  const ng=makeLandingGear(16,0,2.5); ng.name='gear_nose';
+  const mgl=makeLandingGear(-1,-3,3.1); mgl.name='gear_mainL';
+  const mgr=makeLandingGear(-1,3,3.1); mgr.name='gear_mainR';
+  plane.add(ng); plane.add(mgl); plane.add(mgr);
+
+  const beacon=new THREE.Mesh(new THREE.SphereGeometry(0.25,8,8),new THREE.MeshBasicMaterial({color:0xff2200}));
+  beacon.position.set(-25,2,0); beacon.name='beacon'; plane.add(beacon);
+  const navL=new THREE.Mesh(new THREE.SphereGeometry(0.2,6,6),new THREE.MeshBasicMaterial({color:0xff2200}));
+  navL.position.set(2,-0.3,-13.5); plane.add(navL);
+  const navR=new THREE.Mesh(new THREE.SphereGeometry(0.2,6,6),new THREE.MeshBasicMaterial({color:0x00ff44}));
+  navR.position.set(2,-0.3,13.5); plane.add(navR);
+
+  return plane;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// EXHAUST PARTICLES
+// ═══════════════════════════════════════════════════════════════════════════════
+class ExhaustParticles {
+  constructor() {
+    this.maxParts=600;
+    const geo=new THREE.BufferGeometry();
+    this.positions=new Float32Array(this.maxParts*3);
+    this.sizes=new Float32Array(this.maxParts);
+    this.alphas=new Float32Array(this.maxParts);
+    this.life=new Float32Array(this.maxParts);
+    this.vel=new Float32Array(this.maxParts*3);
+    geo.setAttribute('position',new THREE.BufferAttribute(this.positions,3));
+    geo.setAttribute('size',new THREE.BufferAttribute(this.sizes,1));
+    geo.setAttribute('alpha',new THREE.BufferAttribute(this.alphas,1));
+    const mat=new THREE.ShaderMaterial({
+      transparent:true, depthWrite:false,
+      vertexShader:`attribute float size;attribute float alpha;varying float vAlpha;
+        void main(){vAlpha=alpha;vec4 mv=modelViewMatrix*vec4(position,1.0);
+        gl_PointSize=size*(300.0/-mv.z);gl_Position=projectionMatrix*mv;}`,
+      fragmentShader:`varying float vAlpha;
+        void main(){float d=distance(gl_PointCoord,vec2(0.5));if(d>0.5)discard;
+        float a=(1.0-d*2.0)*vAlpha;gl_FragColor=vec4(0.85,0.85,0.85,a);}`
+    });
+    this.ps=new THREE.Points(geo,mat);
+    this.ps.frustumCulled=false;
+    scene.add(this.ps);
+    this.idx=0;
+  }
+  emit(pos, throttle, backDir) {
+    if(throttle<0.02) return;
+    const count=Math.floor(throttle*4);
+    for(let c=0;c<count;c++){
+      const i=this.idx%this.maxParts;
+      this.positions[i*3]=pos.x+(Math.random()-.5)*0.3;
+      this.positions[i*3+1]=pos.y+(Math.random()-.5)*0.3;
+      this.positions[i*3+2]=pos.z+(Math.random()-.5)*0.3;
+      this.vel[i*3]=backDir.x*throttle*0.8+(Math.random()-.5)*0.1;
+      this.vel[i*3+1]=0.02+Math.random()*0.04;
+      this.vel[i*3+2]=backDir.z*throttle*0.8+(Math.random()-.5)*0.1;
+      this.life[i]=1.0;
+      this.sizes[i]=1.5+Math.random()*2.5;
+      this.alphas[i]=0.35*throttle;
+      this.idx++;
+    }
+  }
+  update(dt) {
+    for(let i=0;i<this.maxParts;i++){
+      if(this.life[i]<=0) continue;
+      this.life[i]-=dt*0.9;
+      this.positions[i*3]+=this.vel[i*3]*dt*60;
+      this.positions[i*3+1]+=this.vel[i*3+1]*dt*60;
+      this.positions[i*3+2]+=this.vel[i*3+2]*dt*60;
+      this.sizes[i]+=dt*8;
+      this.alphas[i]=Math.max(0,this.life[i]*0.35);
+    }
+    this.ps.geometry.attributes.position.needsUpdate=true;
+    this.ps.geometry.attributes.size.needsUpdate=true;
+    this.ps.geometry.attributes.alpha.needsUpdate=true;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// A321 FLIGHT PHYSICS
+// ═══════════════════════════════════════════════════════════════════════════════
+const G_ACC = 9.81;
+const RHO   = 1.225;
+
+const A321_PARAMS = {
+  mass:       75000,
+  maxThrust:  260000,
+  wingArea:   122.4,
+  span:       35.8,
+  cl0:        0.18,
+  clAlpha:    5.2,
+  clMax:      1.65,
+  cdMin:      0.045,
+  cdAlpha:    0.90,
+  eOswald:    0.78,
+  AR:         10.48,
+  flapCl:     [0.0, 0.70, 1.20, 1.80],
+  flapCd:     [0.0, 0.040, 0.085, 0.160],
+  flapStall:  [0.285, 0.32, 0.36, 0.40],
+  cdGear:     0.060,
+  spoilerCd:  0.30,
+  spoilerLiftLoss: 0.35,
+  V1:  69.4, VR:  74.7, V2:  79.8, Vstall: 62, VMO: 189,
+};
+
+function groundEffectFactor(agl_m, span) {
+  const h_b = Math.max(0, agl_m) / (span * 0.5);
+  if (h_b >= 1.0) return 1.0;
+  return 1.0 - 0.48 * Math.exp(-4.0 * h_b);
+}
+
+// Globalny stan wejścia steruje fizyką samolotu (czytany w physicsTick)
+const planeInput = {
+  pitch: 0, roll: 0, yaw: 0,
+  throttleUp: false, throttleDown: false,
+  brakes: false,
+};
+
+/**
+ * Samolot A321 - fizyka identyczna jak w samodzielnym symulatorze, ale
+ * pozycja jest trzymana w lat/lon/altM (prawdziwy świat) zamiast lokalnych
+ * metrów. Wewnętrzny układ fizyki: lokalny "z" = "south" (-north), lokalny
+ * "x" = east -> dzięki temu geoToWorld(lat,lon) daje identyczne (x,z) jak
+ * oryginalny phys.pos, więc cała logika lotu/roll/pitch/orientacji modelu
+ * jest przeniesiona 1:1. Tylko konwersja prędkości <-> lat/lon i teren są nowe.
+ */
+class A321Entity extends Entity {
+  constructor(opts = {}) {
+    super(Object.assign({ type: 'aircraft' }, opts));
+    // yawRad: 0 => kierunek lokalny +Z (= geograficzne south). Wyświetlany
+    // kompas (this.heading) = (180 - yawDeg) mod 360.
+    this.yawRad   = opts.yawRad   ?? 0;
+    this.pitchRad = opts.pitchRad ?? 0;
+    this.rollRad  = 0;
+    this.pitchRate = 0; this.rollRate = 0; this.yawRate = 0;
+    // vel: lokalny wektor prędkości m/s, x=east, y=up, z=local-south
+    this.vel = new THREE.Vector3(0, 0, 0);
+    this.throttle = 0;
+    this.flaps = 1;
+    this.gearDown = true;
+    this.spoilers = false;
+    this.onGround = true;
+    this.autoRotateArmed = false;
+    this.airspeed = 0;
+    this.vs = 0;
+    this._alpha = 0; this._cl = 0; this._isStalling = false;
+    this.terrainZoom = 13;
+
+    const grp = new THREE.Group();
+    const model = buildA321();
+    model.rotation.y = -Math.PI / 2;
+    grp.add(model);
+    this.mesh = grp;
+
+    this.fanAngle = 0;
+    this.beaconTimer = 0;
+    this.prevFlapPos = 0;
+  }
+
+  /** Kompas 0-360°, 0 = N */
+  get headingDeg() {
+    const yd = this.yawRad * 180 / Math.PI;
+    return ((180 - yd) % 360 + 360) % 360;
+  }
+
+  groundHeight() {
+    let h = terrainHeightM(this.lat, this.lon, this.terrainZoom);
+    if (h <= 0) h = terrainHeightBest(this.lat, this.lon);
+    return h;
+  }
+
+  reset(opts = {}) {
+    this.lat = opts.lat ?? SPAWN_LAT;
+    this.lon = opts.lon ?? SPAWN_LON;
+    const groundH = this.groundHeight();
+    this.altM = opts.altM ?? (groundH + 0.5);
+    this.yawRad = opts.yawRad ?? Units.degToRad((180 - SPAWN_HEADING_DEG + 360) % 360);
+    this.pitchRad = opts.pitchRad ?? 0;
+    this.rollRad = 0;
+    this.pitchRate = 0; this.rollRate = 0; this.yawRate = 0;
+    this.vel.set(opts.velX ?? 0, opts.velY ?? 0, opts.velZ ?? 0);
+    this.throttle = opts.throttle ?? 0;
+    this.flaps = opts.flaps ?? 1;
+    this.gearDown = opts.gearDown ?? true;
+    this.spoilers = false;
+    this.onGround = opts.onGround ?? true;
+    this.autoRotateArmed = false;
+    this.heading = this.headingDeg;
+    this.pitch = this.pitchRad * 180 / Math.PI;
+    this.roll = 0;
+    this.updateGearVisibility();
+  }
+
+  updateGearVisibility() {
+    ['gear_nose','gear_mainL','gear_mainR'].forEach(n => {
+      const g = this.mesh.getObjectByName(n);
+      if (g) { g.visible = this.gearDown; g.rotation.x = this.gearDown ? 0 : -Math.PI/2; }
+    });
+  }
+
+  // brak generycznej integracji - wszystko liczone w physicsUpdate
+  integrate(dt) {}
+
+  get worldPos() {
+    return geoToWorld(this.lat, this.lon, this.altM * DEM_EXAG);
+  }
+
+  syncMesh() {
+    if (!this.mesh) return;
+    const p = this.worldPos;
+    this.mesh.position.copy(p);
+    this.mesh.rotation.set(-this.pitchRad, this.yawRad, this.rollRad, 'YXZ');
+  }
+
+  physicsUpdate(dt, input) {
+    const dtCap = Math.min(dt, 0.05);
+    const airspeed = this.vel.length();
+
+    // ── THROTTLE ──
+    if (input.throttleUp)   this.throttle = Math.min(1, this.throttle + dtCap * 0.6);
+    if (input.throttleDown) this.throttle = Math.max(0, this.throttle - dtCap * 0.8);
+
+    // ── STEROWANIE ──
+    const ctrlEff = Math.max(0, Math.min(1.0, (airspeed - 12.0) / 40.0));
+    const pitchInput = input.pitch;
+    const rollInput  = input.roll;
+    const yawInput   = input.yaw;
+
+    if (this.onGround && airspeed >= A321_PARAMS.VR * 0.98 && this.throttle > 0.15) this.autoRotateArmed = true;
+    if (!this.onGround) this.autoRotateArmed = false;
+    const autoRotate = (this.autoRotateArmed && pitchInput > 0) ? 0.5 : 0;
+
+    this.pitchRate += (pitchInput + autoRotate) * 1.4 * ctrlEff * dtCap;
+    this.pitchRate *= Math.pow(0.05, dtCap);
+    this.rollRate  += rollInput * 1.6 * ctrlEff * dtCap;
+    this.rollRate  *= Math.pow(0.04, dtCap);
+
+    this.pitchRad += this.pitchRate * dtCap;
+    this.rollRad  += this.rollRate  * dtCap;
+    this.pitchRad  = Math.max(-0.45, Math.min(this.onGround ? 0.35 : 0.52, this.pitchRad));
+    this.rollRad   = Math.max(-1.40, Math.min(1.40, this.rollRad));
+
+    // ── YAW ──
+    const forward = new THREE.Vector3(Math.sin(this.yawRad), 0, Math.cos(this.yawRad));
+    if (this.onGround) {
+      this.yawRad += (yawInput * 1.8 + rollInput * 0.3) * dtCap;
+    } else if (airspeed > 8) {
+      this.yawRad -= (G_ACC * Math.tan(this.rollRad) / airspeed) * dtCap;
+      this.yawRad += yawInput * 0.4 * ctrlEff * dtCap;
+    }
+
+    // ── OSIE SAMOLOTU ──
+    const noseDir = new THREE.Vector3(
+      forward.x * Math.cos(this.pitchRad),
+      Math.sin(this.pitchRad),
+      forward.z * Math.cos(this.pitchRad)
+    ).normalize();
+    const worldUp  = new THREE.Vector3(0, 1, 0);
+    const rightVec = new THREE.Vector3().crossVectors(worldUp, forward).normalize();
+    const rollQ    = new THREE.Quaternion().setFromAxisAngle(noseDir, -this.rollRad);
+    const wingRight = rightVec.clone().applyQuaternion(rollQ);
+    const acUp     = new THREE.Vector3().crossVectors(noseDir, wingRight).normalize();
+
+    // ── KĄT NATARCIA ──
+    const fpa = airspeed > 2
+      ? Math.asin(Math.max(-1, Math.min(1, this.vel.y / airspeed)))
+      : 0;
+    const alpha = this.pitchRad - fpa;
+
+    // ── AERODYNAMIKA ──
+    const flap = this.flaps;
+    const isStalling = !this.onGround && Math.abs(alpha) > A321_PARAMS.flapStall[flap];
+    let cl;
+    if (isStalling) {
+      const over = Math.abs(alpha) - A321_PARAMS.flapStall[flap];
+      cl = Math.sign(alpha) * Math.max(0.15, (A321_PARAMS.clMax + A321_PARAMS.flapCl[flap]) - over * 4.0);
+    } else {
+      cl = A321_PARAMS.cl0 + A321_PARAMS.flapCl[flap] + A321_PARAMS.clAlpha * alpha;
+    }
+    if (this.spoilers) cl -= A321_PARAMS.spoilerLiftLoss;
+    cl = Math.max(-0.3, Math.min(A321_PARAMS.clMax + A321_PARAMS.flapCl[flap], cl));
+
+    // ── TEREN ──
+    const groundH = this.groundHeight();
+    const gearOffset = this.gearDown ? 3.15 : 0.5;
+    const agl_now = this.altM - groundH - gearOffset;
+    const gef = groundEffectFactor(agl_now, A321_PARAMS.span);
+    const cdi = (cl*cl) / (Math.PI * A321_PARAMS.eOswald * A321_PARAMS.AR) * gef;
+    const cd  = A321_PARAMS.cdMin + A321_PARAMS.flapCd[flap] + (this.gearDown?A321_PARAMS.cdGear:0)
+              + cdi + A321_PARAMS.cdAlpha*alpha*alpha + (this.spoilers?A321_PARAMS.spoilerCd:0);
+
+    const q       = 0.5 * RHO * airspeed * airspeed;
+    const liftMag = q * A321_PARAMS.wingArea * cl;
+    const dragMag = q * A321_PARAMS.wingArea * Math.max(0, cd);
+
+    const weightN   = A321_PARAMS.mass * G_ACC;
+    const thrustVec = noseDir.clone().multiplyScalar(this.throttle * A321_PARAMS.maxThrust);
+    const dragVec   = airspeed > 0.1 ? this.vel.clone().normalize().multiplyScalar(-dragMag) : new THREE.Vector3();
+    const liftVec   = acUp.clone().multiplyScalar(liftMag);
+
+    // ── ZIEMIA (uproszczony 1-punktowy kontakt - prawdziwy teren) ──
+    let distGround = this.altM - (groundH + gearOffset);
+    let gearContact = false;
+    if (this.gearDown && distGround < 0) {
+      this.altM = groundH + gearOffset;
+      distGround = 0;
+      gearContact = true;
+    }
+
+    if (this.onGround || gearContact) {
+      if (gearContact) this.onGround = true;
+      if (liftVec.y >= weightN) {
+        this.onGround = false;
+      } else {
+        const hs = Math.sqrt(this.vel.x**2 + this.vel.z**2);
+        const brake = input.brakes ? 5.0 : 0.06;
+        const spoilerBrake = this.spoilers ? 8.0 : 0;
+        const totalBrake = brake + spoilerBrake;
+        this.vel.x += ((thrustVec.x + dragVec.x) / A321_PARAMS.mass - (hs>0.05 ? this.vel.x/hs*totalBrake : 0)) * dtCap;
+        this.vel.z += ((thrustVec.z + dragVec.z) / A321_PARAMS.mass - (hs>0.05 ? this.vel.z/hs*totalBrake : 0)) * dtCap;
+        this.vel.y = 0;
+        if (this.gearDown) this.altM = groundH + gearOffset;
+      }
+    } else {
+      const ax = (thrustVec.x + dragVec.x + liftVec.x) / A321_PARAMS.mass;
+      const ay = (thrustVec.y + dragVec.y + liftVec.y) / A321_PARAMS.mass - G_ACC;
+      const az = (thrustVec.z + dragVec.z + liftVec.z) / A321_PARAMS.mass;
+      this.vel.x += ax * dtCap;
+      this.vel.y += ay * dtCap;
+      this.vel.z += az * dtCap;
+
+      const newAirspeed = this.vel.length();
+      if (newAirspeed > 5) {
+        const horizVel = new THREE.Vector3(this.vel.x, 0, this.vel.z);
+        const horizSpeed = horizVel.length();
+        if (horizSpeed > 0.5) {
+          const noseDirXZ = new THREE.Vector3(noseDir.x, 0, noseDir.z).normalize();
+          const steer = Math.min(0.12, (q * A321_PARAMS.wingArea * 0.8 / A321_PARAMS.mass) * dtCap);
+          const newHorizDir = horizVel.clone().normalize().lerp(noseDirXZ, steer).normalize();
+          this.vel.x = newHorizDir.x * horizSpeed;
+          this.vel.z = newHorizDir.z * horizSpeed;
+        }
+      }
+
+      if (distGround <= 0) {
+        this.vel.y = this.vel.y < -3 ? this.vel.y * -0.1 : 0;
+        this.altM = groundH + gearOffset;
+        this.onGround = true;
+      }
+    }
+
+    if (this.vel.length() > A321_PARAMS.VMO) this.vel.setLength(A321_PARAMS.VMO);
+
+    // ── INTEGRACJA POZYCJI (geo) ──
+    // lokalny x = east, lokalny z = -north  =>  north = -vel.z, east = vel.x
+    const eastVel  = this.vel.x;
+    const northVel = -this.vel.z;
+    const cosLat = Math.cos(Units.degToRad(this.lat));
+    this.lat += (northVel / EARTH_RADIUS) * (180 / Math.PI) * dtCap;
+    this.lon += (eastVel  / (EARTH_RADIUS * cosLat)) * (180 / Math.PI) * dtCap;
+    this.altM += this.vel.y * dtCap;
+
+    // ── WYJŚCIA ──
+    this.airspeed = this.vel.length();
+    this.terrainM = groundH;
+    this.agl = Math.max(0, this.altM - groundH - gearOffset);
+    this.vs = this.vel.y;
+    this._alpha = alpha; this._cl = cl; this._isStalling = isStalling;
+    this.heading = this.headingDeg;
+    this.pitch = this.pitchRad * 180 / Math.PI;
+    this.roll  = this.rollRad  * 180 / Math.PI;
+    this._noseDir = noseDir; this._wingRight = wingRight; this._acUp = acUp;
+  }
+
+  renderUpdate(dt) {
+    this.fanAngle += this.throttle * dt * 30;
+    ['fan_R','fan_L'].forEach(n=>{ const f=this.mesh.getObjectByName(n); if(f) f.rotation.x=this.fanAngle; });
+    this.beaconTimer += dt;
+    const beacon = this.mesh.getObjectByName('beacon');
+    if (beacon) beacon.visible = Math.sin(this.beaconTimer*6) > 0;
+    const flapTarget = this.flaps * 12 * Math.PI/180;
+    this.prevFlapPos += (flapTarget - this.prevFlapPos) * Math.min(1, dt*4);
+    ['flap_R','flap_L'].forEach(n=>{ const f=this.mesh.getObjectByName(n); if(f) f.rotation.x=this.prevFlapPos; });
+    const spoilerTarget = this.spoilers ? 35*Math.PI/180 : 0;
+    ['spoiler_R','spoiler_L'].forEach(n=>{ const s=this.mesh.getObjectByName(n); if(s) s.rotation.x=-spoilerTarget; });
+    const elevDefl = -this.pitchRate * 0.8;
+    ['elevator_R','elevator_L'].forEach(n=>{ const e=this.mesh.getObjectByName(n); if(e) e.rotation.x=elevDefl; });
+    const rudder = this.mesh.getObjectByName('rudder');
+    if (rudder) rudder.rotation.y = this.yawRate * 2;
+  }
+}
+// ═══════════════════════════════════════════════════════════════════════════════
+// CAMERA SYSTEM
+// ═══════════════════════════════════════════════════════════════════════════════
+const CameraMode = { ORBIT: 'ORBIT', CHASE: 'CHASE', COCKPIT: 'COCKPIT' };
+let camMode = CameraMode.CHASE;
+
+// Orbit camera state (steruje też zoomem terenu poprzez orb.dist)
+const orb = {
+  lat:   SPAWN_LAT,
+  lon:   SPAWN_LON,
+  dist:  8000,
+  pitch: 35,
+  yaw:   0,
+  y:     0,
+};
+
+const chaseConfig = { distM: 45, minDist: 12, maxDist: 250, lagFactor: 0.08 };
+// Kamera "chase" jako orbit wokół samolotu: yaw/pitch w radianach,
+// offset względem kierunku lotu (yaw=PI => domyślnie za samolotem)
+const chaseOrbit = { yaw: Math.PI, pitch: Units.degToRad(12) };
+const cockpitConfig = { offsetM: new THREE.Vector3(0, 2.4, 18) };
+// Swobodne rozglądanie się w kokpicie (offset od kierunku lotu)
+const cockpitLook = { yaw: 0, pitch: 0 };
+const _chaseCamPos = new THREE.Vector3();
+let _chaseCamInit = false;
+
+function applyCamera(dt) {
+  if (camMode === CameraMode.ORBIT || !activeEntity) { _applyOrbitCamera(dt); return; }
+  if (camMode === CameraMode.CHASE)   { _applyChaseCamera(dt); return; }
+  if (camMode === CameraMode.COCKPIT) { _applyCockpitCamera(); return; }
+}
+
+const _orbitCamPos = new THREE.Vector3();
+const _orbitCamQuat = new THREE.Quaternion();
+const _orbitCamHelper = new THREE.Object3D();
+let _orbitCamInit = false;
+const _orbitState = {
+  yaw: orb.yaw,
+  pitch: orb.pitch,
+  dist: orb.dist,
+  lat: orb.lat,
+  lon: orb.lon,
+  y: orb.y,
+};
+const ORB_LAG = 0.18; // lerp factor per frame @ 60fps
+let orbitDebugLast = 0;
+
+function _lerpAngleDeg(a, b, t) {
+  const diff = (((b - a + 180) % 360) + 360) % 360 - 180;
+  return a + diff * t;
+}
+
+function _applyOrbitCamera(dt) {
+  camera.up.set(0, 1, 0);
+  const cosRef = Math.cos(Units.degToRad(refLat));
+  const dtFactor = Math.min(dt, 0.08);
+  const lerpFactor = 1 - Math.pow(1 - ORB_LAG, dtFactor * 60);
+  _orbitState.yaw = _lerpAngleDeg(_orbitState.yaw, orb.yaw, lerpFactor);
+  _orbitState.pitch = THREE.MathUtils.lerp(_orbitState.pitch, orb.pitch, lerpFactor);
+  _orbitState.dist = THREE.MathUtils.lerp(_orbitState.dist, orb.dist, lerpFactor);
+  _orbitState.lat = THREE.MathUtils.lerp(_orbitState.lat, orb.lat, lerpFactor);
+  _orbitState.lon = THREE.MathUtils.lerp(_orbitState.lon, orb.lon, lerpFactor);
+  _orbitState.y   = THREE.MathUtils.lerp(_orbitState.y, orb.y, lerpFactor);
+
+  const p  = Units.degToRad(_orbitState.pitch);
+  const y  = Units.degToRad(_orbitState.yaw);
+  const tx = (_orbitState.lon - refLon) * Math.PI / 180 * EARTH_RADIUS * cosRef;
+  const ty = (_orbitState.lat - refLat) * Math.PI / 180 * EARTH_RADIUS;
+  const targetCenter = new THREE.Vector3(tx, 0, -ty);
+  const targetPos = new THREE.Vector3(
+    tx - _orbitState.dist * Math.cos(p) * Math.sin(y),
+    _orbitState.y + _orbitState.dist * Math.sin(p),
+    -ty - _orbitState.dist * Math.cos(p) * Math.cos(y)
+  );
+
+  if (!_orbitCamInit) {
+    _orbitCamPos.copy(targetPos);
+    camera.position.copy(targetPos);
+    _orbitCamHelper.position.copy(targetPos);
+    _orbitCamHelper.lookAt(targetCenter);
+    _orbitCamQuat.copy(_orbitCamHelper.quaternion);
+    _orbitCamInit = true;
+  }
+
+  _orbitCamPos.lerp(targetPos, lerpFactor);
+  camera.position.copy(_orbitCamPos);
+  _orbitCamHelper.position.copy(_orbitCamPos);
+  _orbitCamHelper.lookAt(targetCenter);
+  camera.quaternion.slerp(_orbitCamHelper.quaternion, lerpFactor);
+}
+
+function _applyChaseCamera(dt) {
+  // Ustaw camera.up z powrotem do normalnego gdy wychodzimy z cockpit
+  camera.up.set(0, 1, 0);
+  const e = activeEntity;
+  const pos = e.worldPos;
+  // azymut/elewacja kamery wokół samolotu (sterowane myszką/touch)
+  const az = e.yawRad + chaseOrbit.yaw;
+  const el = chaseOrbit.pitch;
+  const ce = Math.cos(el);
+  const dir = new THREE.Vector3(Math.sin(az) * ce, Math.sin(el), Math.cos(az) * ce);
+  const target = new THREE.Vector3(
+    pos.x + dir.x * chaseConfig.distM,
+    pos.y + dir.y * chaseConfig.distM * DEM_EXAG * Y_SCALE,
+    pos.z + dir.z * chaseConfig.distM
+  );
+  if (!_chaseCamInit) { _chaseCamPos.copy(target); _chaseCamInit = true; }
+  const lf = 1 - Math.pow(1 - chaseConfig.lagFactor, dt * 60);
+  _chaseCamPos.lerp(target, lf);
+  camera.position.copy(_chaseCamPos);
+  camera.lookAt(pos.x, pos.y, pos.z);
+}
+
+function _applyCockpitCamera() {
+  const e = activeEntity;
+  const pos = e.worldPos;
+
+  // Pełny quaternion samolotu - pitch, yaw, roll (zgodnie z syncMesh: -pitch, yaw, roll, YXZ)
+  const planeQ = new THREE.Quaternion().setFromEuler(
+    new THREE.Euler(-e.pitchRad, e.yawRad, e.rollRad, 'YXZ')
+  );
+
+  // Offset kamery w przestrzeni lokalnej samolotu (przodem = +Z w modelu)
+  // Skalujemy Y offsetu przez DEM_EXAG*Y_SCALE bo worldPos.y jest w skalowanych jednostkach
+  const localOff = new THREE.Vector3(
+    cockpitConfig.offsetM.x,
+    cockpitConfig.offsetM.y * DEM_EXAG * Y_SCALE,
+    cockpitConfig.offsetM.z
+  ).applyQuaternion(planeQ);
+
+  camera.position.set(pos.x + localOff.x, pos.y + localOff.y, pos.z + localOff.z);
+
+  // Kierunek patrzenia: swobodne rozglądanie się, ale "up" obrócone o roll samolotu
+  // żeby horyzont w kokpicie był zgodny z przechyleniem
+  const lookQ = planeQ.clone().multiply(
+    new THREE.Quaternion().setFromEuler(new THREE.Euler(cockpitLook.pitch, cockpitLook.yaw, 0, 'YXZ'))
+  );
+
+  // "up" kamery = górna oś samolotu (po rollu)
+  const camUp   = new THREE.Vector3(0, 1, 0).applyQuaternion(planeQ);
+  const lookFwd = new THREE.Vector3(0, 0, 1).applyQuaternion(lookQ);
+  const lookDist = 500;
+  const lookAt = new THREE.Vector3(
+    camera.position.x + lookFwd.x * lookDist,
+    camera.position.y + lookFwd.y * lookDist,
+    camera.position.z + lookFwd.z * lookDist
+  );
+
+  camera.up.copy(camUp);
+  camera.lookAt(lookAt);
+}
+
+function cycleCameraMode() {
+  const modes = Object.values(CameraMode);
+  const idx = modes.indexOf(camMode);
+  camMode = modes[(idx + 1) % modes.length];
+  _chaseCamInit = false;
+  updateCameraHUD();
+}
+function setCameraMode(mode) {
+  camMode = mode; _chaseCamInit = false; updateCameraHUD();
+}
+function updateCameraHUD() {
+  const el = document.getElementById('hud-cam-badge');
+  if (el) el.textContent = camMode;
+  const j = document.getElementById('joy-wrap'), z = document.getElementById('zoom-btns');
+  const ft = document.getElementById('flight-touch');
+  const isCoarse = matchMedia('(pointer:coarse)').matches;
+  if (camMode === CameraMode.ORBIT) {
+    if (isCoarse) { j.style.display='block'; z.style.display='flex'; }
+    ft.classList.remove('active');
+    document.getElementById('ft-toggles').classList.remove('active');
+  } else {
+    j.style.display='none'; z.style.display='none';
+    if (isCoarse) {
+      ft.classList.add('active');
+      document.getElementById('ft-toggles').classList.add('active');
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// HUD DRAW FUNCTIONS
+// ═══════════════════════════════════════════════════════════════════════════════
+const MPS_KT=1.94384, MPS_FPM=196.85, M_FT=3.28084;
+
+function drawSpeedTape(canvas, speed_kt) {
+  const ctx=canvas.getContext('2d'), w=canvas.width, h=canvas.height;
+  ctx.clearRect(0,0,w,h);
+  const range=60;
+  ctx.strokeStyle='#c8e8ff'; ctx.fillStyle='#c8e8ff';
+  ctx.font='bold 9px Courier New'; ctx.textAlign='right';
+  for (let v=Math.max(0,speed_kt-range); v<=speed_kt+range; v+=10) {
+    const y=h/2-(v-speed_kt)*(h/(range*2));
+    ctx.lineWidth=v%20===0?1.5:0.7;
+    ctx.beginPath(); ctx.moveTo(w-8,y); ctx.lineTo(w,y); ctx.stroke();
+    if(v%20===0) ctx.fillText(v.toFixed(0),w-10,y+4);
+  }
+  const vs_y=h/2-(A321_PARAMS.Vstall*MPS_KT-speed_kt)*(h/(range*2));
+  ctx.strokeStyle='#ff4444'; ctx.lineWidth=2;
+  ctx.beginPath(); ctx.moveTo(w-20,vs_y); ctx.lineTo(w,vs_y); ctx.stroke();
+  [[A321_PARAMS.VR*MPS_KT,'#ffaa00','VR'],[A321_PARAMS.V2*MPS_KT,'#44ff88','V2']].forEach(([v,c,l])=>{
+    const vy=h/2-(v-speed_kt)*(h/(range*2));
+    ctx.fillStyle=c; ctx.font='bold 8px Courier New'; ctx.textAlign='left';
+    ctx.fillText(l,2,vy+3);
+  });
+  ctx.fillStyle='#000c1a'; ctx.fillRect(0,h/2-14,w,28);
+  ctx.strokeStyle='#1a6aaa'; ctx.lineWidth=1.5; ctx.strokeRect(0,h/2-14,w,28);
+  ctx.fillStyle='#c8e8ff'; ctx.font='bold 13px Courier New'; ctx.textAlign='right';
+  ctx.fillText(speed_kt.toFixed(0),w-2,h/2+5);
+  ctx.fillStyle='#4a8fbf'; ctx.font='8px Courier New'; ctx.textAlign='center';
+  ctx.fillText('IAS',w/2,10);
+}
+
+function drawAltTape(canvas, alt_ft) {
+  const ctx=canvas.getContext('2d'), w=canvas.width, h=canvas.height;
+  ctx.clearRect(0,0,w,h);
+  const range=500;
+  ctx.strokeStyle='#c8e8ff'; ctx.fillStyle='#c8e8ff';
+  ctx.font='bold 9px Courier New'; ctx.textAlign='left';
+  for (let v=Math.max(0,alt_ft-range); v<=alt_ft+range; v+=100) {
+    const y=h/2-(v-alt_ft)*(h/(range*2));
+    ctx.lineWidth=v%500===0?1.5:0.7;
+    ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(10,y); ctx.stroke();
+    if(v%200===0) ctx.fillText(v.toFixed(0),12,y+4);
+  }
+  ctx.fillStyle='#000c1a'; ctx.fillRect(0,h/2-14,w,28);
+  ctx.strokeStyle='#1a6aaa'; ctx.lineWidth=1.5; ctx.strokeRect(0,h/2-14,w,28);
+  ctx.fillStyle='#c8e8ff'; ctx.font='bold 12px Courier New'; ctx.textAlign='left';
+  ctx.fillText(alt_ft.toFixed(0),4,h/2+5);
+  ctx.fillStyle='#4a8fbf'; ctx.font='8px Courier New'; ctx.textAlign='center';
+  ctx.fillText('ALT',w/2,10);
+}
+
+function drawAttitude(canvas, pitchRad, rollRad) {
+  const ctx=canvas.getContext('2d'), w=canvas.width, h=canvas.height;
+  const cx=w/2, cy=h/2, r=w/2-2;
+  ctx.clearRect(0,0,w,h);
+  ctx.save();
+  ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2); ctx.clip();
+  ctx.translate(cx,cy);
+
+  const pixPerDeg = 3.5;
+  const pitchOff = pitchRad * (180/Math.PI) * pixPerDeg; // > 0 gdy nos w górę
+
+  ctx.rotate(-rollRad);
+
+  ctx.fillStyle='#1a4a8a';
+  ctx.fillRect(-w*2, -h*2, w*4, h*4);
+  ctx.fillStyle='#5a4020';
+  ctx.fillRect(-w*2, pitchOff, w*4, h*4);
+
+  ctx.strokeStyle='#ffffff'; ctx.lineWidth=1.5;
+  ctx.beginPath(); ctx.moveTo(-w*2, pitchOff); ctx.lineTo(w*2, pitchOff); ctx.stroke();
+
+  ctx.strokeStyle='rgba(255,255,255,0.7)'; ctx.lineWidth=0.8;
+  ctx.font='8px Courier New'; ctx.fillStyle='#ffffff';
+  for (let deg=-30; deg<=30; deg+=5) {
+    if (deg === 0) continue;
+    const py = pitchOff - deg * pixPerDeg;
+    const lw = deg % 10 === 0 ? 16 : 10;
+    ctx.beginPath(); ctx.moveTo(-lw, py); ctx.lineTo(lw, py); ctx.stroke();
+    if (deg % 10 === 0) {
+      ctx.textAlign = 'right'; ctx.fillText(Math.abs(deg), -lw - 2, py + 3);
+      ctx.textAlign = 'left';  ctx.fillText(Math.abs(deg),  lw + 2, py + 3);
+    }
+  }
+
+  ctx.restore();
+
+  ctx.strokeStyle='#ffff00'; ctx.lineWidth=2;
+  ctx.beginPath(); ctx.moveTo(cx-28,cy); ctx.lineTo(cx-10,cy); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(cx+10,cy); ctx.lineTo(cx+28,cy); ctx.stroke();
+  ctx.beginPath(); ctx.arc(cx,cy,3,0,Math.PI*2); ctx.fillStyle='#ffff00'; ctx.fill();
+  ctx.beginPath(); ctx.moveTo(cx,cy-5); ctx.lineTo(cx,cy-10); ctx.stroke();
+
+  ctx.strokeStyle='#ffffff'; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.arc(cx,cy,r-4,-Math.PI*0.75,-Math.PI*0.25); ctx.stroke();
+  const ra = -Math.PI/2 + rollRad;
+  const tx2 = cx + (r-4) * Math.cos(ra), ty2 = cy + (r-4) * Math.sin(ra);
+  ctx.strokeStyle='#ffff00'; ctx.lineWidth=2;
+  ctx.beginPath(); ctx.moveTo(cx,cy); ctx.lineTo(tx2,ty2); ctx.stroke();
+
+  ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2);
+  ctx.strokeStyle='#1a4a7a'; ctx.lineWidth=2; ctx.stroke();
+}
+
+function drawCompass(canvas, headingDeg) {
+  const ctx=canvas.getContext('2d'), w=canvas.width, h=canvas.height;
+  const cx=w/2, cy=h/2+4, r=w/2-8;
+  const heading = Units.degToRad(headingDeg);
+  ctx.clearRect(0,0,w,h);
+  ctx.save();
+  ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2); ctx.clip();
+  ctx.fillStyle='rgba(5,15,30,0.9)'; ctx.fillRect(0,0,w,h);
+  const dirs=['N','NE','E','SE','S','SW','W','NW'];
+  ctx.save();
+  ctx.translate(cx,cy); ctx.rotate(-heading);
+  for (let deg=0;deg<360;deg+=5) {
+    const a=(deg*Math.PI)/180, isMaj=deg%30===0;
+    const len=isMaj?12:6;
+    ctx.strokeStyle=isMaj?'#c8e8ff':'#3a6a9a'; ctx.lineWidth=isMaj?1.5:0.7;
+    ctx.beginPath(); ctx.moveTo(Math.sin(a)*(r-len),-Math.cos(a)*(r-len)); ctx.lineTo(Math.sin(a)*r,-Math.cos(a)*r); ctx.stroke();
+    if(deg%45===0){
+      const lbl=dirs[deg/45], x=Math.sin(a)*(r-20), y=-Math.cos(a)*(r-20);
+      ctx.fillStyle=deg===0?'#ff4444':'#c8e8ff';
+      ctx.font=`bold ${deg===0?12:10}px Courier New`;
+      ctx.textAlign='center'; ctx.textBaseline='middle';
+      ctx.fillText(lbl,x,y);
+    }
+  }
+  ctx.restore();
+  ctx.strokeStyle='#ffff00'; ctx.lineWidth=2;
+  ctx.beginPath(); ctx.moveTo(cx,cy-12); ctx.lineTo(cx-6,cy+6); ctx.lineTo(cx,cy+2); ctx.lineTo(cx+6,cy+6); ctx.closePath(); ctx.stroke();
+  ctx.restore();
+  ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2);
+  ctx.strokeStyle='#1a4a7a'; ctx.lineWidth=2; ctx.stroke();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// HUD UPDATE
+// ═══════════════════════════════════════════════════════════════════════════════
+function updateHUD() {
+  const plane = activeEntity;
+  if (!plane) return;
+  const ias_kt = plane.airspeed * MPS_KT;
+  const gs_kt  = Math.sqrt(plane.vel.x**2 + plane.vel.z**2) * MPS_KT;
+  const vs_fpm = plane.vs * MPS_FPM;
+  const alt_ft = plane.altM * M_FT;
+  const agl_ft = plane.agl  * M_FT;
+  const hdg    = plane.headingDeg;
+
+  drawSpeedTape(document.getElementById('speed-canvas'), ias_kt);
+  drawAltTape(document.getElementById('alt-canvas'), alt_ft);
+  drawAttitude(document.getElementById('attitude-canvas'), plane.pitchRad, plane.rollRad);
+  drawCompass(document.getElementById('compass-canvas'), hdg);
+
+  document.getElementById('ias-val').textContent = ias_kt.toFixed(0)+' kt';
+  document.getElementById('vs-val').textContent  = (vs_fpm>0?'+':'')+vs_fpm.toFixed(0)+' fpm';
+  document.getElementById('pitch-val').textContent = (plane.pitch>0?'+':'')+plane.pitch.toFixed(1)+'°';
+  document.getElementById('bank-val').textContent  = plane.roll.toFixed(1)+'°';
+  document.getElementById('gs-val').textContent    = gs_kt.toFixed(0)+' kt';
+  document.getElementById('alt-val').textContent   = alt_ft.toFixed(0)+' ft';
+  document.getElementById('alt-m-val').textContent = Math.round(plane.altM)+' m MSL';
+  document.getElementById('agl-val').textContent   = agl_ft.toFixed(0)+' ft';
+  document.getElementById('terr-val').textContent  = Math.round(plane.terrainM)+' m';
+  document.getElementById('hdg-val').textContent   = hdg.toFixed(0)+'°';
+  document.getElementById('lat-val').textContent   = plane.lat.toFixed(5)+'°';
+  document.getElementById('lon-val').textContent   = plane.lon.toFixed(5)+'°';
+  document.getElementById('aoa-val').textContent   = (plane._alpha*180/Math.PI).toFixed(1)+'°';
+  const camEuler = new THREE.Euler().setFromQuaternion(camera.quaternion, 'YXZ');
+  const camPitch = Units.radToDeg(camEuler.x);
+  const camYaw   = Units.radToDeg(camEuler.y);
+  const camRoll  = Units.radToDeg(camEuler.z);
+  const camPos = camera.position;
+  const planePos = plane.worldPos;
+  const dx = camPos.x - planePos.x;
+  const dy = camPos.y - planePos.y;
+  const dz = camPos.z - planePos.z;
+  const dpos = Math.sqrt(dx*dx + dy*dy + dz*dz);
+  const yawDiff = (((camYaw - hdg + 180) % 360) + 360) % 360 - 180;
+  const pitchDiff = camPitch - plane.pitch;
+  const rollDiff = camRoll - plane.roll;
+  document.getElementById('cam-pos-val').textContent = `${camPos.x.toFixed(1)}, ${camPos.y.toFixed(1)}, ${camPos.z.toFixed(1)}`;
+  document.getElementById('cam-rot-val').textContent = `${camPitch.toFixed(1)}° / ${camYaw.toFixed(1)}° / ${camRoll.toFixed(1)}°`;
+  document.getElementById('plane-rot-val').textContent = `${plane.pitch.toFixed(1)}° / ${hdg.toFixed(1)}° / ${plane.roll.toFixed(1)}°`;
+  document.getElementById('cam-drot-val').textContent = `${pitchDiff.toFixed(1)}° / ${yawDiff.toFixed(1)}° / ${rollDiff.toFixed(1)}°`;
+  document.getElementById('cam-dpos-val').textContent = dpos.toFixed(1);
+
+  if (camMode === CameraMode.ORBIT) {
+    const now = performance.now();
+    if (now - orbitDebugLast > 500) {
+      orbitDebugLast = now;
+      console.log('ORBIT DEBUG', {
+        orb: { ...orb },
+        orbitState: { ..._orbitState },
+        camPos: { x: camPos.x.toFixed(2), y: camPos.y.toFixed(2), z: camPos.z.toFixed(2) },
+        camRot: { pitch: camPitch.toFixed(2), yaw: camYaw.toFixed(2), roll: camRoll.toFixed(2) },
+        planeRot: { pitch: plane.pitch.toFixed(2), heading: hdg.toFixed(2), roll: plane.roll.toFixed(2) },
+        diffRot: { pitch: pitchDiff.toFixed(2), yaw: yawDiff.toFixed(2), roll: rollDiff.toFixed(2) },
+        diffPos: dpos.toFixed(2),
+      });
+    }
+  }
+
+  document.getElementById('flaps-val').textContent = plane.flaps.toString();
+  document.getElementById('gear-val').textContent  = plane.gearDown?'DOWN':'UP';
+  document.getElementById('spoilers-val').textContent = plane.spoilers?'ON':'OFF';
+  document.getElementById('h-tiles').textContent = `${tileMeshes.size} załad., ${loadingTiles.size} ład.`;
+
+  const tPct=(plane.throttle*100).toFixed(0);
+  document.getElementById('throttle-bar').style.width=tPct+'%';
+  document.getElementById('throttle-pct').textContent=tPct+'%';
+  document.getElementById('throttle-pct').style.color=plane.throttle>0.85?'#ff8800':'#44ff88';
+
+  let phase='ON GROUND';
+  if (!plane.onGround) {
+    if (agl_ft<400 && plane.vs>0.5) phase='TAKEOFF';
+    else if (vs_fpm>200) phase='CLIMB';
+    else if (vs_fpm<-200) phase='DESCENT';
+    else phase='CRUISE';
+  }
+  document.getElementById('phase-disp').textContent=phase;
+  document.getElementById('stall-disp').style.display = plane._isStalling?'block':'none';
+  document.getElementById('overspeed-disp').style.display = (ias_kt>A321_PARAMS.VMO*MPS_KT)?'block':'none';
+
+  const vsEl=document.getElementById('vs-val');
+  vsEl.classList.remove('warn','danger','green');
+  if(vs_fpm<-1500) vsEl.classList.add('danger');
+  else if(vs_fpm<-800) vsEl.classList.add('warn');
+  else if(vs_fpm>100) vsEl.classList.add('green');
+}
+// ═══════════════════════════════════════════════════════════════════════════════
+// ORBIT CAMERA CONTROLS (mysz / klawiatura / touch) - aktywne w CameraMode.ORBIT
+// ═══════════════════════════════════════════════════════════════════════════════
+const WASD_SPEED = 30, QE_SPEED = 30;
+let mDown=false,rDown=false,lx=0,ly=0;
+const keys=new Set();
+const cv=document.getElementById('c');
+
+cv.addEventListener('mousedown',e=>{
+  if(e.button===0) mDown=true;
+  if(e.button===2) rDown=true;
+  lx=e.clientX; ly=e.clientY; e.preventDefault();
+});
+window.addEventListener('mouseup',()=>{mDown=false;rDown=false;});
+// ── FIX 1: obrót orbit w lewo/prawo — odwrócony znak dx ──
+window.addEventListener('mousemove',e=>{
+  const dx=e.clientX-lx, dy=e.clientY-ly;
+  if(mDown && camMode===CameraMode.ORBIT){
+    orb.yaw   += dx*0.3;
+    orb.pitch  = Math.max(5,Math.min(89,orb.pitch+dy*0.25));
+  } else if(mDown && camMode===CameraMode.CHASE){
+    chaseOrbit.yaw   -= dx*0.006;
+    chaseOrbit.pitch  = Math.max(-1.3,Math.min(1.4,chaseOrbit.pitch + dy*0.004));
+  } else if(mDown && camMode===CameraMode.COCKPIT){
+    cockpitLook.yaw   = Math.max(-2.6,Math.min(2.6, cockpitLook.yaw   - dx*0.006));
+    cockpitLook.pitch = Math.max(-1.3,Math.min(1.3, cockpitLook.pitch + dy*0.004));
+  }
+  if(rDown && camMode===CameraMode.ORBIT){
+    const cosRef=Math.cos(Units.degToRad(refLat));
+    const spd=orb.dist/EARTH_RADIUS*180/Math.PI*0.003;
+    const yr=Units.degToRad(orb.yaw);
+    orb.lon += (Math.sin(yr)*dy - Math.cos(yr)*dx)*spd/cosRef;
+    orb.lat += (Math.cos(yr)*dy + Math.sin(yr)*dx)*spd;
+  }
+  lx=e.clientX; ly=e.clientY;
+});
+cv.addEventListener('wheel',e=>{
+  if (camMode===CameraMode.ORBIT){
+    orb.dist=Math.max(500,Math.min(900_000,orb.dist*(1+e.deltaY*0.001)));
+  } else if (camMode===CameraMode.CHASE){
+    chaseConfig.distM=Math.max(chaseConfig.minDist,Math.min(chaseConfig.maxDist,chaseConfig.distM*(1+e.deltaY*0.001)));
+  }
+  e.preventDefault();
+},{passive:false});
+cv.addEventListener('contextmenu',e=>e.preventDefault());
+window.addEventListener('resize',()=>{
+  camera.aspect=innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth,innerHeight);
+});
+
+window.addEventListener('keydown',e=>{
+  const k=e.key.toLowerCase();
+  if(['w','a','s','d','q','e','c','v'].includes(k)) keys.add(k);
+});
+window.addEventListener('keyup',e=>keys.delete(e.key.toLowerCase()));
+
+function updateOrbitKeyboard(dt) {
+  if(camMode!==CameraMode.ORBIT) return;
+  const fwd=(keys.has('s')?1:0)-(keys.has('w')?1:0);
+  const str=(keys.has('a')?1:0)-(keys.has('d')?1:0);
+  const clb=(keys.has('e')?1:0)-(keys.has('q')?1:0);
+  if(!fwd&&!str&&!clb) return;
+  const cosRef=Math.cos(Units.degToRad(refLat));
+  const yr=Units.degToRad(orb.yaw);
+  const base=Math.max(50,orb.dist*0.0015);
+  const hm=base*WASD_SPEED*dt, vm=base*QE_SPEED*dt;
+  const east =(fwd*Math.sin(yr)+str*Math.cos(yr))*hm;
+  const north=(fwd*Math.cos(yr)-str*Math.sin(yr))*hm;
+  orb.lon+=(east/(EARTH_RADIUS*cosRef))*180/Math.PI;
+  orb.lat+=(north/EARTH_RADIUS)*180/Math.PI;
+  orb.y  +=clb*vm;
+}
+
+// ─── Touch (pinch/pan/rotate) na mapie w ORBIT ─────────────────────────────────
+const activeT=new Map(),prevT=new Map();
+let lastPinchDist=null,lastPanMid=null;
+function touchDist(a,b){return Math.hypot(a.x-b.x,a.y-b.y);}
+function touchMid(a,b){return{x:(a.x+b.x)/2,y:(a.y+b.y)/2};}
+cv.addEventListener('touchstart',e=>{
+  [...e.changedTouches].forEach(t=>{
+    const p={x:t.clientX,y:t.clientY};
+    prevT.set(t.identifier,activeT.has(t.identifier)?{...activeT.get(t.identifier)}:p);
+    activeT.set(t.identifier,p);
+  });
+  if(activeT.size===2){const[a,b]=[...activeT.values()];lastPinchDist=touchDist(a,b);lastPanMid=touchMid(a,b);}
+},{passive:true});
+cv.addEventListener('touchmove',e=>{
+  [...e.changedTouches].forEach(t=>{
+    prevT.set(t.identifier,activeT.has(t.identifier)?{...activeT.get(t.identifier)}:{x:t.clientX,y:t.clientY});
+    activeT.set(t.identifier,{x:t.clientX,y:t.clientY});
+  });
+  if(camMode===CameraMode.ORBIT){
+    if(activeT.size===1){
+      const t=e.changedTouches[0],pr=prevT.get(t.identifier);
+      if(pr){orb.yaw+=(t.clientX-pr.x)*0.3;orb.pitch=Math.max(5,Math.min(89,orb.pitch-(t.clientY-pr.y)*0.25));}
+    } else if(activeT.size===2){
+      const[a,b]=[...activeT.values()];
+      const dist=touchDist(a,b),mid=touchMid(a,b);
+      if(lastPinchDist!==null)
+        orb.dist=Math.max(500,Math.min(900_000,orb.dist*(lastPinchDist/dist)));
+      if(lastPanMid!==null){
+        const cosRef=Math.cos(Units.degToRad(refLat)),yr=Units.degToRad(orb.yaw);
+        const spd=orb.dist/EARTH_RADIUS*180/Math.PI*0.003;
+        const dx=mid.x-lastPanMid.x,dy=mid.y-lastPanMid.y;
+        orb.lon-=(Math.sin(yr)*dy-Math.cos(yr)*dx)*spd/cosRef;
+        orb.lat-=(Math.cos(yr)*dy+Math.sin(yr)*dx)*spd;
+      }
+      lastPinchDist=dist; lastPanMid=mid;
+    }
+  } else if(camMode===CameraMode.CHASE || camMode===CameraMode.COCKPIT){
+    if(activeT.size===1){
+      const t=e.changedTouches[0],pr=prevT.get(t.identifier);
+      if(pr){
+        const ddx=t.clientX-pr.x, ddy=t.clientY-pr.y;
+        if(camMode===CameraMode.CHASE){
+          chaseOrbit.yaw   += ddx*0.006;
+          chaseOrbit.pitch  = Math.max(-1.3,Math.min(1.4,chaseOrbit.pitch + ddy*0.004));
+        } else {
+          cockpitLook.yaw   = Math.max(-2.6,Math.min(2.6, cockpitLook.yaw   + ddx*0.006));
+          cockpitLook.pitch = Math.max(-1.3,Math.min(1.3, cockpitLook.pitch + ddy*0.004));
+        }
+      }
+    } else if(activeT.size===2 && camMode===CameraMode.CHASE){
+      const[a,b]=[...activeT.values()];
+      const dist=touchDist(a,b);
+      if(lastPinchDist!==null)
+        chaseConfig.distM=Math.max(chaseConfig.minDist,Math.min(chaseConfig.maxDist,chaseConfig.distM*(lastPinchDist/dist)));
+      lastPinchDist=dist;
+    }
+  }
+},{passive:true});
+cv.addEventListener('touchend',e=>{
+  [...e.changedTouches].forEach(t=>{activeT.delete(t.identifier);prevT.delete(t.identifier);});
+  if(activeT.size<2){lastPinchDist=null;lastPanMid=null;}
+});
+cv.addEventListener('touchcancel',e=>{
+  [...e.changedTouches].forEach(t=>{activeT.delete(t.identifier);prevT.delete(t.identifier);});
+  lastPinchDist=null;lastPanMid=null;
+});
+
+// ─── Mobile joystick (ORBIT) ────────────────────────────────────────────────────
+const joyBase=document.getElementById('joy-base'),joyKnob=document.getElementById('joy-knob');
+let joyActive=false,joyId=null,joyOrigin={x:0,y:0},joyDelta={x:0,y:0};
+const JOY_R=33;
+joyBase.addEventListener('touchstart',e=>{
+  const t=e.changedTouches[0];joyActive=true;joyId=t.identifier;
+  const r=joyBase.getBoundingClientRect();joyOrigin={x:r.left+r.width/2,y:r.top+r.height/2};
+  e.stopPropagation();
+},{passive:true});
+window.addEventListener('touchmove',e=>{
+  if(!joyActive) return;
+  for(const t of e.changedTouches){
+    if(t.identifier!==joyId) continue;
+    const dx=t.clientX-joyOrigin.x,dy=t.clientY-joyOrigin.y;
+    const len=Math.hypot(dx,dy),c=Math.min(len,JOY_R);
+    const nx=len>0?dx/len*c:0,ny=len>0?dy/len*c:0;
+    joyKnob.style.transform=`translate(calc(-50% + ${nx}px),calc(-50% + ${ny}px))`;
+    joyDelta={x:nx/JOY_R,y:ny/JOY_R};
+  }
+},{passive:true});
+window.addEventListener('touchend',e=>{
+  for(const t of e.changedTouches){
+    if(t.identifier!==joyId) continue;
+    joyActive=false;joyId=null;joyDelta={x:0,y:0};joyKnob.style.transform='translate(-50%,-50%)';
+  }
+});
+function applyJoystick(dt) {
+  if(!joyActive||(!joyDelta.x&&!joyDelta.y)||camMode!==CameraMode.ORBIT) return;
+  const cosRef=Math.cos(Units.degToRad(refLat)),yr=Units.degToRad(orb.yaw);
+  const spd=Math.max(50,orb.dist*0.0015)*WASD_SPEED*dt;
+  orb.lon+=((joyDelta.x*Math.cos(yr)-joyDelta.y*Math.sin(yr))*spd/(EARTH_RADIUS*cosRef))*180/Math.PI;
+  orb.lat+=((joyDelta.x*Math.sin(yr)+joyDelta.y*Math.cos(yr))*spd/EARTH_RADIUS)*180/Math.PI;
+}
+
+let zoomInHeld=false,zoomOutHeld=false;
+document.getElementById('btn-zoom-in').addEventListener('touchstart',e=>{zoomInHeld=true;},{passive:true});
+document.getElementById('btn-zoom-in').addEventListener('touchend',()=>zoomInHeld=false);
+document.getElementById('btn-zoom-out').addEventListener('touchstart',e=>{zoomOutHeld=true;},{passive:true});
+document.getElementById('btn-zoom-out').addEventListener('touchend',()=>zoomOutHeld=false);
+function applyZoomButtons(dt) {
+  if(camMode!==CameraMode.ORBIT) return;
+  if(zoomInHeld)  orb.dist=Math.max(500,    orb.dist*(1-1.5*dt));
+  if(zoomOutHeld) orb.dist=Math.min(900_000,orb.dist*(1+1.5*dt));
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// STEROWANIE SAMOLOTEM (klawiatura + ekran dotykowy)
+// ═══════════════════════════════════════════════════════════════════════════════
+const planeKeys={};
+const PLANE_CODES=['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','KeyW','KeyS','KeyQ','KeyE'];
+window.addEventListener('keydown',e=>{
+  if(PLANE_CODES.includes(e.code)){ planeKeys[e.code]=true; e.preventDefault(); }
+});
+window.addEventListener('keyup',e=>{
+  planeKeys[e.code]=false;
+  const plane=activeEntity;
+  if(e.code==='KeyF' && plane) plane.flaps=(plane.flaps+1)%4;
+  if(e.code==='KeyG' && plane && !plane.onGround){ plane.gearDown=!plane.gearDown; plane.updateGearVisibility(); }
+  if(e.code==='KeyB' && plane) plane.spoilers=!plane.spoilers;
+  if(e.code==='KeyR') resetPlane();
+  if(e.code==='KeyC') cycleCameraMode();
+  if(e.code==='KeyV') setCameraMode(CameraMode.CHASE);
+});
+
+const touchPlane={};
+document.querySelectorAll('#flight-touch .ft-btn').forEach(btn=>{
+  const act=btn.dataset.act;
+  btn.addEventListener('touchstart',e=>{ touchPlane[act]=true; e.preventDefault(); },{passive:false});
+  btn.addEventListener('touchend',  e=>{ touchPlane[act]=false; e.preventDefault(); },{passive:false});
+  btn.addEventListener('touchcancel',e=>{ touchPlane[act]=false; },{passive:true});
+});
+document.getElementById('ft-flaps').addEventListener('click',()=>{
+  if(activeEntity) activeEntity.flaps=(activeEntity.flaps+1)%4;
+});
+document.getElementById('ft-gear').addEventListener('click',()=>{
+  const p=activeEntity; if(p && !p.onGround){ p.gearDown=!p.gearDown; p.updateGearVisibility(); }
+  document.getElementById('ft-gear').classList.toggle('active', p?p.gearDown:false);
+});
+document.getElementById('ft-spoilers').addEventListener('click',()=>{
+  const p=activeEntity; if(p) p.spoilers=!p.spoilers;
+  document.getElementById('ft-spoilers').classList.toggle('active', p?p.spoilers:false);
+});
+document.getElementById('ft-cam').addEventListener('click',cycleCameraMode);
+
+function updatePlaneInput() {
+  let pitch=(planeKeys['ArrowUp']?1:0)+(planeKeys['ArrowDown']?-1:0);
+  if(touchPlane.pitchup) pitch=1;
+  if(touchPlane.pitchdn) pitch=-1;
+  let roll=(planeKeys['ArrowLeft']?-1:0)+(planeKeys['ArrowRight']?1:0);
+  if(touchPlane.rollL) roll=-1;
+  if(touchPlane.rollR) roll=1;
+  let yaw=(planeKeys['KeyQ']?-1:0)+(planeKeys['KeyE']?1:0);
+  if(touchPlane.yawL) yaw=-1;
+  if(touchPlane.yawR) yaw=1;
+  planeInput.pitch=pitch;
+  planeInput.roll=roll;
+  planeInput.yaw=yaw;
+  planeInput.throttleUp=!!planeKeys['KeyW']||!!touchPlane.thrup;
+  planeInput.throttleDown=!!planeKeys['KeyS']||!!touchPlane.thrdn;
+  planeInput.brakes=!!planeKeys['KeyS'];
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// RESET / SPAWN HELPERS
+// ═══════════════════════════════════════════════════════════════════════════════
+function resetPlane() {
+  if(!activeEntity) return;
+  activeEntity.reset({});
+  _chaseCamInit=false;
+}
+
+function spawnApproach() {
+  const plane=activeEntity; if(!plane) return;
+  const yawRad = Units.degToRad((180 - SPAWN_HEADING_DEG + 360) % 360);
+  const bearingBack = (SPAWN_HEADING_DEG + 180) % 360;
+  const D = 6000;
+  const dEast  = D * Math.sin(Units.degToRad(bearingBack));
+  const dNorth = D * Math.cos(Units.degToRad(bearingBack));
+  const p = offsetGeo(SPAWN_LAT, SPAWN_LON, dEast, dNorth);
+  const groundH = terrainHeightBest(p.lat, p.lon);
+  plane.reset({
+    lat: p.lat, lon: p.lon,
+    altM: groundH + 300,
+    yawRad, pitchRad: 0.02,
+    velX: Math.sin(yawRad)*70, velY: -2, velZ: Math.cos(yawRad)*70,
+    throttle: 0.55, flaps: 2, gearDown: true, onGround: false,
+  });
+  _chaseCamInit=false;
+  prefetchDEM(p.lat, p.lon, 2, 13);
+  prefetchDEM(p.lat, p.lon, 2, 12);
+}
+
+document.getElementById('btn-reset').addEventListener('click', resetPlane);
+document.getElementById('btn-approach').addEventListener('click', spawnApproach);
+document.getElementById('btn-camera').addEventListener('click', cycleCameraMode);
+document.getElementById('btn-orbit-free').addEventListener('click', ()=>{
+  if(activeEntity){ orb.lat=activeEntity.lat; orb.lon=activeEntity.lon; }
+  orb.dist=8000; orb.pitch=40; orb.yaw=0; orb.y=0;
+  setCameraMode(CameraMode.ORBIT);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// EXHAUST EMISSION
+// ═══════════════════════════════════════════════════════════════════════════════
+function emitExhaust(plane, exhaust) {
+  plane.mesh.updateMatrixWorld(true);
+  const backDir = new THREE.Vector3(-Math.sin(plane.yawRad), 0, -Math.cos(plane.yawRad));
+  [new THREE.Vector3(1,-1,5), new THREE.Vector3(1,-1,-5)].forEach(lp=>{
+    exhaust.emit(lp.clone().applyMatrix4(plane.mesh.matrixWorld), plane.throttle, backDir);
+  });
+}
+// ═══════════════════════════════════════════════════════════════════════════════
+// RENDER LOOP
+// ═══════════════════════════════════════════════════════════════════════════════
+const exhaust = new ExhaustParticles();
+let fc=0, lastRenderT=performance.now();
+
+function animate(t) {
+  requestAnimationFrame(animate);
+  const dt = Math.min(0.05, (t-lastRenderT)/1000);
+  lastRenderT = t; fc++;
+
+  updatePlaneInput();
+  physicsTick(t);
+
+  updateOrbitKeyboard(dt);
+  applyJoystick(dt);
+  applyZoomButtons(dt);
+
+  applyCamera(dt);
+
+  const trackLat = activeEntity ? activeEntity.lat : orb.lat;
+  const trackLon = activeEntity ? activeEntity.lon : orb.lon;
+  const trackDist = orb.dist;
+
+  if (fc%2===0)  updateTiles(trackLat, trackLon, trackDist);
+  if (fc%10===0) loadBuildings(trackLat, trackLon, trackDist);
+
+  for (const e of entities.values()) {
+    e.syncMesh();
+    e.renderUpdate(dt);
+  }
+
+  if (activeEntity) emitExhaust(activeEntity, exhaust);
+  exhaust.update(dt);
+
+  if (fc%3===0) updateHUD();
+
+  renderer.render(scene, camera);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// START
+// ═══════════════════════════════════════════════════════════════════════════════
+const loadbar = document.getElementById('loadbar');
+let loadProg=0;
+const loadInterval=setInterval(()=>{
+  loadProg=Math.min(95, loadProg + Math.random()*14+5);
+  loadbar.style.width=loadProg+'%';
+}, 150);
+
+(async function init(){
+  try {
+    await Promise.all([
+      prefetchDEM(SPAWN_LAT, SPAWN_LON, 2, 13),
+      prefetchDEM(SPAWN_LAT, SPAWN_LON, 2, 12),
+      prefetchDEM(SPAWN_LAT, SPAWN_LON, 1, 10),
+    ]);
+  } catch(e) { console.error('[init] DEM prefetch failed', e); }
+
+  const plane = new A321Entity({ id:'a321' });
+  plane.reset({});
+  scene.add(plane.mesh);
+  addEntity(plane);
+  activeEntity = plane;
+
+  updateTiles(SPAWN_LAT, SPAWN_LON, orb.dist);
+  loadBuildings(SPAWN_LAT, SPAWN_LON, orb.dist);
+  updateCameraHUD();
+
+  clearInterval(loadInterval);
+  loadbar.style.width='100%';
+  setTimeout(()=>{
+    document.getElementById('loading').style.display='none';
+    document.getElementById('hud').style.display='block';
+    setInterval(()=>{
+      if(activeEntity){
+        prefetchDEM(activeEntity.lat, activeEntity.lon, 1, 13);
+        prefetchDEM(activeEntity.lat, activeEntity.lon, 1, 12);
+      }
+    }, 800);
+    lastRenderT = performance.now();
+    animate(lastRenderT);
+  }, 400);
+})();
+</script>
+</body>
+</html>
