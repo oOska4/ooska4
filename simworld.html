@@ -120,6 +120,7 @@ canvas { display:block; }
     <div>FLAPS <span id="flaps-val" style="color:#c8e8ff">1</span> &nbsp; GEAR <span id="gear-val" style="color:#c8e8ff">DOWN</span></div>
     <div>SPOILERS <span id="spoilers-val" style="color:#c8e8ff">OFF</span></div>
     <div style="margin-top:4px;color:#336699">Tiles: <span id="h-tiles">–</span></div>
+    <div style="color:#336699">SAT Z: <span id="sat-z-val" style="color:#c8e8ff">–</span></div>
   </div>
   <div id="controls" class="panel">
     <h3>Sterowanie</h3>
@@ -225,6 +226,12 @@ function worldToGeo(p) {
   const altM = p.y / Y_SCALE;
   return { lat, lon, altM };
 }
+function cameraGroundDistanceM(fallback = orb.dist) {
+  const { lat, lon, altM } = worldToGeo(camera.position);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon) || !Number.isFinite(altM)) return fallback;
+  const terrainM = terrainHeightBest(lat, lon);
+  return Math.max(0, altM - terrainM);
+}
 function geoDistM(lat1, lon1, lat2, lon2) {
   const R = EARTH_RADIUS;
   const dLat = Units.degToRad(lat2 - lat1);
@@ -287,9 +294,9 @@ renderer.toneMappingExposure = 1.1;
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x9fc3e6);
-scene.fog = new THREE.Fog(0x9fc3e6, 30_000, 220_000);
+scene.fog = new THREE.Fog(0x9fc3e6, 60_000, 400_000);
 
-const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.5, 1_000_000);
+const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.5, 2_000_000);
 
 (function buildSky() {
   const skyGeo = new THREE.SphereGeometry(900_000, 32, 16);
@@ -327,7 +334,7 @@ const SAT_OSM  = (z,x,y) => `https://tile.openstreetmap.org/${z}/${x}/${y}.png`;
 
 const demDataCache  = new Map();
 const demInflight   = new Map();
-const DEM_CACHE_MAX = 160;
+const DEM_CACHE_MAX = 900;
 
 async function loadImageBlob(url, signal) {
   try {
@@ -397,8 +404,9 @@ function _sampleDem(src, lat, lon, zoom) {
 }
 
 function terrainHeightM(lat, lon, zoom = 12) {
-  const { tx, ty, px, py } = _sampleDem(null, lat, lon, zoom);
-  const dem = demDataCache.get(`${zoom}_${tx}_${ty}`);
+  const z = Math.min(zoom, 15);   // terrarium API max zoom = 15
+  const { tx, ty, px, py } = _sampleDem(null, lat, lon, z);
+  const dem = demDataCache.get(`${z}_${tx}_${ty}`);
   if (!dem) return 0;
   return Math.max(0, dem[py*256+px]);
 }
@@ -424,15 +432,16 @@ function terrainHeightScene(lat, lon, zoom = 12) {
 }
 
 async function prefetchDEM(lat, lon, radius = 2, zoom = 12, signal = null) {
-  const [cx, cy] = deg2tile(lat, lon, zoom);
+  const z = Math.min(zoom, 15);   // terrarium API max zoom = 15
+  const [cx, cy] = deg2tile(lat, lon, z);
   const promises = [];
   for (let dy = -radius; dy <= radius; dy++)
     for (let dx = -radius; dx <= radius; dx++)
-      promises.push(loadDemData(zoom, cx+dx, cy+dy, signal));
+      promises.push(loadDemData(z, cx+dx, cy+dy, signal));
   await Promise.all(promises);
 }
 // SAT TEXTURE CACHE
-const SAT_TEX_MAX = 48;
+const SAT_TEX_MAX = 420;
 const satTextureCache = new Map();
 const satTextureCacheKey = new WeakMap();
 
@@ -449,7 +458,7 @@ function putCachedSatTex(key, t) {
     satTextureCache.delete(satTextureCache.keys().next().value);
 }
 
-const COLOR_PIX_MAX   = 256;
+const COLOR_PIX_MAX   = 900;
 const colorPixelCache = new Map();
 const colorPixelInfl  = new Map();
 
@@ -561,6 +570,8 @@ const _MAX_G  = 128;
 const _posBuf = new Float32Array((_MAX_G+1)*(_MAX_G+1)*3);
 const _uvBuf  = new Float32Array((_MAX_G+1)*(_MAX_G+1)*2);
 const _idxCache = new Map();
+const _clipIdxCache = new Map();
+const CLIP_IDX_CACHE_MAX = 320;
 function getIdxBuf(G) {
   if (_idxCache.has(G)) return _idxCache.get(G);
   const G1 = G+1;
@@ -575,130 +586,353 @@ function getIdxBuf(G) {
   return buf;
 }
 
-async function buildMeshWithNeighbors(tx, ty, zoom, signal) {
-  const [dem,demR,demB,demC] = await Promise.all([
-    loadDemData(zoom,tx,ty,signal),
-    loadDemData(zoom,tx+1,ty,signal),
-    loadDemData(zoom,tx,ty+1,signal),
-    loadDemData(zoom,tx+1,ty+1,signal),
-  ]);
-  const GRID=gridForZoom(zoom), G1=GRID+1, INV=1/GRID;
-  const EPS=1/256, UV_IN=0.5/256, UV_SC=1-2*UV_IN;
-  const [lat1,lon1]=tile2deg(tx,ty,zoom);
-  const [lat2,lon2]=tile2deg(tx+1,ty+1,zoom);
-  const cosRef=Math.cos(Units.degToRad(refLat));
-  const x0=(lon1-refLon)*Math.PI/180*EARTH_RADIUS*cosRef;
-  const y0=(lat1-refLat)*Math.PI/180*EARTH_RADIUS;
-  const dx=(lon2-lon1)*Math.PI/180*EARTH_RADIUS*cosRef;
-  const dy=(lat2-lat1)*Math.PI/180*EARTH_RADIUS;
-  let vi=0,ui=0;
-  for (let r=0;r<=GRID;r++) for (let c=0;c<=GRID;c++) {
-    const u=c*INV, v=r*INV;
-    let wz=0;
-    if (dem) {
-      let d=dem,su=u,sv=v;
-      if (u>=1-EPS&&demR) { d=demR;su=u-1;sv=v; if(sv>=1-EPS&&demC){d=demC;su=u-1;sv=v-1;} }
-      else if (v>=1-EPS&&demB) { d=demB;su=u;sv=v-1; }
-      const px=su<0?0:su>1?255:(su*255)|0;
-      const py=sv<0?0:sv>1?255:(sv*255)|0;
-      const raw=d[py*256+px];
-      wz=raw>0?raw*DEM_EXAG*Y_SCALE:0;
-    }
-    _posBuf[vi++]=x0+u*dx; _posBuf[vi++]=wz; _posBuf[vi++]=-(y0+v*dy);
-    _uvBuf[ui++]=UV_IN+u*UV_SC; _uvBuf[ui++]=UV_IN+(1-v)*UV_SC;
+function clipSignature(boundsZ17) {
+  return boundsZ17 ? `${boundsZ17.minX},${boundsZ17.maxX},${boundsZ17.minY},${boundsZ17.maxY}` : '';
+}
+
+function parseTileKey(key) {
+  const [zoom, tx, ty] = key.split('_').map(Number);
+  return { zoom, tx, ty };
+}
+
+function tileBoundsZ17(tx, ty, zoom) {
+  const scale = 1 << (17 - zoom);
+  return {
+    minX: tx * scale, maxX: (tx + 1) * scale - 1,
+    minY: ty * scale, maxY: (ty + 1) * scale - 1
+  };
+}
+
+function boundsOverlap(a, b) {
+  return a.minX <= b.maxX && a.maxX >= b.minX &&
+         a.minY <= b.maxY && a.maxY >= b.minY;
+}
+
+function makeTerrainIndex(G, tx, ty, zoom, clipBoundsZ17) {
+  if (!clipBoundsZ17) return getIdxBuf(G);
+  const cacheKey = `${G}_${zoom}_${tx}_${ty}_${clipSignature(clipBoundsZ17)}`;
+  if (_clipIdxCache.has(cacheKey)) {
+    const idx = _clipIdxCache.get(cacheKey);
+    _clipIdxCache.delete(cacheKey); _clipIdxCache.set(cacheKey, idx);
+    return idx;
   }
-  const geo=new THREE.BufferGeometry();
-  geo.setAttribute('position',new THREE.BufferAttribute(_posBuf.slice(0,vi),3));
-  geo.setAttribute('uv',      new THREE.BufferAttribute(_uvBuf.slice(0,ui),2));
-  geo.setIndex(new THREE.BufferAttribute(new Uint32Array(getIdxBuf(GRID)),1));
+
+  const G1 = G + 1;
+  const shift = 17 - zoom;
+  const tileScaleZ17 = 1 << shift;
+  const cellScaleZ17 = tileScaleZ17 / G;
+  const tileX0 = tx * tileScaleZ17;
+  const tileY0 = ty * tileScaleZ17;
+  const clipMaxX = clipBoundsZ17.maxX + 1;
+  const clipMaxY = clipBoundsZ17.maxY + 1;
+  const idx = [];
+
+  for (let r = 0; r < G; r++) {
+    const cy = tileY0 + (r + 0.5) * cellScaleZ17;
+    for (let c = 0; c < G; c++) {
+      const cx = tileX0 + (c + 0.5) * cellScaleZ17;
+      if (cx >= clipBoundsZ17.minX && cx < clipMaxX &&
+          cy >= clipBoundsZ17.minY && cy < clipMaxY) continue;
+
+      const v = r * G1 + c;
+      idx.push(v, v + G1, v + G1 + 1, v, v + G1 + 1, v + 1);
+    }
+  }
+  const buf = new Uint32Array(idx);
+  _clipIdxCache.set(cacheKey, buf);
+  while (_clipIdxCache.size > CLIP_IDX_CACHE_MAX)
+    _clipIdxCache.delete(_clipIdxCache.keys().next().value);
+  return buf;
+}
+
+async function buildMeshWithNeighbors(tx, ty, satZoom, signal, clipBoundsZ17 = null) {
+  // ── oblicz który fragment tile'a DEM pasuje do tego sat-tile'a ──
+  const demZoom = Math.min(satZoom, 15);
+  const shift   = satZoom - demZoom;  // 0 dla ≤15 | 1 dla 16 | 2 dla 17
+  const scale   = 1 << shift;         // sat-tile'ów na bok DEM-tile'a: 1, 2, 4
+
+  const dtx = tx >> shift;            // DEM tile X (Math.floor(tx/scale))
+  const dty = ty >> shift;            // DEM tile Y
+
+  const subPx = 256 >> shift;         // rozmiar wycinka w px: 256, 128 lub 64
+  const px0   = (tx - dtx*scale) * subPx;   // offset X w DEM tile [0, 256)
+  const py0   = (ty - dty*scale) * subPx;   // offset Y w DEM tile [0, 256)
+
+  // Wczytaj DEM tile + 3 sąsiadów (potrzebne tylko na stykach)
+  const [dem, demR, demB, demC] = await Promise.all([
+    loadDemData(demZoom, dtx,   dty,   signal),
+    loadDemData(demZoom, dtx+1, dty,   signal),
+    loadDemData(demZoom, dtx,   dty+1, signal),
+    loadDemData(demZoom, dtx+1, dty+1, signal),
+  ]);
+
+  const GRID = gridForZoom(satZoom), INV = 1/GRID;
+  const UV_IN = 0.5/256, UV_SC = 1 - 2*UV_IN;
+  const [lat1, lon1] = tile2deg(tx,   ty,   satZoom);
+  const [lat2, lon2] = tile2deg(tx+1, ty+1, satZoom);
+  const cosRef = Math.cos(Units.degToRad(refLat));
+  const x0 = (lon1-refLon) * Math.PI/180 * EARTH_RADIUS * cosRef;
+  const y0 = (lat1-refLat) * Math.PI/180 * EARTH_RADIUS;
+  const dx = (lon2-lon1)   * Math.PI/180 * EARTH_RADIUS * cosRef;
+  const dy = (lat2-lat1)   * Math.PI/180 * EARTH_RADIUS;
+
+  let vi = 0, ui = 0;
+  for (let r = 0; r <= GRID; r++) {
+    for (let c = 0; c <= GRID; c++) {
+      const u = c*INV, v = r*INV;
+
+      // pozycja pixela w układzie współrzędnych DEM tile'a
+      let fpx = px0 + u*subPx;
+      let fpy = py0 + v*subPx;
+
+      // obsługa krawędzi — wybierz właściwy sąsiadujący DEM tile
+      let d = dem;
+      const crossR = fpx >= 256, crossB = fpy >= 256;
+      if      (crossR && crossB) { d = demC; fpx -= 256; fpy -= 256; }
+      else if (crossR)           { d = demR; fpx -= 256; }
+      else if (crossB)           { d = demB; fpy -= 256; }
+
+      let wz = 0;
+      if (d) {
+        const raw = d[Math.min(255, fpy|0) * 256 + Math.min(255, fpx|0)];
+        if (raw > 0) wz = raw * DEM_EXAG * Y_SCALE;
+      }
+
+      _posBuf[vi++] = x0 + u*dx;
+      _posBuf[vi++] = wz;
+      _posBuf[vi++] = -(y0 + v*dy);
+      _uvBuf[ui++]  = UV_IN + u*UV_SC;
+      _uvBuf[ui++]  = UV_IN + (1-v)*UV_SC;
+    }
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(_posBuf.slice(0,vi), 3));
+  geo.setAttribute('uv',       new THREE.BufferAttribute(_uvBuf.slice(0,ui), 2));
+  geo.setIndex(new THREE.BufferAttribute(makeTerrainIndex(GRID, tx, ty, satZoom, clipBoundsZ17), 1));
   geo.computeVertexNormals();
   return geo;
 }
 
-// TILE MANAGER
-const tileMeshes    = new Map();
-const loadingTiles  = new Set();
-const oldTileMeshes = new Map();
-let activeTileZoom  = null;
-let tileCtrl        = new AbortController();
-let tileEpoch       = 0;
-let pendingZoom     = null, pendingZoomAge = 0;
-const ZOOM_DEBOUNCE = 8;
+// ═══════════════════════════════════════════════════════════════════
+// TILE MANAGER — Gapless Multi-LOD terrain
+//
+// Zasada: każdy wyższy zoom różni się o 2 poziomy (np. 17→15→13→11→9),
+// więc kafelki pasują idealnie: 1 kafelek Z13 = 4×4 kafelków Z15 = 16×16 Z17.
+//
+// Układ pierścieni (w jednostkach Z13 tiles):
+//   Centrum  [Z17]: środkowy kafelek Z13 rozbity na 4×4 kafelków Z15,
+//                   każdy z nich rozbity na 4×4 kafelków Z17 → 16 kafelków Z17
+//   Pierścień1 [Z15]: kafelki Z13 w promieniu r13=1, rozbite na 4×4 Z15
+//                     (minus centrum, które ma Z17)
+//   Pierścień2 [Z13]: kafelki Z13 w promieniu r13=3 (minus r13≤1 które mają Z15/Z17)
+//   Pierścień3 [Z11]: kafelki Z11 w promieniu r11=3 (minus to co pokrywa Z13)
+//   Pierścień4 [Z9]:  kafelki Z9  w promieniu r9=4  (minus to co pokrywa Z11)
+//
+// Gdy kamera wysoko (orbit): wyłącz Z17 i Z15, obniż do Z13+Z11+Z9.
+// ═══════════════════════════════════════════════════════════════════
+
+const tileMeshes   = new Map();   // key "zoom_tx_ty" → THREE.Mesh
+const loadingTiles = new Set();   // key "zoom_tx_ty" (w trakcie ładowania)
+const tileAbort    = new Map();   // key "zoom_tx_ty" → AbortController
+const tileClipSig  = new Map();   // key "zoom_tx_ty" → clip signature
+let   tileEpoch    = 0;
+
+// Globalny "aktywny zoom" dla budynków / HUD
+let activeTileZoom = 13;
+
+// Progi wysokości nad terenem — powyżej których wyłączamy fine LOD
+const DIST_DISABLE_Z17 = 4_000;   // m nad terenem
+const DIST_DISABLE_Z15 = 20_000;
+const DIST_DISABLE_Z13 = 150_000;
+const DIST_DISABLE_Z11 = 600_000;
 
 function getZoom(dist) {
-  return Math.max(7, Math.min(15, Math.round(Math.log2(150_000_000 / dist))));
+  // Dla budynków / HUD — jeden zoom reprezentatywny
+  if (dist < DIST_DISABLE_Z17) return 17;
+  if (dist < DIST_DISABLE_Z15) return 15;
+  if (dist < DIST_DISABLE_Z13) return 13;
+  if (dist < DIST_DISABLE_Z11) return 11;
+  return 9;
 }
 
 function disposeMesh(mesh) {
   scene.remove(mesh);
   mesh.geometry.dispose();
   if (mesh.material.map) {
-    const ck=satTextureCacheKey.get(mesh.material.map);
-    if(!ck||satTextureCache.get(ck)!==mesh.material.map) mesh.material.map.dispose();
+    const ck = satTextureCacheKey.get(mesh.material.map);
+    if (!ck || satTextureCache.get(ck) !== mesh.material.map)
+      mesh.material.map.dispose();
   }
   mesh.material.dispose();
 }
-function clearOldTiles() {
-  for(const m of oldTileMeshes.values()) disposeMesh(m);
-  oldTileMeshes.clear();
-}
 
-async function loadTile(tx, ty, zoom) {
-  const key=`${zoom}_${tx}_${ty}`;
-  if(tileMeshes.has(key)||loadingTiles.has(key)) return;
+async function loadTile(tx, ty, zoom, clipBoundsZ17 = null) {
+  const key = `${zoom}_${tx}_${ty}`;
+  if (tileMeshes.has(key) || loadingTiles.has(key)) return;
   loadingTiles.add(key);
-  const epoch=tileEpoch, sig=tileCtrl.signal;
-  const[geo,tex]=await Promise.all([
-    buildMeshWithNeighbors(tx,ty,zoom,sig),
-    loadSatTex(zoom,tx,ty,sig)
-  ]);
-  if(epoch!==tileEpoch||sig.aborted){loadingTiles.delete(key);return;}
-  const mat=new THREE.MeshBasicMaterial({map:tex||null,color:tex?0xffffff:0x5a8a50});
-  const mesh=new THREE.Mesh(geo,mat);
-  scene.add(mesh); tileMeshes.set(key,mesh); loadingTiles.delete(key);
+  tileClipSig.set(key, clipSignature(clipBoundsZ17));
+  const epoch = tileEpoch;
+  const ac    = new AbortController();
+  tileAbort.set(key, ac);
+  const sig = ac.signal;
+  try {
+    const [geo, tex] = await Promise.all([
+      buildMeshWithNeighbors(tx, ty, zoom, sig, clipBoundsZ17),
+      loadSatTex(zoom, tx, ty, sig)
+    ]);
+    if (epoch !== tileEpoch || sig.aborted) return;
+    const mat  = new THREE.MeshBasicMaterial({ map: tex || null, color: tex ? 0xffffff : 0x5a8a50 });
+    // Na stykach LOD kafelki różnych zoomów leżą na (prawie) tej samej wysokości —
+    // bez wskazówki który ma "wygrać" z-buffer migałby losowo (z-fighting).
+    // polygonOffset odsuwa NIŻSZY zoom nieco w głąb (im niższy zoom, tym dalej),
+    // a renderOrder gwarantuje że wyższy zoom jest rysowany później (na wierchu)
+    // wśród samych kafelków terenu — nie wpływa na inne obiekty scenii (samolot,
+    // budynki), bo depthTest zostaje włączony jak zawsze.
+    mat.polygonOffset      = true;
+    mat.polygonOffsetFactor = (17 - zoom) * 1;   // niższy zoom = większy offset w głąb
+    mat.polygonOffsetUnits  = (17 - zoom) * 1;
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.renderOrder = zoom; // wyższy zoom rysowany później = wygrywa w nakładkach
+    scene.add(mesh);
+    tileMeshes.set(key, mesh);
+  } finally {
+    loadingTiles.delete(key);
+    tileAbort.delete(key);
+  }
 }
 
-function updateTiles(lat, lon, dist) {
-  const rawZoom=getZoom(dist);
-  if(rawZoom!==activeTileZoom){
-    if(rawZoom===pendingZoom){pendingZoomAge++;}else{pendingZoom=rawZoom;pendingZoomAge=1;}
-    if(pendingZoomAge>=ZOOM_DEBOUNCE){
-      tileCtrl.abort(); tileCtrl=new AbortController(); tileEpoch++;
-      loadingTiles.clear(); clearOldTiles();
-      for(const[k,m] of tileMeshes) oldTileMeshes.set(k,m);
-      tileMeshes.clear(); activeTileZoom=rawZoom; pendingZoom=null; pendingZoomAge=0;
-    }
-    if(activeTileZoom===null){activeTileZoom=rawZoom;pendingZoom=null;pendingZoomAge=0;}
-    else if(activeTileZoom!==rawZoom) return activeTileZoom;
-  } else { pendingZoom=null; pendingZoomAge=0; }
+function abortAndRemove(key) {
+  const ac = tileAbort.get(key);
+  if (ac) { ac.abort(); tileAbort.delete(key); }
+  loadingTiles.delete(key);
+  tileClipSig.delete(key);
+  const mesh = tileMeshes.get(key);
+  if (mesh) { disposeMesh(mesh); tileMeshes.delete(key); }
+}
 
-  const zoom=activeTileZoom;
-  const[cx,cy]=deg2tile(lat,lon,zoom);
-  const n=1<<zoom;
-
-  for(const[key,mesh] of tileMeshes){
-    const[,kx,ky]=key.split('_').map(Number);
-    if(Math.abs(kx-cx)>TILE_LOAD_RADIUS+1||Math.abs(ky-cy)>TILE_LOAD_RADIUS+1){
-      disposeMesh(mesh); tileMeshes.delete(key);
-    }
-  }
-  for(let dy=-TILE_LOAD_RADIUS;dy<=TILE_LOAD_RADIUS;dy++)
-    for(let dx=-TILE_LOAD_RADIUS;dx<=TILE_LOAD_RADIUS;dx++){
-      const tx=cx+dx,ty=cy+dy;
-      if(tx>=0&&ty>=0&&tx<n&&ty<n) loadTile(tx,ty,zoom);
-    }
-
-  if(oldTileMeshes.size>0){
-    let all=true;
-    outer: for(let dy=-TILE_LOAD_RADIUS;dy<=TILE_LOAD_RADIUS;dy++)
-      for(let dx=-TILE_LOAD_RADIUS;dx<=TILE_LOAD_RADIUS;dx++){
-        const tx=cx+dx,ty=cy+dy;
-        if(tx<0||ty<0||tx>=n||ty>=n) continue;
-        if(!tileMeshes.has(`${zoom}_${tx}_${ty}`)){all=false;break outer;}
+// Zbierz klucze kafelków w kwadratowym pierścieniu [cx±outerR, cy±outerR].
+// Jeśli innerBounds podane (granice WYŻSZEGO LOD, w jednostkach Z17 — najmniejszego
+// wspólnego mianownika), pomijamy kafelek TYLKO gdy jego CAŁY obszar (przeliczony
+// na Z17) leży w środku innerBounds. Kafelki częściowo nachodzące są przycinane
+// w geometrii, więc niższy zoom nie rysuje się pod wyższym.
+function collectRing(zoom, cx, cy, outerR, innerBoundsZ17) {
+  const n    = 1 << zoom;
+  const tiles = new Map();
+  const shift = 17 - zoom;          // ile bitów żeby przejść z tego zoom na Z17
+  const scale = 1 << shift;         // rozmiar jednego kafelka tego zoom w jednostkach Z17
+  for (let dy = -outerR; dy <= outerR; dy++) {
+    for (let dx = -outerR; dx <= outerR; dx++) {
+      const tx = cx + dx, ty = cy + dy;
+      if (tx < 0 || ty < 0 || tx >= n || ty >= n) continue;
+      let clip = null;
+      if (innerBoundsZ17) {
+        const a1 = tx * scale, a2 = a1 + scale - 1;
+        const b1 = ty * scale, b2 = b1 + scale - 1;
+        const overlaps = a1 <= innerBoundsZ17.maxX && a2 >= innerBoundsZ17.minX &&
+                         b1 <= innerBoundsZ17.maxY && b2 >= innerBoundsZ17.minY;
+        if (a1 >= innerBoundsZ17.minX && a2 <= innerBoundsZ17.maxX &&
+            b1 >= innerBoundsZ17.minY && b2 <= innerBoundsZ17.maxY) continue;
+        if (overlaps) clip = innerBoundsZ17;
       }
-    if(all) clearOldTiles();
+      tiles.set(`${zoom}_${tx}_${ty}`, clip);
+    }
   }
-  return zoom;
+  return tiles;
+}
+
+// Promienie ringów (liczba kafelków od centrum, w jednostkach WŁASNEGO zoom).
+// Dobrane tak, by granica zewnętrzna każdego poziomu nie tworzyła dziur z następnym
+// (zweryfikowane symulacją: 0 dziur, ~1-4% marginalnych nakładek na granicach).
+const RING_R17 = 1;   // 3×3 kafelki Z17  (najwyższa jakość, najbliżej samolotu)
+const RING_R15 = 2;   // 5×5 kafelków Z15
+const RING_R13 = 3;   // 7×7 kafelków Z13
+const RING_R11 = 4;   // 9×9 kafelków Z11
+const RING_R9  = 5;   // 11×11 kafelków Z9 (zawsze aktywny, najdalszy horyzont)
+
+function updateTiles(lat, lon, camGroundDist) {
+  const useZ17 = camGroundDist < DIST_DISABLE_Z17;
+  const useZ15 = camGroundDist < DIST_DISABLE_Z15;
+  const useZ13 = camGroundDist < DIST_DISABLE_Z13;
+  const useZ11 = camGroundDist < DIST_DISABLE_Z11;
+
+  activeTileZoom = useZ17 ? 17 : useZ15 ? 15 : useZ13 ? 13 : useZ11 ? 11 : 9;
+
+  // Bazowe centrum liczone RAZ na zoom 17, wszystkie inne centra wyprowadzone
+  // przez bitshift — to gwarantuje że żadne centrum "pływa" względem innych
+  // (deg2tile() niezależnie na każdym zoom dawałoby niewspółosiowe centra).
+  const [baseCx, baseCy] = deg2tile(lat, lon, 17);
+  const centerOf = (zoom) => {
+    const shift = 17 - zoom;
+    return [baseCx >> shift, baseCy >> shift];
+  };
+  // Granice ringu w jednostkach Z17 (do przekazania jako innerBounds niższemu LOD)
+  const boundsZ17 = (cx, cy, zoom, r) => {
+    const shift = 17 - zoom, scale = 1 << shift;
+    return {
+      minX: (cx - r) * scale, maxX: (cx + r) * scale + scale - 1,
+      minY: (cy - r) * scale, maxY: (cy + r) * scale + scale - 1
+    };
+  };
+
+  const wantTiles = new Map();
+  let innerB = null; // granice (w jednostkach Z17) ostatnio narysowanego wyższego LOD
+
+  if (useZ17) {
+    const [cx, cy] = centerOf(17);
+    for (const [k, clip] of collectRing(17, cx, cy, RING_R17, null)) wantTiles.set(k, clip);
+    innerB = boundsZ17(cx, cy, 17, RING_R17);
+  }
+  if (useZ15) {
+    const [cx, cy] = centerOf(15);
+    for (const [k, clip] of collectRing(15, cx, cy, RING_R15, innerB)) wantTiles.set(k, clip);
+    innerB = boundsZ17(cx, cy, 15, RING_R15);
+  }
+  if (useZ13) {
+    const [cx, cy] = centerOf(13);
+    for (const [k, clip] of collectRing(13, cx, cy, RING_R13, innerB)) wantTiles.set(k, clip);
+    innerB = boundsZ17(cx, cy, 13, RING_R13);
+  }
+  if (useZ11) {
+    const [cx, cy] = centerOf(11);
+    for (const [k, clip] of collectRing(11, cx, cy, RING_R11, innerB)) wantTiles.set(k, clip);
+    innerB = boundsZ17(cx, cy, 11, RING_R11);
+  }
+  // Z9 zawsze aktywny — pokrywa horyzont / cały glob jako tło
+  {
+    const [cx, cy] = centerOf(9);
+    for (const [k, clip] of collectRing(9, cx, cy, RING_R9, innerB)) wantTiles.set(k, clip);
+  }
+
+  const hasPendingHigherReplacement = (key) => {
+    const oldTile = parseTileKey(key);
+    const oldBounds = tileBoundsZ17(oldTile.tx, oldTile.ty, oldTile.zoom);
+
+    for (const wantKey of wantTiles.keys()) {
+      const wantTile = parseTileKey(wantKey);
+      if (wantTile.zoom <= oldTile.zoom || tileMeshes.has(wantKey)) continue;
+      if (boundsOverlap(oldBounds, tileBoundsZ17(wantTile.tx, wantTile.ty, wantTile.zoom))) return true;
+    }
+    return false;
+  };
+
+  // ── Usuń niechciane kafelki (i przerwij ich ładowanie) ───────────
+  for (const key of [...tileMeshes.keys(), ...loadingTiles]) {
+    const desiredClipSig = clipSignature(wantTiles.get(key));
+    const shouldRemove = !wantTiles.has(key) || tileClipSig.get(key) !== desiredClipSig;
+    if (shouldRemove && !hasPendingHigherReplacement(key)) abortAndRemove(key);
+  }
+
+  // ── Załaduj brakujące (wyższy zoom = wyższy priorytet) ───────────
+  const missing = [...wantTiles.keys()].filter(k => !tileMeshes.has(k) && !loadingTiles.has(k));
+  missing.sort((a, b) => parseInt(b) - parseInt(a));
+  for (const key of missing) {
+    const parts = key.split('_');
+    loadTile(+parts[1], +parts[2], +parts[0], wantTiles.get(key));
+  }
+
+
+  return activeTileZoom;
 }
 // BUILDINGS
 const BLDG_ZOOM    = 15;
@@ -813,8 +1047,8 @@ function parseBldgHeight(tags) {
   return 8;
 }
 
-async function loadBuildings(lat, lon, dist) {
-  const shouldShow = dist <= BLDG_MAX_DIST && dist >= BLDG_MIN_DIST;
+async function loadBuildings(lat, lon, camGroundDist) {
+  const shouldShow = camGroundDist <= BLDG_MAX_DIST && camGroundDist >= BLDG_MIN_DIST;
   if (!shouldShow) { if(buildingMeshes.size>0){clearAllBldg();lastBldgKey=null;} return; }
   const [cx,cy]=deg2tile(lat,lon,BLDG_ZOOM);
   const bKey=`${BLDG_ZOOM}_${cx}_${cy}`;
@@ -1186,7 +1420,7 @@ const RHO   = 1.225;
 
 const A321_PARAMS = {
   mass:       75000,
-  maxThrust:  260000,
+  maxThrust:  280000,
   wingArea:   122.4,
   span:       35.8,
   cl0:        0.18,
@@ -1209,6 +1443,12 @@ function groundEffectFactor(agl_m, span) {
   const h_b = Math.max(0, agl_m) / (span * 0.5);
   if (h_b >= 1.0) return 1.0;
   return 1.0 - 0.48 * Math.exp(-4.0 * h_b);
+}
+
+function groundSteerTrackFactor(speedKt) {
+  if (speedKt <= 50) return 1.0;
+  if (speedKt >= 115) return 0.0;
+  return 1.0 - (speedKt - 50) / 65;
 }
 
 const planeInput = {
@@ -1329,6 +1569,7 @@ class A321Entity extends Entity {
     const forward = new THREE.Vector3(Math.sin(this.yawRad), 0, Math.cos(this.yawRad));
     if (this.onGround) {
       this.yawRad += (yawInput * 1.8 + rollInput * 0.3) * dtCap;
+      forward.set(Math.sin(this.yawRad), 0, Math.cos(this.yawRad));
     } else if (airspeed > 8) {
       this.yawRad -= (G_ACC * Math.tan(this.rollRad) / airspeed) * dtCap;
       this.yawRad += yawInput * 0.4 * ctrlEff * dtCap;
@@ -1398,6 +1639,18 @@ class A321Entity extends Entity {
         const totalBrake = brake + spoilerBrake;
         this.vel.x += ((thrustVec.x + dragVec.x) / A321_PARAMS.mass - (hs>0.05 ? this.vel.x/hs*totalBrake : 0)) * dtCap;
         this.vel.z += ((thrustVec.z + dragVec.z) / A321_PARAMS.mass - (hs>0.05 ? this.vel.z/hs*totalBrake : 0)) * dtCap;
+        const turnDemand = Math.min(1, Math.abs(yawInput) + Math.abs(rollInput) * 0.35);
+        if (turnDemand > 0.01) {
+          const horizSpeed = Math.sqrt(this.vel.x**2 + this.vel.z**2);
+          const steerFactor = groundSteerTrackFactor(Units.msToKt(horizSpeed));
+          if (horizSpeed > 0.5 && steerFactor > 0) {
+            const trackDir = new THREE.Vector3(this.vel.x, 0, this.vel.z).normalize();
+            const align = 1.0 - Math.exp(-5.2 * steerFactor * turnDemand * dtCap);
+            const newTrackDir = trackDir.lerp(forward, align).normalize();
+            this.vel.x = newTrackDir.x * horizSpeed;
+            this.vel.z = newTrackDir.z * horizSpeed;
+          }
+        }
         this.vel.y = 0;
         if (this.gearDown) this.altM = groundH + gearOffset;
       }
@@ -1785,20 +2038,23 @@ function updateHUD() {
   document.getElementById('cam-drot-val').textContent  = `${pitchDiff.toFixed(1)}° / ${yawDiff.toFixed(1)}° / ${rollDiff.toFixed(1)}°`;
   document.getElementById('cam-dpos-val').textContent  = dpos.toFixed(1);
 
-  if (ias_kt >= 80) {
-    const rect = `${pitchDiff.toFixed(1)}°/${yawDiff.toFixed(1)}°/${rollDiff.toFixed(1)}°`;
-    const dposText = dpos.toFixed(1);
-    if (rect !== lastLoggedCamDrot || dposText !== lastLoggedCamDpos) {
-      console.log(`ΔROT=${rect} ΔPOS=${dposText}m IAS=${ias_kt.toFixed(1)}kt`);
-      lastLoggedCamDrot = rect;
-      lastLoggedCamDpos = dposText;
-    }
-  }
+  // if (ias_kt >= 80) {
+  //   const rect = `${pitchDiff.toFixed(1)}°/${yawDiff.toFixed(1)}°/${rollDiff.toFixed(1)}°`;
+  //   const dposText = dpos.toFixed(1);
+  //   if (rect !== lastLoggedCamDrot || dposText !== lastLoggedCamDpos) {
+  //     console.log(`ΔROT=${rect} ΔPOS=${dposText}m IAS=${ias_kt.toFixed(1)}kt`);
+  //     lastLoggedCamDrot = rect;
+  //     lastLoggedCamDpos = dposText;
+  //   }
+  // }
 
   document.getElementById('flaps-val').textContent    = plane.flaps.toString();
   document.getElementById('gear-val').textContent     = plane.gearDown?'DOWN':'UP';
   document.getElementById('spoilers-val').textContent = plane.spoilers?'ON':'OFF';
   document.getElementById('h-tiles').textContent      = `${tileMeshes.size} załad., ${loadingTiles.size} ład.`;
+  // Pokaż zakres aktywnych zoomów w HUD
+  const activeZooms = [...new Set([...tileMeshes.keys()].map(k => k.split('_')[0]))].sort((a,b)=>b-a).join('/');
+  document.getElementById('sat-z-val').textContent    = activeZooms ? `Z=${activeZooms}` : '–';
 
   const tPct=(plane.throttle*100).toFixed(0);
   document.getElementById('throttle-bar').style.width = tPct+'%';
@@ -2104,8 +2360,10 @@ function spawnApproach() {
     throttle: 0.55, flaps: 2, gearDown: true, onGround: false,
   });
   _chaseCamInit = false;
-  prefetchDEM(p.lat, p.lon, 2, 13);
-  prefetchDEM(p.lat, p.lon, 2, 12);
+  prefetchDEM(p.lat, p.lon, 2, 17);
+  prefetchDEM(p.lat, p.lon, 3, 15);
+  prefetchDEM(p.lat, p.lon, 4, 13);
+  prefetchDEM(p.lat, p.lon, 5, 11);
 }
 
 // Airport selection
@@ -2134,8 +2392,10 @@ function selectAirport(code) {
     orb.lat = apt.spawnLat;
     orb.lon = apt.spawnLon;
     _chaseCamInit = false;
-    prefetchDEM(apt.spawnLat, apt.spawnLon, 3, 13);
-    prefetchDEM(apt.spawnLat, apt.spawnLon, 3, 12);
+    prefetchDEM(apt.spawnLat, apt.spawnLon, 2, 17);
+    prefetchDEM(apt.spawnLat, apt.spawnLon, 3, 15);
+    prefetchDEM(apt.spawnLat, apt.spawnLon, 4, 13);
+    prefetchDEM(apt.spawnLat, apt.spawnLon, 5, 11);
   }
 }
 
@@ -2187,7 +2447,7 @@ function animate(t) {
 
   const trackLat  = activeEntity ? activeEntity.lat : orb.lat;
   const trackLon  = activeEntity ? activeEntity.lon : orb.lon;
-  const trackDist = orb.dist;
+  const trackDist = cameraGroundDistanceM(orb.dist);
 
   if (fc % 2  === 0) updateTiles(trackLat, trackLon, trackDist);
   if (fc % 10 === 0) loadBuildings(trackLat, trackLon, trackDist);
@@ -2216,9 +2476,11 @@ const loadInterval = setInterval(() => {
 (async function init() {
   try {
     await Promise.all([
-      prefetchDEM(SPAWN_LAT, SPAWN_LON, 2, 13),
-      prefetchDEM(SPAWN_LAT, SPAWN_LON, 2, 12),
-      prefetchDEM(SPAWN_LAT, SPAWN_LON, 1, 10),
+      prefetchDEM(SPAWN_LAT, SPAWN_LON, 2, 17),
+      prefetchDEM(SPAWN_LAT, SPAWN_LON, 3, 15),
+      prefetchDEM(SPAWN_LAT, SPAWN_LON, 4, 13),
+      prefetchDEM(SPAWN_LAT, SPAWN_LON, 5, 11),
+      prefetchDEM(SPAWN_LAT, SPAWN_LON, 6,  9),
     ]);
   } catch(e) { console.error('[init] DEM prefetch failed', e); }
 
@@ -2228,8 +2490,10 @@ const loadInterval = setInterval(() => {
   addEntity(plane);
   activeEntity = plane;
 
-  updateTiles(SPAWN_LAT, SPAWN_LON, orb.dist);
-  loadBuildings(SPAWN_LAT, SPAWN_LON, orb.dist);
+  applyCamera(0);
+  const initialGroundDist = cameraGroundDistanceM(orb.dist);
+  updateTiles(SPAWN_LAT, SPAWN_LON, initialGroundDist);
+  loadBuildings(SPAWN_LAT, SPAWN_LON, initialGroundDist);
   updateCameraHUD();
 
   clearInterval(loadInterval);
@@ -2239,8 +2503,11 @@ const loadInterval = setInterval(() => {
     document.getElementById('hud').style.display = 'block';
     setInterval(() => {
       if (activeEntity) {
-        prefetchDEM(activeEntity.lat, activeEntity.lon, 1, 13);
-        prefetchDEM(activeEntity.lat, activeEntity.lon, 1, 12);
+        const la = activeEntity.lat, lo = activeEntity.lon;
+        prefetchDEM(la, lo, 2, 17);
+        prefetchDEM(la, lo, 3, 15);
+        prefetchDEM(la, lo, 4, 13);
+        prefetchDEM(la, lo, 5, 11);
       }
     }, 800);
     lastRenderT = performance.now();
