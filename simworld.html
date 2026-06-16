@@ -79,7 +79,7 @@ canvas { display:block; }
   <div id="speedtape" class="panel" style="padding:0"><canvas id="speed-canvas" class="tape-canvas" width="60" height="200"></canvas></div>
   <div id="alt-tape" class="panel" style="padding:0"><canvas id="alt-canvas" class="tape-canvas" width="60" height="200"></canvas></div>
   <div id="pfd" class="panel">
-    <h3>PFD · A321 · <span id="hud-cam-badge">CHASE</span></h3>
+    <h3>PFD · A321 · <span id="hud-cam-badge">ORBIT</span></h3>
     <canvas id="attitude-canvas" width="120" height="120"></canvas>
     <div>
       <div class="pfd-row"><span class="pfd-label">IAS</span><span class="pfd-value" id="ias-val">0 kt</span></div>
@@ -1828,7 +1828,6 @@ function setCameraMode(mode) {
   _onCamModeChange();
 }
 function _onCamModeChange() {
-  _chaseCamInit = false;
   if (camMode === CameraMode.ORBIT) {
     if (activeEntity) {
       orb.lat   = activeEntity.lat;
@@ -2097,9 +2096,6 @@ window.addEventListener('mousemove', e => {
   if (mDown && camMode === CameraMode.ORBIT) {
     orb.yaw   -= dx * 0.3;
     orb.pitch  = Math.max(5, Math.min(89, orb.pitch + dy * 0.25));
-  } else if (mDown && camMode === CameraMode.CHASE) {
-    chaseOrbit.yaw   -= dx * 0.006;
-    chaseOrbit.pitch  = Math.max(-1.3, Math.min(1.4, chaseOrbit.pitch + dy * 0.004));
   } else if (mDown && camMode === CameraMode.COCKPIT) {
     cockpitLook.yaw   = Math.max(-2.6, Math.min(2.6, cockpitLook.yaw   - dx * 0.006));
     cockpitLook.pitch = Math.max(-1.3, Math.min(1.3, cockpitLook.pitch + dy * 0.004));
@@ -2117,9 +2113,6 @@ window.addEventListener('mousemove', e => {
 cv.addEventListener('wheel', e => {
   if (camMode === CameraMode.ORBIT) {
     orb.dist = Math.max(30, Math.min(900_000, orb.dist * (1 + e.deltaY * 0.001)));
-  } else if (camMode === CameraMode.CHASE) {
-    chaseConfig.distM = Math.max(chaseConfig.minDist,
-      Math.min(chaseConfig.maxDist, chaseConfig.distM * (1 + e.deltaY * 0.001)));
   }
   e.preventDefault();
 }, { passive: false });
@@ -2196,26 +2189,14 @@ cv.addEventListener('touchmove', e => {
       }
       lastPinchDist = dist; lastPanMid = mid;
     }
-  } else if (camMode === CameraMode.CHASE || camMode === CameraMode.COCKPIT) {
+  } else if (camMode === CameraMode.COCKPIT) {
     if (activeT.size === 1) {
       const t = e.changedTouches[0], pr = prevT.get(t.identifier);
       if (pr) {
         const ddx = t.clientX - pr.x, ddy = t.clientY - pr.y;
-        if (camMode === CameraMode.CHASE) {
-          chaseOrbit.yaw   += ddx * 0.006;
-          chaseOrbit.pitch  = Math.max(-1.3, Math.min(1.4, chaseOrbit.pitch + ddy * 0.004));
-        } else {
-          cockpitLook.yaw   = Math.max(-2.6, Math.min(2.6, cockpitLook.yaw   + ddx * 0.006));
-          cockpitLook.pitch = Math.max(-1.3, Math.min(1.3, cockpitLook.pitch + ddy * 0.004));
-        }
+        cockpitLook.yaw   = Math.max(-2.6, Math.min(2.6, cockpitLook.yaw   + ddx * 0.006));
+        cockpitLook.pitch = Math.max(-1.3, Math.min(1.3, cockpitLook.pitch + ddy * 0.004));
       }
-    } else if (activeT.size === 2 && camMode === CameraMode.CHASE) {
-      const [a, b] = [...activeT.values()];
-      const dist = touchDist(a, b);
-      if (lastPinchDist !== null)
-        chaseConfig.distM = Math.max(chaseConfig.minDist,
-          Math.min(chaseConfig.maxDist, chaseConfig.distM * (lastPinchDist / dist)));
-      lastPinchDist = dist;
     }
   }
 }, { passive: true });
@@ -2339,7 +2320,6 @@ function resetPlane() {
     lon: apt.spawnLon,
     yawRad: Units.degToRad((180 - apt.heading + 360) % 360)
   });
-  _chaseCamInit = false;
 }
 
 function spawnApproach() {
@@ -2359,7 +2339,6 @@ function spawnApproach() {
     velX: Math.sin(yawRad)*70, velY: -2, velZ: Math.cos(yawRad)*70,
     throttle: 0.55, flaps: 2, gearDown: true, onGround: false,
   });
-  _chaseCamInit = false;
   prefetchDEM(p.lat, p.lon, 2, 17);
   prefetchDEM(p.lat, p.lon, 3, 15);
   prefetchDEM(p.lat, p.lon, 4, 13);
@@ -2391,7 +2370,6 @@ function selectAirport(code) {
     });
     orb.lat = apt.spawnLat;
     orb.lon = apt.spawnLon;
-    _chaseCamInit = false;
     prefetchDEM(apt.spawnLat, apt.spawnLon, 2, 17);
     prefetchDEM(apt.spawnLat, apt.spawnLon, 3, 15);
     prefetchDEM(apt.spawnLat, apt.spawnLon, 4, 13);
