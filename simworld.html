@@ -10,54 +10,54 @@ body { background:#0a0a12; overflow:hidden; font-family:'Courier New', monospace
 canvas { display:block; }
 #c { width:100vw; height:100vh; }
 #hud { position:fixed; inset:0; pointer-events:none; z-index:10; }
-.panel { background:rgba(5,10,20,0.88); border:1px solid #1a3a5c; border-radius:4px; padding:8px 12px; color:#e0f0ff; }
-.panel h3 { font-size:9px; letter-spacing:3px; color:#4a8fbf; text-transform:uppercase; margin-bottom:8px; border-bottom:1px solid #1a3a5c; padding-bottom:5px; }
-#statusbar { position:absolute; top:10px; left:10px; min-width:180px; font-size:10px; line-height:1.7; }
-#statusbar .phase { font-size:11px; color:#44ff88; font-weight:bold; letter-spacing:2px; }
+.panel { background:rgba(5,10,20,0.88); border:1px solid #1a3a5c; border-radius:4px; padding:6px 9px; color:#e0f0ff; }
+.panel h3 { font-size:8px; letter-spacing:2px; color:#4a8fbf; text-transform:uppercase; margin-bottom:6px; border-bottom:1px solid #1a3a5c; padding-bottom:4px; }
+#statusbar { position:absolute; top:8px; left:8px; min-width:150px; font-size:8px; line-height:1.55; }
+#statusbar .phase { font-size:9px; color:#44ff88; font-weight:bold; letter-spacing:1px; }
 @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.2} }
 .stall-warn { color:#ff4444 !important; animation:blink 0.5s infinite; }
-.warn-line { color:#ff8800; font-size:10px; letter-spacing:2px; display:none; }
-#controls { position:absolute; top:10px; right:10px; font-size:10px; line-height:1.85; min-width:205px; pointer-events:all; }
+.warn-line { color:#ff8800; font-size:8px; letter-spacing:1px; display:none; }
+#controls { position:absolute; top:8px; right:8px; font-size:8px; line-height:1.6; min-width:170px; max-width:185px; pointer-events:all; }
 #controls span { color:#c8e8ff; }
-#controls button { margin-top:6px; width:100%; border:1px solid #1a3a5c; border-radius:4px; background:#1a3a5c; color:#c8e8ff; padding:7px 8px; font-size:10px; cursor:pointer; }
+#controls button { margin-top:4px; width:100%; border:1px solid #1a3a5c; border-radius:4px; background:#1a3a5c; color:#c8e8ff; padding:5px 6px; font-size:8px; cursor:pointer; }
 #controls button:hover { background:#22345a; }
-#controls .v-row { display:flex; gap:6px; margin-top:6px; }
+#controls .v-row { display:flex; gap:4px; margin-top:4px; }
 #controls .v-row button { margin-top:0; }
-#controls hr { border:none; border-top:1px solid #1a3a5c; margin:8px 0; }
+#controls hr { border:none; border-top:1px solid #1a3a5c; margin:6px 0; }
 .airport-btn { background:#1a3a5c; }
 .airport-btn.active { background:#2a5a7c; border-color:#4a8fbf; }
-#pfd { position:absolute; bottom:24px; left:24px; width:215px; }
-.pfd-row { display:flex; justify-content:space-between; align-items:center; margin-bottom:5px; }
-.pfd-label { font-size:9px; color:#4a8fbf; letter-spacing:1px; text-transform:uppercase; }
-.pfd-value { font-size:14px; font-weight:bold; color:#c8e8ff; min-width:80px; text-align:right; }
+#pfd { position:absolute; bottom:16px; left:16px; width:168px; }
+.pfd-row { display:flex; justify-content:space-between; align-items:center; margin-bottom:3px; }
+.pfd-label { font-size:8px; color:#4a8fbf; letter-spacing:1px; text-transform:uppercase; }
+.pfd-value { font-size:11px; font-weight:bold; color:#c8e8ff; min-width:62px; text-align:right; }
 .pfd-value.warn { color:#ffaa00; }
 .pfd-value.danger { color:#ff4444; }
 .pfd-value.green { color:#44ff88; }
-#attitude-canvas { display:block; margin:6px auto 8px; border:1px solid #1a4a7a; border-radius:50%; }
-#nd { position:absolute; bottom:24px; right:24px; width:190px; text-align:center; }
-#compass-canvas { display:block; margin:0 auto; }
-#throttle-display { position:absolute; bottom:24px; left:50%; transform:translateX(-50%); width:150px; text-align:center; }
-#throttle-display label { font-size:9px; letter-spacing:2px; color:#4a8fbf; text-transform:uppercase; display:block; margin-bottom:6px; }
-#throttle-bar-bg { height:8px; background:#0a1a2a; border:1px solid #1a3a5c; border-radius:2px; overflow:hidden; margin-bottom:4px; }
+#attitude-canvas { display:block; width:88px; height:88px; margin:4px auto 6px; border:1px solid #1a4a7a; border-radius:50%; }
+#nd { position:absolute; bottom:16px; right:16px; width:148px; text-align:center; }
+#compass-canvas { display:block; width:112px; height:112px; margin:0 auto; }
+#throttle-display { position:absolute; bottom:16px; left:50%; transform:translateX(-50%); width:118px; text-align:center; }
+#throttle-display label { font-size:8px; letter-spacing:1px; color:#4a8fbf; text-transform:uppercase; display:block; margin-bottom:4px; }
+#throttle-bar-bg { height:6px; background:#0a1a2a; border:1px solid #1a3a5c; border-radius:2px; overflow:hidden; margin-bottom:3px; }
 #throttle-bar { height:100%; background:linear-gradient(90deg,#1a7a3a,#44ff88); width:0%; transition:width 0.1s; border-radius:2px; }
-#throttle-pct { font-size:16px; font-weight:bold; color:#44ff88; }
-#speedtape { position:absolute; top:50%; left:24px; transform:translateY(-50%); width:60px; height:200px; overflow:hidden; border-radius:4px; }
-#alt-tape   { position:absolute; top:50%; right:24px; transform:translateY(-50%); width:60px; height:200px; overflow:hidden; border-radius:4px; }
-.tape-canvas { display:block; }
+#throttle-pct { font-size:12px; font-weight:bold; color:#44ff88; }
+#speedtape { position:absolute; top:50%; left:16px; transform:translateY(-50%); width:45px; height:150px; overflow:hidden; border-radius:4px; }
+#alt-tape   { position:absolute; top:50%; right:16px; transform:translateY(-50%); width:45px; height:150px; overflow:hidden; border-radius:4px; }
+.tape-canvas { display:block; width:45px; height:150px; }
 #loading { position:fixed; inset:0; background:#050810; display:flex; flex-direction:column; align-items:center; justify-content:center; z-index:100; color:#c8e8ff; }
 #loading h1 { font-size:28px; letter-spacing:6px; margin-bottom:6px; color:#fff; }
 #loading p { font-size:11px; letter-spacing:3px; color:#4a8fbf; margin-bottom:32px; text-align:center; }
 .load-bar-bg { width:260px; height:3px; background:#1a2a3a; border-radius:2px; }
 .load-bar { height:100%; background:linear-gradient(90deg,#1a7aff,#44ccff); border-radius:2px; width:0%; transition:width 0.3s; }
 #flight-touch { display:none; position:absolute; inset:0; pointer-events:none; }
-.ft-pad { position:absolute; bottom:24px; width:150px; height:150px; pointer-events:all; display:grid; grid-template-columns:repeat(3,1fr); grid-template-rows:repeat(3,1fr); gap:4px; }
-#ft-pitchroll { left:24px; }
-#ft-yawthr { right:24px; }
-.ft-btn { background:rgba(20,40,70,0.65); border:1px solid #2a5a8a; border-radius:6px; color:#c8e8ff; font-size:16px; display:flex; align-items:center; justify-content:center; user-select:none; -webkit-user-select:none; }
+.ft-pad { position:absolute; bottom:16px; width:118px; height:118px; pointer-events:all; display:grid; grid-template-columns:repeat(3,1fr); grid-template-rows:repeat(3,1fr); gap:3px; }
+#ft-pitchroll { left:16px; }
+#ft-yawthr { right:16px; }
+.ft-btn { background:rgba(20,40,70,0.65); border:1px solid #2a5a8a; border-radius:5px; color:#c8e8ff; font-size:13px; display:flex; align-items:center; justify-content:center; user-select:none; -webkit-user-select:none; }
 .ft-btn:active { background:rgba(80,150,220,0.5); }
-.ft-btn.small { font-size:10px; letter-spacing:1px; }
-#ft-toggles { display:none; position:absolute; top:auto; bottom:185px; left:24px; pointer-events:all; flex-direction:row; gap:6px; }
-.ft-toggle { background:rgba(20,40,70,0.75); border:1px solid #2a5a8a; border-radius:6px; color:#c8e8ff; font-size:10px; letter-spacing:1px; padding:8px 10px; user-select:none; -webkit-user-select:none; }
+.ft-btn.small { font-size:8px; letter-spacing:1px; }
+#ft-toggles { display:none; position:absolute; top:auto; bottom:142px; left:16px; pointer-events:all; flex-direction:row; gap:4px; }
+.ft-toggle { background:rgba(20,40,70,0.75); border:1px solid #2a5a8a; border-radius:5px; color:#c8e8ff; font-size:8px; letter-spacing:1px; padding:6px 7px; user-select:none; -webkit-user-select:none; }
 .ft-toggle.active { background:rgba(68,255,136,0.35); border-color:#44ff88; }
 @media (pointer:coarse) {
   #flight-touch.active { display:block; }
@@ -180,6 +180,8 @@ canvas { display:block; }
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/OBJLoader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/MTLLoader.js"></script>
 <script>
 'use strict';
 // WORLD CONSTANTS
@@ -710,7 +712,10 @@ async function buildMeshWithNeighbors(tx, ty, satZoom, signal, clipBoundsZ17 = n
   geo.setAttribute('position', new THREE.BufferAttribute(_posBuf.slice(0,vi), 3));
   geo.setAttribute('uv',       new THREE.BufferAttribute(_uvBuf.slice(0,ui), 2));
   geo.setIndex(new THREE.BufferAttribute(makeTerrainIndex(GRID, tx, ty, satZoom, clipBoundsZ17), 1));
-  geo.computeVertexNormals();
+  // Brak computeVertexNormals(): kafelki terenu używają MeshBasicMaterial,
+  // który jest nieoświetlony i nigdy nie odczytuje normalnych — liczenie ich
+  // tu byłoby zmarnowaną pracą CPU przy każdym ładowaniu kafelka (powoduje
+  // zacinanie się podczas lotu, gdy strumieniuje wiele kafelków na raz).
   return geo;
 }
 
@@ -1019,7 +1024,7 @@ function buildBatchMesh(items) {
   const geo=new THREE.BufferGeometry();
   geo.setAttribute('position',new THREE.BufferAttribute(new Float32Array(pos),3));
   geo.setAttribute('color',   new THREE.BufferAttribute(new Float32Array(col),3));
-  geo.setIndex(idx); geo.computeVertexNormals();
+  geo.setIndex(idx); // buildingMat = MeshBasicMaterial → normalne nieużywane, nie liczymy ich
   return new THREE.Mesh(geo, buildingMat);
 }
 
@@ -1201,6 +1206,11 @@ function physicsTick(now) {
   const elapsed = now - physLastTime;
   physLastTime  = now;
   physAccum    += elapsed;
+  // Zabezpieczenie przed "spiralą śmierci": po dłuższym zacięciu (GC, zmiana
+  // karty, skok przy ładowaniu) physAccum mógłby urosnąć do setek ms i kazać
+  // wykonać dziesiątki iteracji fizyki w jednej klatce, co tylko wydłużałoby
+  // kolejne zacięcie. Ograniczamy nadrabianie do max. 5 kroków.
+  physAccum = Math.min(physAccum, PHYS_DT_MS * 5);
   while (physAccum >= PHYS_DT_MS) {
     physAccum -= PHYS_DT_MS;
     for (const entity of entities.values()) {
@@ -1211,148 +1221,99 @@ function physicsTick(now) {
   }
 }
 // A321 3D MODEL
-function buildA321() {
-  const plane = new THREE.Group();
-  const fusMat = new THREE.MeshPhongMaterial({color:0xf0f0f0,shininess:60});
-  const wingMat = new THREE.MeshPhongMaterial({color:0xe8e8e8,shininess:40});
-  const engineMat = new THREE.MeshPhongMaterial({color:0x555560,shininess:80});
-  const glassMat = new THREE.MeshPhongMaterial({color:0x224466,shininess:200,transparent:true,opacity:0.85});
-  const accentMat = new THREE.MeshBasicMaterial({color:0x0055aa});
+// ŁADOWANIE MODELU A321 z JEDNEGO PLIKU a321.obj + a321.mtl
+// (a321.mtl wskazuje tekstury w folderze objwmtl/ — ścieżki względne, nie
+// trzeba ich tu powtarzać; wystarczy wczytać .mtl, a potem .obj z tymi materiałami)
+const A321_OBJ_URL = './a321.obj';
+const A321_MTL_URL = './a321.mtl';
 
-  const fusGeo = new THREE.CylinderGeometry(2.0,2.0,34,20); fusGeo.rotateZ(Math.PI/2);
-  const fuselage = new THREE.Mesh(fusGeo,fusMat); fuselage.castShadow=true; plane.add(fuselage);
-  const noseGeo = new THREE.ConeGeometry(2.0,8,20); noseGeo.rotateZ(-Math.PI/2);
-  const nose = new THREE.Mesh(noseGeo,new THREE.MeshPhongMaterial({color:0xcccccc,shininess:40}));
-  nose.position.x=21; nose.castShadow=true; plane.add(nose);
-  const tailGeo = new THREE.CylinderGeometry(0.6,2.0,8,16); tailGeo.rotateZ(Math.PI/2);
-  const tailCone = new THREE.Mesh(tailGeo,fusMat); tailCone.position.x=-21; plane.add(tailCone);
+// Jeśli po wczytaniu samolot będzie odwrócony nosem w złą stronę albo źle przechylony,
+// zmień tę wartość (np. Math.PI/2, -Math.PI/2, Math.PI) aż dziób wskaże w +Z w lokalnym układzie.
+const A321_MODEL_ROT_Y = Math.PI / 2;
+// Jeśli samolot będzie zbyt duży/mały względem terenu, zmień skalę (np. 0.01 jeśli model jest w cm).
+const A321_MODEL_SCALE = 0.25;
+// Jeśli samolot będzie przesunięty w górę/dół względem terenu, zmień przesunięcie (np. 0.01 jeśli model jest w cm).
+const A321_MODEL_TRANSLATE_Y = -3.75;
 
-  const ws = new THREE.Mesh(new THREE.BoxGeometry(28,0.5,0.1),glassMat);
-  ws.position.set(0,0.8,2.02); plane.add(ws);
-  const ws2=ws.clone(); ws2.position.z=-2.02; plane.add(ws2);
-  const cw=new THREE.Mesh(new THREE.BoxGeometry(2.5,1.0,0.1),glassMat);
-  cw.position.set(19.5,0.7,1.4); cw.rotation.y=0.3; plane.add(cw);
-  const cw2=cw.clone(); cw2.position.z=-1.4; cw2.rotation.y=-0.3; plane.add(cw2);
+// Obiekty w a321.obj o nazwie zaczynającej się od tego prefiksu (gears_back_tires,
+// gears_covers, gears_front_tire, gears_holder_*) trafiają do wspólnej grupy
+// "gearGroup", tak jak wcześniej, gdy każdy z nich był osobnym plikiem .obj —
+// dzięki temu chowanie/pokazywanie podwozia (updateGearVisibility) działa bez zmian.
+const A321_GEAR_PREFIX = 'gears_';
 
-  const cheat=new THREE.Mesh(new THREE.CylinderGeometry(2.02,2.02,30,20,1,true,-0.12,0.22),accentMat);
-  cheat.rotateZ(Math.PI/2); plane.add(cheat);
-
-  function makeWing(side) {
-    const wGrp=new THREE.Group();
-    const verts=new Float32Array([
-      5.5,0,0, -2,0,0,
-      4.5,0,side*5, -1,0,side*5,
-      3,0,side*9, 0.5,0,side*9,
-      2.5,0,side*13, 1.5,0,side*13,
-    ]);
-    const idx=[0,1,3,0,3,2, 2,3,5,2,5,4, 4,5,7,4,7,6];
-    const wGeo=new THREE.BufferGeometry();
-    wGeo.setAttribute('position',new THREE.BufferAttribute(verts,3));
-    wGeo.setIndex(idx); wGeo.computeVertexNormals();
-    const wing=new THREE.Mesh(wGeo,wingMat); wing.castShadow=true; wGrp.add(wing);
-    const wGeo2=wGeo.clone();
-    const p2=wGeo2.attributes.position;
-    for (let i=0;i<p2.count;i++) p2.setY(i,p2.getY(i)-0.35);
-    wGeo2.computeVertexNormals();
-    wGrp.add(new THREE.Mesh(wGeo2,wingMat));
-
-    const wlet=new THREE.Mesh(new THREE.BoxGeometry(0.3,2.2,0.8),wingMat);
-    wlet.position.set(2.0,1.0,side*13.2); wlet.rotation.z=side*0.3; wGrp.add(wlet);
-
-    const flapGeo=new THREE.BoxGeometry(0.15,5,3.5); flapGeo.rotateX(-Math.PI/2);
-    const flap=new THREE.Mesh(flapGeo,new THREE.MeshPhongMaterial({color:0xe0e0e0}));
-    flap.position.set(4.5,-0.2,side*4.5);
-    flap.name=`flap_${side>0?'R':'L'}`; wGrp.add(flap);
-
-    const spoilerGroup=new THREE.Group();
-    const spoilerGeo=new THREE.BoxGeometry(3.0,0.05,1.6);
-    const spoiler=new THREE.Mesh(spoilerGeo,new THREE.MeshPhongMaterial({color:0x999999,shininess:40}));
-    spoiler.position.set(1.5,0,0);
-    spoilerGroup.add(spoiler);
-    spoilerGroup.position.set(3.7,0.05,side*7.5);
-    spoilerGroup.name=`spoiler_${side>0?'R':'L'}`;
-    wGrp.add(spoilerGroup);
-
-    const ailGeo=new THREE.BoxGeometry(0.12,3.5,2.2); ailGeo.rotateX(-Math.PI/2);
-    const ail=new THREE.Mesh(ailGeo,new THREE.MeshPhongMaterial({color:0xdedede}));
-    ail.position.set(3.2,-0.15,side*10);
-    ail.name=`aileron_${side>0?'R':'L'}`; wGrp.add(ail);
-
-    const engGrp=new THREE.Group();
-    const engGeo=new THREE.CylinderGeometry(1.1,0.9,5.5,16); engGeo.rotateZ(Math.PI/2);
-    engGrp.add(new THREE.Mesh(engGeo,engineMat));
-    const inGeo=new THREE.TorusGeometry(1.1,0.12,10,20); inGeo.rotateY(Math.PI/2);
-    const inl=new THREE.Mesh(inGeo,engineMat); inl.position.x=2.75; engGrp.add(inl);
-    const fanGeo=new THREE.CylinderGeometry(0.96,0.96,0.2,16); fanGeo.rotateZ(Math.PI/2);
-    const fan=new THREE.Mesh(fanGeo,new THREE.MeshBasicMaterial({color:0x333340}));
-    fan.position.x=2.6; fan.name=`fan_${side>0?'R':'L'}`; engGrp.add(fan);
-    const pyl=new THREE.Mesh(new THREE.BoxGeometry(3,0.6,1),new THREE.MeshPhongMaterial({color:0xcccccc}));
-    pyl.position.set(0,0.85,0); engGrp.add(pyl);
-    engGrp.position.set(1.0,-1.0,side*5);
-    engGrp.name=`engine_${side>0?'R':'L'}`;
-    wGrp.add(engGrp);
-    return wGrp;
+function _explainModelLoadError(url, err) {
+  if (location.protocol === 'file:') {
+    console.error(`[A321] Nie można wczytać "${url}" z pliku lokalnego. Uruchom stronę przez lokalny serwer HTTP, np. python -m http.server 8000.`);
   }
-  const wingR=makeWing(1); const wingL=makeWing(-1);
-  wingR.position.y=-0.2; wingL.position.y=-0.2;
-  plane.add(wingR); plane.add(wingL);
+  const cause = err && err.message ? err.message : err;
+  return new Error(`[A321] Błąd ładowania ${url}: ${cause}`);
+}
 
-  const vtVerts=new Float32Array([-25,0,0,-20,0,0,-20,6,0,-26.5,6,0]);
-  const vtGeo=new THREE.BufferGeometry();
-  vtGeo.setAttribute('position',new THREE.BufferAttribute(vtVerts,3));
-  vtGeo.setIndex([0,1,2,0,2,3]); vtGeo.computeVertexNormals();
-  plane.add(new THREE.Mesh(vtGeo,new THREE.MeshPhongMaterial({color:0xf0f0f0,side:THREE.DoubleSide})));
+async function loadA321Model() {
+  // 1) Wczytaj definicje materiałów z .mtl (tekstury objwmtl/*.png są w nim
+  //    zapisane ścieżkami względnymi do lokalizacji samego .mtl).
+  const materials = await new Promise((resolve, reject) => {
+    new THREE.MTLLoader().load(A321_MTL_URL, resolve, undefined,
+      err => reject(_explainModelLoadError(A321_MTL_URL, err)));
+  });
+  materials.preload();
 
-  const rudVerts=new Float32Array([-26,0.4,-0.05,-24.5,0.4,-0.05,-24.5,4.5,-0.05,-27,4.5,-0.05]);
-  const rudGeo=new THREE.BufferGeometry();
-  rudGeo.setAttribute('position',new THREE.BufferAttribute(rudVerts,3));
-  rudGeo.setIndex([0,1,2,0,2,3]); rudGeo.computeVertexNormals();
-  const rudder=new THREE.Mesh(rudGeo,new THREE.MeshPhongMaterial({color:0xe8e8e8,side:THREE.DoubleSide}));
-  rudder.name='rudder'; plane.add(rudder);
-
-  function makeHStab(side) {
-    const hVerts=new Float32Array([-23,1.5,0,-20,1.5,0,-21,1.5,side*6,-24,1.5,side*6]);
-    const hGeo=new THREE.BufferGeometry();
-    hGeo.setAttribute('position',new THREE.BufferAttribute(hVerts,3));
-    hGeo.setIndex([0,1,2,0,2,3]); hGeo.computeVertexNormals();
-    const grp=new THREE.Group();
-    grp.add(new THREE.Mesh(hGeo,new THREE.MeshPhongMaterial({color:0xeeeeee,side:THREE.DoubleSide})));
-    const eGeo=hGeo.clone();
-    const ep=eGeo.attributes.position;
-    for (let i=0;i<ep.count;i++) ep.setX(i,ep.getX(i)-1.5);
-    eGeo.computeVertexNormals();
-    const elev=new THREE.Mesh(eGeo,new THREE.MeshPhongMaterial({color:0xe2e2e2,side:THREE.DoubleSide}));
-    elev.name=`elevator_${side>0?'R':'L'}`; grp.add(elev);
-    return grp;
+  // Mapa "nazwa części" → gotowy materiał z tą częścią powiązany, wyprowadzona
+  // bezpośrednio z wpisów map_Kd w .mtl (np. "objwmtl/cockpit_inside.png" →
+  // część "cockpit_inside"). Używamy jej jako niezawodnego planu B: nazwa
+  // części w a321.obj ("o cockpit_inside") jest zawsze taka sama jak nazwa
+  // pliku tekstury, więc to działa niezależnie od tego, czy wewnętrzne
+  // dopasowanie usemtl↔newmtl w OBJLoaderze się powiedzie.
+  const partNameToMaterial = {};
+  for (const matName in materials.materialsInfo) {
+    const mapKd = materials.materialsInfo[matName] && materials.materialsInfo[matName].map_kd;
+    if (!mapKd) continue;
+    const partName = mapKd.split('/').pop().replace(/\.[a-zA-Z0-9]+$/, '');
+    partNameToMaterial[partName] = materials.create(matName);
   }
-  plane.add(makeHStab(1)); plane.add(makeHStab(-1));
 
-  function makeLandingGear(x,z,h) {
-    const grp=new THREE.Group();
-    const sm=new THREE.MeshPhongMaterial({color:0x444444});
-    const strut=new THREE.Mesh(new THREE.CylinderGeometry(0.18,0.18,h,8),sm);
-    strut.position.y=-h/2; grp.add(strut);
-    const axle=new THREE.Mesh(new THREE.CylinderGeometry(0.12,0.12,1.6,8),sm);
-    axle.rotation.z=Math.PI/2; axle.position.y=-h; grp.add(axle);
-    [-0.7,0.7].forEach(wo => {
-      const wheel=new THREE.Mesh(new THREE.CylinderGeometry(0.52,0.52,0.55,16),new THREE.MeshPhongMaterial({color:0x111111}));
-      wheel.rotation.z=Math.PI/2; wheel.position.set(wo,-h,0); grp.add(wheel);
+  // 2) Wczytaj geometrię .obj z już przygotowanymi materiałami z .mtl —
+  //    OBJLoader sam dopasuje materiał do każdej części wg "usemtl" w pliku.
+  const group = await new Promise((resolve, reject) => {
+    new THREE.OBJLoader()
+      .setMaterials(materials)
+      .load(A321_OBJ_URL, resolve, undefined,
+        err => reject(_explainModelLoadError(A321_OBJ_URL, err)));
+  });
+
+  // 3) Tak jak wcześniej: dwustronne renderowanie, poprawny color space tekstur,
+  //    anizotropia — i wydzielenie podwozia do osobnej grupy. Plus zabezpieczenie:
+  //    jeśli część nie ma tekstury (mapa się nie dopasowała), wymuszamy ją po
+  //    nazwie części z mapy zbudowanej wyżej.
+  const gearGroup = new THREE.Group();
+  gearGroup.name = 'gearGroup';
+  const maxAniso = renderer.capabilities.getMaxAnisotropy();
+
+  for (const child of [...group.children]) {
+    const fallbackMat = partNameToMaterial[child.name];
+    child.traverse(node => {
+      if (!node.isMesh) return;
+      node.castShadow = true;
+      const hasMap = node.material && !Array.isArray(node.material) && node.material.map;
+      if (!hasMap && fallbackMat) {
+        node.material = fallbackMat;
+        console.warn(`[A321] "${child.name}" nie dostał tekstury z OBJLoadera — wymuszono materiał po nazwie części.`);
+      }
+      const mats = Array.isArray(node.material) ? node.material : [node.material];
+      for (const mat of mats) {
+        if (!mat) continue;
+        mat.side = THREE.DoubleSide;
+        if (mat.map) {
+          mat.map.encoding   = THREE.sRGBEncoding;
+          mat.map.anisotropy = maxAniso;
+        }
+      }
     });
-    grp.position.set(x,0,z); return grp;
+    if (child.name.startsWith(A321_GEAR_PREFIX)) gearGroup.add(child); // .add() sam usuwa z poprzedniego rodzica
   }
-  const ng=makeLandingGear(16,0,2.5); ng.name='gear_nose';
-  const mgl=makeLandingGear(-1,-3,3.1); mgl.name='gear_mainL';
-  const mgr=makeLandingGear(-1,3,3.1); mgr.name='gear_mainR';
-  plane.add(ng); plane.add(mgl); plane.add(mgr);
 
-  const beacon=new THREE.Mesh(new THREE.SphereGeometry(0.25,8,8),new THREE.MeshBasicMaterial({color:0xff2200}));
-  beacon.position.set(-25,2,0); beacon.name='beacon'; plane.add(beacon);
-  const navL=new THREE.Mesh(new THREE.SphereGeometry(0.2,6,6),new THREE.MeshBasicMaterial({color:0xff2200}));
-  navL.position.set(2,-0.3,-13.5); plane.add(navL);
-  const navR=new THREE.Mesh(new THREE.SphereGeometry(0.2,6,6),new THREE.MeshBasicMaterial({color:0x00ff44}));
-  navR.position.set(2,-0.3,13.5); plane.add(navR);
-
-  return plane;
+  if (gearGroup.children.length) group.add(gearGroup);
+  return group;
 }
 
 // EXHAUST PARTICLES
@@ -1477,10 +1438,33 @@ class A321Entity extends Entity {
     this.terrainZoom = 13;
 
     const grp = new THREE.Group();
-    const model = buildA321();
-    model.rotation.y = -Math.PI / 2;
-    grp.add(model);
     this.mesh = grp;
+    this.modelLoaded = false;
+    this._parts = {}; // cache animowanych części — wypełniane po wczytaniu modelu
+
+    loadA321Model().then(model => {
+      model.rotation.y = A321_MODEL_ROT_Y;
+      model.scale.setScalar(A321_MODEL_SCALE);
+      model.translateY(A321_MODEL_TRANSLATE_Y);
+      grp.add(model);
+      this.modelLoaded = true;
+      this.updateGearVisibility();
+      // Wyszukaj animowane części RAZ — getObjectByName() przechodzi cały graf
+      // sceny, więc robienie tego co klatkę (jak wcześniej w renderUpdate) jest
+      // niepotrzebnym kosztem. Wynik cache'ujemy raz, po wczytaniu modelu.
+      this._parts = {
+        fanR:      this.mesh.getObjectByName('fan_R'),
+        fanL:      this.mesh.getObjectByName('fan_L'),
+        beacon:    this.mesh.getObjectByName('beacon'),
+        flapR:     this.mesh.getObjectByName('flap_R'),
+        flapL:     this.mesh.getObjectByName('flap_L'),
+        spoilerR:  this.mesh.getObjectByName('spoiler_R'),
+        spoilerL:  this.mesh.getObjectByName('spoiler_L'),
+        elevatorR: this.mesh.getObjectByName('elevator_R'),
+        elevatorL: this.mesh.getObjectByName('elevator_L'),
+        rudder:    this.mesh.getObjectByName('rudder'),
+      };
+    }).catch(err => console.error('[A321] Błąd wczytywania modelu:', err));
 
     this.fanAngle = 0;
     this.beaconTimer = 0;
@@ -1521,10 +1505,8 @@ class A321Entity extends Entity {
   }
 
   updateGearVisibility() {
-    ['gear_nose','gear_mainL','gear_mainR'].forEach(n => {
-      const g = this.mesh.getObjectByName(n);
-      if (g) { g.visible = this.gearDown; g.rotation.x = this.gearDown ? 0 : -Math.PI/2; }
-    });
+    const gearGrp = this.mesh.getObjectByName('gearGroup');
+    if (gearGrp) gearGrp.visible = this.gearDown;
   }
 
   integrate(dt) {}
@@ -1704,19 +1686,22 @@ class A321Entity extends Entity {
 
   renderUpdate(dt) {
     this.fanAngle += this.throttle * dt * 30;
-    ['fan_R','fan_L'].forEach(n=>{ const f=this.mesh.getObjectByName(n); if(f) f.rotation.x=this.fanAngle; });
+    const p = this._parts;
+    if (p.fanR) p.fanR.rotation.x = this.fanAngle;
+    if (p.fanL) p.fanL.rotation.x = this.fanAngle;
     this.beaconTimer += dt;
-    const beacon = this.mesh.getObjectByName('beacon');
-    if (beacon) beacon.visible = Math.sin(this.beaconTimer*6) > 0;
+    if (p.beacon) p.beacon.visible = Math.sin(this.beaconTimer*6) > 0;
     const flapTarget = this.flaps * 12 * Math.PI/180;
     this.prevFlapPos += (flapTarget - this.prevFlapPos) * Math.min(1, dt*4);
-    ['flap_R','flap_L'].forEach(n=>{ const f=this.mesh.getObjectByName(n); if(f) f.rotation.x=this.prevFlapPos; });
+    if (p.flapR) p.flapR.rotation.x = this.prevFlapPos;
+    if (p.flapL) p.flapL.rotation.x = this.prevFlapPos;
     const spoilerTarget = this.spoilers ? 35*Math.PI/180 : 0;
-    ['spoiler_R','spoiler_L'].forEach(n=>{ const s=this.mesh.getObjectByName(n); if(s) s.rotation.x=-spoilerTarget; });
+    if (p.spoilerR) p.spoilerR.rotation.x = -spoilerTarget;
+    if (p.spoilerL) p.spoilerL.rotation.x = -spoilerTarget;
     const elevDefl = -this.pitchRate * 0.8;
-    ['elevator_R','elevator_L'].forEach(n=>{ const e=this.mesh.getObjectByName(n); if(e) e.rotation.x=elevDefl; });
-    const rudder = this.mesh.getObjectByName('rudder');
-    if (rudder) rudder.rotation.y = this.yawRate * 2;
+    if (p.elevatorR) p.elevatorR.rotation.x = elevDefl;
+    if (p.elevatorL) p.elevatorL.rotation.x = elevDefl;
+    if (p.rudder) p.rudder.rotation.y = this.yawRate * 2;
   }
 }
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1748,7 +1733,7 @@ const _orb = {
 let _orbitReady = false;  // false = snap do celu przy następnej klatce
 
 // Chase / cockpit
-const cockpitConfig = { offsetM: new THREE.Vector3(0, 2.4, 18) };
+const cockpitConfig = { offsetM: new THREE.Vector3(0.47, 0.97, 17.5) };
 const cockpitLook   = { yaw: 0, pitch: 0 };
 
 function _shortestYawDeg(from, to) {
@@ -1991,6 +1976,45 @@ function drawCompass(canvas, headingDeg) {
 // HUD UPDATE
 let lastLoggedCamDrot = null;
 let lastLoggedCamDpos = null;
+
+// Cache wszystkich elementów DOM HUD-a RAZ — wcześniej updateHUD() wołało
+// document.getElementById() ~30 razy na każde wywołanie. Same elementy się
+// nie zmieniają (statyczny HTML), więc wyszukujemy je tylko raz przy starcie.
+const hudEl = {
+  speedCanvas:    document.getElementById('speed-canvas'),
+  altCanvas:      document.getElementById('alt-canvas'),
+  attitudeCanvas: document.getElementById('attitude-canvas'),
+  compassCanvas:  document.getElementById('compass-canvas'),
+  ias:        document.getElementById('ias-val'),
+  vs:         document.getElementById('vs-val'),
+  pitch:      document.getElementById('pitch-val'),
+  bank:       document.getElementById('bank-val'),
+  gs:         document.getElementById('gs-val'),
+  alt:        document.getElementById('alt-val'),
+  altM:       document.getElementById('alt-m-val'),
+  agl:        document.getElementById('agl-val'),
+  terr:       document.getElementById('terr-val'),
+  hdg:        document.getElementById('hdg-val'),
+  lat:        document.getElementById('lat-val'),
+  lon:        document.getElementById('lon-val'),
+  aoa:        document.getElementById('aoa-val'),
+  camPos:     document.getElementById('cam-pos-val'),
+  camRot:     document.getElementById('cam-rot-val'),
+  planeRot:   document.getElementById('plane-rot-val'),
+  camDrot:    document.getElementById('cam-drot-val'),
+  camDpos:    document.getElementById('cam-dpos-val'),
+  flaps:      document.getElementById('flaps-val'),
+  gear:       document.getElementById('gear-val'),
+  spoilers:   document.getElementById('spoilers-val'),
+  tiles:      document.getElementById('h-tiles'),
+  satZ:       document.getElementById('sat-z-val'),
+  throttleBar:document.getElementById('throttle-bar'),
+  throttlePct:document.getElementById('throttle-pct'),
+  phase:      document.getElementById('phase-disp'),
+  stall:      document.getElementById('stall-disp'),
+  overspeed:  document.getElementById('overspeed-disp'),
+};
+
 function updateHUD() {
   const plane = activeEntity;
   if (!plane) return;
@@ -2001,24 +2025,24 @@ function updateHUD() {
   const agl_ft = plane.agl  * M_FT;
   const hdg    = plane.headingDeg;
 
-  drawSpeedTape(document.getElementById('speed-canvas'), ias_kt);
-  drawAltTape(document.getElementById('alt-canvas'), alt_ft);
-  drawAttitude(document.getElementById('attitude-canvas'), plane.pitchRad, plane.rollRad);
-  drawCompass(document.getElementById('compass-canvas'), hdg);
+  drawSpeedTape(hudEl.speedCanvas, ias_kt);
+  drawAltTape(hudEl.altCanvas, alt_ft);
+  drawAttitude(hudEl.attitudeCanvas, plane.pitchRad, plane.rollRad);
+  drawCompass(hudEl.compassCanvas, hdg);
 
-  document.getElementById('ias-val').textContent = ias_kt.toFixed(0)+' kt';
-  document.getElementById('vs-val').textContent  = (vs_fpm>0?'+':'')+vs_fpm.toFixed(0)+' fpm';
-  document.getElementById('pitch-val').textContent = (plane.pitch>0?'+':'')+plane.pitch.toFixed(1)+'°';
-  document.getElementById('bank-val').textContent  = plane.roll.toFixed(1)+'°';
-  document.getElementById('gs-val').textContent    = gs_kt.toFixed(0)+' kt';
-  document.getElementById('alt-val').textContent   = alt_ft.toFixed(0)+' ft';
-  document.getElementById('alt-m-val').textContent = Math.round(plane.altM)+' m MSL';
-  document.getElementById('agl-val').textContent   = agl_ft.toFixed(0)+' ft';
-  document.getElementById('terr-val').textContent  = Math.round(plane.terrainM)+' m';
-  document.getElementById('hdg-val').textContent   = hdg.toFixed(0)+'°';
-  document.getElementById('lat-val').textContent   = plane.lat.toFixed(5)+'°';
-  document.getElementById('lon-val').textContent   = plane.lon.toFixed(5)+'°';
-  document.getElementById('aoa-val').textContent   = (plane._alpha*180/Math.PI).toFixed(1)+'°';
+  hudEl.ias.textContent   = ias_kt.toFixed(0)+' kt';
+  hudEl.vs.textContent    = (vs_fpm>0?'+':'')+vs_fpm.toFixed(0)+' fpm';
+  hudEl.pitch.textContent = (plane.pitch>0?'+':'')+plane.pitch.toFixed(1)+'°';
+  hudEl.bank.textContent  = plane.roll.toFixed(1)+'°';
+  hudEl.gs.textContent    = gs_kt.toFixed(0)+' kt';
+  hudEl.alt.textContent   = alt_ft.toFixed(0)+' ft';
+  hudEl.altM.textContent  = Math.round(plane.altM)+' m MSL';
+  hudEl.agl.textContent   = agl_ft.toFixed(0)+' ft';
+  hudEl.terr.textContent  = Math.round(plane.terrainM)+' m';
+  hudEl.hdg.textContent   = hdg.toFixed(0)+'°';
+  hudEl.lat.textContent   = plane.lat.toFixed(5)+'°';
+  hudEl.lon.textContent   = plane.lon.toFixed(5)+'°';
+  hudEl.aoa.textContent   = (plane._alpha*180/Math.PI).toFixed(1)+'°';
 
   const camEuler = new THREE.Euler().setFromQuaternion(camera.quaternion, 'YXZ');
   const camPitch = Units.radToDeg(camEuler.x);
@@ -2031,11 +2055,11 @@ function updateHUD() {
   const yawDiff   = (((camYaw - hdg + 180) % 360) + 360) % 360 - 180;
   const pitchDiff = camPitch - plane.pitch;
   const rollDiff  = camRoll  - plane.roll;
-  document.getElementById('cam-pos-val').textContent   = `${camPos.x.toFixed(1)}, ${camPos.y.toFixed(1)}, ${camPos.z.toFixed(1)}`;
-  document.getElementById('cam-rot-val').textContent   = `${camPitch.toFixed(1)}° / ${camYaw.toFixed(1)}° / ${camRoll.toFixed(1)}°`;
-  document.getElementById('plane-rot-val').textContent = `${plane.pitch.toFixed(1)}° / ${hdg.toFixed(1)}° / ${plane.roll.toFixed(1)}°`;
-  document.getElementById('cam-drot-val').textContent  = `${pitchDiff.toFixed(1)}° / ${yawDiff.toFixed(1)}° / ${rollDiff.toFixed(1)}°`;
-  document.getElementById('cam-dpos-val').textContent  = dpos.toFixed(1);
+  hudEl.camPos.textContent   = `${camPos.x.toFixed(1)}, ${camPos.y.toFixed(1)}, ${camPos.z.toFixed(1)}`;
+  hudEl.camRot.textContent   = `${camPitch.toFixed(1)}° / ${camYaw.toFixed(1)}° / ${camRoll.toFixed(1)}°`;
+  hudEl.planeRot.textContent = `${plane.pitch.toFixed(1)}° / ${hdg.toFixed(1)}° / ${plane.roll.toFixed(1)}°`;
+  hudEl.camDrot.textContent  = `${pitchDiff.toFixed(1)}° / ${yawDiff.toFixed(1)}° / ${rollDiff.toFixed(1)}°`;
+  hudEl.camDpos.textContent  = dpos.toFixed(1);
 
   // if (ias_kt >= 80) {
   //   const rect = `${pitchDiff.toFixed(1)}°/${yawDiff.toFixed(1)}°/${rollDiff.toFixed(1)}°`;
@@ -2047,18 +2071,18 @@ function updateHUD() {
   //   }
   // }
 
-  document.getElementById('flaps-val').textContent    = plane.flaps.toString();
-  document.getElementById('gear-val').textContent     = plane.gearDown?'DOWN':'UP';
-  document.getElementById('spoilers-val').textContent = plane.spoilers?'ON':'OFF';
-  document.getElementById('h-tiles').textContent      = `${tileMeshes.size} załad., ${loadingTiles.size} ład.`;
+  hudEl.flaps.textContent    = plane.flaps.toString();
+  hudEl.gear.textContent     = plane.gearDown?'DOWN':'UP';
+  hudEl.spoilers.textContent = plane.spoilers?'ON':'OFF';
+  hudEl.tiles.textContent    = `${tileMeshes.size} załad., ${loadingTiles.size} ład.`;
   // Pokaż zakres aktywnych zoomów w HUD
   const activeZooms = [...new Set([...tileMeshes.keys()].map(k => k.split('_')[0]))].sort((a,b)=>b-a).join('/');
-  document.getElementById('sat-z-val').textContent    = activeZooms ? `Z=${activeZooms}` : '–';
+  hudEl.satZ.textContent     = activeZooms ? `Z=${activeZooms}` : '–';
 
   const tPct=(plane.throttle*100).toFixed(0);
-  document.getElementById('throttle-bar').style.width = tPct+'%';
-  document.getElementById('throttle-pct').textContent = tPct+'%';
-  document.getElementById('throttle-pct').style.color = plane.throttle>0.85?'#ff8800':'#44ff88';
+  hudEl.throttleBar.style.width   = tPct+'%';
+  hudEl.throttlePct.textContent   = tPct+'%';
+  hudEl.throttlePct.style.color   = plane.throttle>0.85?'#ff8800':'#44ff88';
 
   let phase='ON GROUND';
   if (!plane.onGround) {
@@ -2067,15 +2091,14 @@ function updateHUD() {
     else if (vs_fpm<-200) phase='DESCENT';
     else phase='CRUISE';
   }
-  document.getElementById('phase-disp').textContent = phase;
-  document.getElementById('stall-disp').style.display     = plane._isStalling?'block':'none';
-  document.getElementById('overspeed-disp').style.display = (ias_kt>A321_PARAMS.VMO*MPS_KT)?'block':'none';
+  hudEl.phase.textContent     = phase;
+  hudEl.stall.style.display     = plane._isStalling?'block':'none';
+  hudEl.overspeed.style.display = (ias_kt>A321_PARAMS.VMO*MPS_KT)?'block':'none';
 
-  const vsEl=document.getElementById('vs-val');
-  vsEl.classList.remove('warn','danger','green');
-  if(vs_fpm<-1500) vsEl.classList.add('danger');
-  else if(vs_fpm<-800) vsEl.classList.add('warn');
-  else if(vs_fpm>100) vsEl.classList.add('green');
+  hudEl.vs.classList.remove('warn','danger','green');
+  if(vs_fpm<-1500) hudEl.vs.classList.add('danger');
+  else if(vs_fpm<-800) hudEl.vs.classList.add('warn');
+  else if(vs_fpm>100) hudEl.vs.classList.add('green');
 }
 // ORBIT / FLIGHT CAMERA CONTROLS (mysz, klawiatura, touch)
 const WASD_SPEED = 30, QE_SPEED = 30;
@@ -2397,12 +2420,16 @@ document.getElementById('btn-orbit-free').addEventListener('click', () => {
 });
 
 // EXHAUST EMISSION
+const EXHAUST_LOCAL_POS = [new THREE.Vector3(1,-1,5), new THREE.Vector3(1,-1,-5)];
+const _exhaustBackDir   = new THREE.Vector3();
+const _exhaustWorldPos  = new THREE.Vector3();
 function emitExhaust(plane, exhaust) {
   plane.mesh.updateMatrixWorld(true);
-  const backDir = new THREE.Vector3(-Math.sin(plane.yawRad), 0, -Math.cos(plane.yawRad));
-  [new THREE.Vector3(1,-1,5), new THREE.Vector3(1,-1,-5)].forEach(lp => {
-    exhaust.emit(lp.clone().applyMatrix4(plane.mesh.matrixWorld), plane.throttle, backDir);
-  });
+  _exhaustBackDir.set(-Math.sin(plane.yawRad), 0, -Math.cos(plane.yawRad));
+  for (const lp of EXHAUST_LOCAL_POS) {
+    _exhaustWorldPos.copy(lp).applyMatrix4(plane.mesh.matrixWorld);
+    exhaust.emit(_exhaustWorldPos, plane.throttle, _exhaustBackDir);
+  }
 }
 
 // RENDER LOOP
