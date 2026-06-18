@@ -79,7 +79,7 @@ canvas { display:block; }
   <div id="speedtape" class="panel" style="padding:0"><canvas id="speed-canvas" class="tape-canvas" width="60" height="200"></canvas></div>
   <div id="alt-tape" class="panel" style="padding:0"><canvas id="alt-canvas" class="tape-canvas" width="60" height="200"></canvas></div>
   <div id="pfd" class="panel">
-    <h3>PFD · A321 · <span id="hud-cam-badge">ORBIT</span></h3>
+    <h3>PFD · <span id="hud-model-badge">A321</span> · <span id="hud-cam-badge">ORBIT</span></h3>
     <canvas id="attitude-canvas" width="120" height="120"></canvas>
     <div>
       <div class="pfd-row"><span class="pfd-label">IAS</span><span class="pfd-value" id="ias-val">0 kt</span></div>
@@ -144,6 +144,7 @@ canvas { display:block; }
       <button id="btn-camera">📷 Kamera</button>
       <button id="btn-orbit-free">🌍 Wolna mapa</button>
     </div>
+    <button id="btn-model-switch">Model: A321</button>
     <div style="margin-top:8px;border-top:1px solid #1a3a5c;padding-top:6px;color:#336633;font-size:9px">
       V1=<span style="color:#ffaa00">135kt</span> VR=<span style="color:#ffaa00">145kt</span> V2=<span style="color:#44ff88">155kt</span>
     </div>
@@ -1220,33 +1221,72 @@ function physicsTick(now) {
     }
   }
 }
-// A321 3D MODEL
+// AIRCRAFT 3D MODEL
 // ŁADOWANIE MODELU A321 z JEDNEGO PLIKU a321.obj + a321.mtl
 // (a321.mtl wskazuje tekstury w folderze objwmtl/ — ścieżki względne, nie
 // trzeba ich tu powtarzać; wystarczy wczytać .mtl, a potem .obj z tymi materiałami)
-const A321_OBJ_URL = './a321.obj';
-const A321_MTL_URL = './a321.mtl';
+// Switch this to 'B787' when you want to load the Boeing model.
+let MODEL_VARIANT = 'A321'; // 'A321' or 'B787'
+
+const AIRCRAFT_MODELS = {
+  A321: {
+    objUrl: './a321.obj',
+    mtlUrl: './a321.mtl',
+    rotY: Math.PI / 2,
+    scale: 0.25,
+    translateY: -3.75,
+    gearPrefix: 'gears_',
+    cockpitOffsetM: new THREE.Vector3(0.47, 0.97, 17.5),
+  },
+  B787: {
+    objUrl: './b787.obj',
+    mtlUrl: './b787.mtl',
+    rotY: Math.PI / 2,
+    scale: 0.25, // TODO: set B787 scale
+    translateY: -3.75, // TODO: set B787 vertical offset
+    gearPrefix: 'gears_',
+    cockpitOffsetM: new THREE.Vector3(0.47, 0.97, 17.5), // TODO: set B787 cockpit camera offset
+  },
+};
+
+let ACTIVE_MODEL = AIRCRAFT_MODELS[MODEL_VARIANT] || AIRCRAFT_MODELS.A321;
+let A321_OBJ_URL = ACTIVE_MODEL.objUrl;
+let A321_MTL_URL = ACTIVE_MODEL.mtlUrl;
 
 // Jeśli po wczytaniu samolot będzie odwrócony nosem w złą stronę albo źle przechylony,
 // zmień tę wartość (np. Math.PI/2, -Math.PI/2, Math.PI) aż dziób wskaże w +Z w lokalnym układzie.
-const A321_MODEL_ROT_Y = Math.PI / 2;
+let A321_MODEL_ROT_Y = ACTIVE_MODEL.rotY;
 // Jeśli samolot będzie zbyt duży/mały względem terenu, zmień skalę (np. 0.01 jeśli model jest w cm).
-const A321_MODEL_SCALE = 0.25;
+let A321_MODEL_SCALE = ACTIVE_MODEL.scale;
 // Jeśli samolot będzie przesunięty w górę/dół względem terenu, zmień przesunięcie (np. 0.01 jeśli model jest w cm).
-const A321_MODEL_TRANSLATE_Y = -3.75;
+let A321_MODEL_TRANSLATE_Y = ACTIVE_MODEL.translateY;
 
 // Obiekty w a321.obj o nazwie zaczynającej się od tego prefiksu (gears_back_tires,
 // gears_covers, gears_front_tire, gears_holder_*) trafiają do wspólnej grupy
 // "gearGroup", tak jak wcześniej, gdy każdy z nich był osobnym plikiem .obj —
 // dzięki temu chowanie/pokazywanie podwozia (updateGearVisibility) działa bez zmian.
-const A321_GEAR_PREFIX = 'gears_';
+let A321_GEAR_PREFIX = ACTIVE_MODEL.gearPrefix;
+
+let cockpitConfig = { offsetM: ACTIVE_MODEL.cockpitOffsetM.clone() };
+
+function refreshActiveModelRefs() {
+  ACTIVE_MODEL = AIRCRAFT_MODELS[MODEL_VARIANT] || AIRCRAFT_MODELS.A321;
+  A321_OBJ_URL = ACTIVE_MODEL.objUrl;
+  A321_MTL_URL = ACTIVE_MODEL.mtlUrl;
+  A321_MODEL_ROT_Y = ACTIVE_MODEL.rotY;
+  A321_MODEL_SCALE = ACTIVE_MODEL.scale;
+  A321_MODEL_TRANSLATE_Y = ACTIVE_MODEL.translateY;
+  A321_GEAR_PREFIX = ACTIVE_MODEL.gearPrefix;
+  cockpitConfig.offsetM.copy(ACTIVE_MODEL.cockpitOffsetM);
+  updateModelHUD();
+}
 
 function _explainModelLoadError(url, err) {
   if (location.protocol === 'file:') {
-    console.error(`[A321] Nie można wczytać "${url}" z pliku lokalnego. Uruchom stronę przez lokalny serwer HTTP, np. python -m http.server 8000.`);
+    console.error(`[MODEL] Nie można wczytać "${url}" z pliku lokalnego. Uruchom stronę przez lokalny serwer HTTP, np. python -m http.server 8000.`);
   }
   const cause = err && err.message ? err.message : err;
-  return new Error(`[A321] Błąd ładowania ${url}: ${cause}`);
+  return new Error(`[MODEL] Błąd ładowania ${url}: ${cause}`);
 }
 
 async function loadA321Model() {
@@ -1257,6 +1297,31 @@ async function loadA321Model() {
       err => reject(_explainModelLoadError(A321_MTL_URL, err)));
   });
   materials.preload();
+
+  // Three.js czasem poprawnie wczytuje materiał z MTL, ale kokpitowe szyby
+  // i tak renderują się zbyt "twardo" przez kolejność rysowania albo brak
+  // jawnego transparent/depthWrite. Dla materiałów o nazwie związanej ze
+  // szkłem wymuszamy parametry typowe dla okna.
+  const glassNameRe = /(glass|window|windows|cockpit|canopy)/i;
+  function tuneMaterial(mat, meshName) {
+    if (!mat) return false;
+    const label = `${meshName || ''} ${mat.name || ''}`;
+    const looksLikeGlass = glassNameRe.test(label);
+    if (mat.map) {
+      mat.map.encoding   = THREE.sRGBEncoding;
+      mat.map.anisotropy = renderer.capabilities.getMaxAnisotropy();
+    }
+    mat.side = THREE.DoubleSide;
+    if (looksLikeGlass || mat.opacity < 1) {
+      mat.transparent = true;
+      mat.depthWrite = false;
+      if (mat.opacity >= 0.98) mat.opacity = label.toLowerCase().includes('cockpit') ? 0.12 : 0.2;
+      mat.alphaTest = 0;
+      mat.needsUpdate = true;
+      return true;
+    }
+    return false;
+  }
 
   // Mapa "nazwa części" → gotowy materiał z tą częścią powiązany, wyprowadzona
   // bezpośrednio z wpisów map_Kd w .mtl (np. "objwmtl/cockpit_inside.png" →
@@ -1297,17 +1362,16 @@ async function loadA321Model() {
       const hasMap = node.material && !Array.isArray(node.material) && node.material.map;
       if (!hasMap && fallbackMat) {
         node.material = fallbackMat;
-        console.warn(`[A321] "${child.name}" nie dostał tekstury z OBJLoadera — wymuszono materiał po nazwie części.`);
+        console.warn(`[MODEL] "${child.name}" nie dostał tekstury z OBJLoadera — wymuszono materiał po nazwie części.`);
       }
       const mats = Array.isArray(node.material) ? node.material : [node.material];
+      let forcedGlass = false;
       for (const mat of mats) {
         if (!mat) continue;
-        mat.side = THREE.DoubleSide;
-        if (mat.map) {
-          mat.map.encoding   = THREE.sRGBEncoding;
-          mat.map.anisotropy = maxAniso;
-        }
+        forcedGlass = tuneMaterial(mat, child.name) || forcedGlass;
+        if (mat.map) mat.map.anisotropy = maxAniso;
       }
+      if (forcedGlass) node.renderOrder = 20;
     });
     if (child.name.startsWith(A321_GEAR_PREFIX)) gearGroup.add(child); // .add() sam usuwa z poprzedniego rodzica
   }
@@ -1440,31 +1504,10 @@ class A321Entity extends Entity {
     const grp = new THREE.Group();
     this.mesh = grp;
     this.modelLoaded = false;
+    this._modelLoadToken = 0;
     this._parts = {}; // cache animowanych części — wypełniane po wczytaniu modelu
 
-    loadA321Model().then(model => {
-      model.rotation.y = A321_MODEL_ROT_Y;
-      model.scale.setScalar(A321_MODEL_SCALE);
-      model.translateY(A321_MODEL_TRANSLATE_Y);
-      grp.add(model);
-      this.modelLoaded = true;
-      this.updateGearVisibility();
-      // Wyszukaj animowane części RAZ — getObjectByName() przechodzi cały graf
-      // sceny, więc robienie tego co klatkę (jak wcześniej w renderUpdate) jest
-      // niepotrzebnym kosztem. Wynik cache'ujemy raz, po wczytaniu modelu.
-      this._parts = {
-        fanR:      this.mesh.getObjectByName('fan_R'),
-        fanL:      this.mesh.getObjectByName('fan_L'),
-        beacon:    this.mesh.getObjectByName('beacon'),
-        flapR:     this.mesh.getObjectByName('flap_R'),
-        flapL:     this.mesh.getObjectByName('flap_L'),
-        spoilerR:  this.mesh.getObjectByName('spoiler_R'),
-        spoilerL:  this.mesh.getObjectByName('spoiler_L'),
-        elevatorR: this.mesh.getObjectByName('elevator_R'),
-        elevatorL: this.mesh.getObjectByName('elevator_L'),
-        rudder:    this.mesh.getObjectByName('rudder'),
-      };
-    }).catch(err => console.error('[A321] Błąd wczytywania modelu:', err));
+    this.reloadVisualModel().catch(err => console.error('[MODEL] Błąd wczytywania modelu:', err));
 
     this.fanAngle = 0;
     this.beaconTimer = 0;
@@ -1507,6 +1550,49 @@ class A321Entity extends Entity {
   updateGearVisibility() {
     const gearGrp = this.mesh.getObjectByName('gearGroup');
     if (gearGrp) gearGrp.visible = this.gearDown;
+  }
+
+  async reloadVisualModel() {
+    const token = ++this._modelLoadToken;
+    this.modelLoaded = false;
+
+    const model = await loadA321Model();
+    if (token !== this._modelLoadToken) return;
+
+    while (this.mesh.children.length) {
+      this.mesh.remove(this.mesh.children[0]);
+    }
+
+    model.rotation.y = A321_MODEL_ROT_Y;
+    model.scale.setScalar(A321_MODEL_SCALE);
+    model.translateY(A321_MODEL_TRANSLATE_Y);
+    this.mesh.add(model);
+    this.modelLoaded = true;
+    this.updateGearVisibility();
+
+    // Wyszukaj animowane części RAZ — getObjectByName() przechodzi cały graf
+    // sceny, więc robienie tego co klatkę (jak wcześniej w renderUpdate) jest
+    // niepotrzebnym kosztem. Wynik cache'ujemy raz, po wczytaniu modelu.
+    this._parts = {
+      fanR:      this.mesh.getObjectByName('fan_R'),
+      fanL:      this.mesh.getObjectByName('fan_L'),
+      beacon:    this.mesh.getObjectByName('beacon'),
+      flapR:     this.mesh.getObjectByName('flap_R'),
+      flapL:     this.mesh.getObjectByName('flap_L'),
+      spoilerR:  this.mesh.getObjectByName('spoiler_R'),
+      spoilerL:  this.mesh.getObjectByName('spoiler_L'),
+      elevatorR: this.mesh.getObjectByName('elevator_R'),
+      elevatorL: this.mesh.getObjectByName('elevator_L'),
+      rudder:    this.mesh.getObjectByName('rudder'),
+    };
+  }
+
+  async setModelVariant(variant) {
+    if (!AIRCRAFT_MODELS[variant] || variant === MODEL_VARIANT) return false;
+    MODEL_VARIANT = variant;
+    refreshActiveModelRefs();
+    await this.reloadVisualModel();
+    return true;
   }
 
   integrate(dt) {}
@@ -1733,7 +1819,6 @@ const _orb = {
 let _orbitReady = false;  // false = snap do celu przy następnej klatce
 
 // Chase / cockpit
-const cockpitConfig = { offsetM: new THREE.Vector3(0.47, 0.97, 17.5) };
 const cockpitLook   = { yaw: 0, pitch: 0 };
 
 function _shortestYawDeg(from, to) {
@@ -1847,6 +1932,15 @@ function updateCameraHUD() {
       document.getElementById('ft-toggles').classList.add('active');
     }
   }
+}
+
+function updateModelHUD() {
+  const badge = document.getElementById('hud-model-badge');
+  if (badge) badge.textContent = MODEL_VARIANT;
+  const btn = document.getElementById('btn-model-switch');
+  if (btn) btn.textContent = `Model: ${MODEL_VARIANT}`;
+  const loadingTitle = document.querySelector('#loading h1');
+  if (loadingTitle) loadingTitle.textContent = MODEL_VARIANT;
 }
 // HUD DRAW FUNCTIONS
 const MPS_KT=1.94384, MPS_FPM=196.85, M_FT=3.28084;
@@ -2419,6 +2513,24 @@ document.getElementById('btn-orbit-free').addEventListener('click', () => {
   setCameraMode(CameraMode.ORBIT);
 });
 
+let modelSwitchBusy = false;
+document.getElementById('btn-model-switch').addEventListener('click', async () => {
+  if (!activeEntity || modelSwitchBusy) return;
+  modelSwitchBusy = true;
+  const btn = document.getElementById('btn-model-switch');
+  const nextVariant = MODEL_VARIANT === 'A321' ? 'B787' : 'A321';
+  if (btn) btn.disabled = true;
+  try {
+    await activeEntity.setModelVariant(nextVariant);
+    updateModelHUD();
+  } catch (err) {
+    console.error('[MODEL] Nie udało się przełączyć modelu:', err);
+  } finally {
+    modelSwitchBusy = false;
+    if (btn) btn.disabled = false;
+  }
+});
+
 // EXHAUST EMISSION
 const EXHAUST_LOCAL_POS = [new THREE.Vector3(1,-1,5), new THREE.Vector3(1,-1,-5)];
 const _exhaustBackDir   = new THREE.Vector3();
@@ -2494,6 +2606,7 @@ const loadInterval = setInterval(() => {
   scene.add(plane.mesh);
   addEntity(plane);
   activeEntity = plane;
+  updateModelHUD();
 
   applyCamera(0);
   const initialGroundDist = cameraGroundDistanceM(orb.dist);
