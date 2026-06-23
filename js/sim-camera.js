@@ -125,36 +125,29 @@ function _onCamModeChange() {
 }
 
 function updateCameraHUD() {
-  const el = document.getElementById('hud-cam-badge');
-  if (el) el.textContent = camMode;
+  // Odznaka trybu kamery
+  const badge = document.getElementById('hud-cam-badge');
+  if (badge) badge.textContent = camMode;
 
-  const isCoarse = matchMedia('(pointer:coarse)').matches;
-  if (!isCoarse) return; // na PC żadne mobile-elementy nie istnieją
+  if (!matchMedia('(pointer:coarse)').matches) return; // desktop — nic do pokazania/ukrycia
 
-  // Elementy orbit (mapa)
-  const joyWrap  = document.getElementById('joy-wrap');
-  const zoomBtns = document.getElementById('zoom-btns');
-  // Elementy lotu (joystick + slider + ruder + guziki)
-  const flyJoy   = document.getElementById('fly-joy-wrap');
-  const thrSldr  = document.getElementById('throttle-slider-wrap');
-  const rudder   = document.getElementById('mob-rudder');
-  const btnBar   = document.getElementById('mob-btn-bar');
+  const isOrbit = camMode === CameraMode.ORBIT;
 
-  if (camMode === CameraMode.ORBIT) {
-    // Orbit: pokaż mapę-joy i zoom, ukryj kontrolki lotu
-    if (joyWrap)  joyWrap.style.display  = 'block';
-    if (zoomBtns) zoomBtns.style.display = 'flex';
-    if (flyJoy)   flyJoy.style.display   = 'none';
-    if (thrSldr)  thrSldr.style.display  = 'none';
-    if (rudder)   rudder.style.display   = 'none';
-    if (btnBar)   btnBar.style.display   = 'none';
-  } else {
-    // Cockpit / inne: ukryj mapę-joy, pokaż kontrolki lotu
-    if (joyWrap)  joyWrap.style.display  = 'none';
-    if (zoomBtns) zoomBtns.style.display = 'none';
-    if (flyJoy)   flyJoy.style.display   = 'block';
-    if (thrSldr)  thrSldr.style.display  = 'flex';
-    if (rudder)   rudder.style.display   = 'flex';
-    if (btnBar)   btnBar.style.display   = 'flex';
-  }
+  // ORBIT: joystick mapy + zoom
+  const oj = document.getElementById('orbit-joy-wrap');
+  const oz = document.getElementById('orbit-zoom');
+  if (oj) oj.style.display = isOrbit ? 'flex' : 'none';
+  if (oz) oz.style.display = isOrbit ? 'flex' : 'none';
+
+  // LOT: joystick lotu + slider gazu + pasek guzików
+  const fj  = document.getElementById('fly-joy-wrap');
+  const thr = document.getElementById('thr-wrap');
+  const bar = document.getElementById('mob-bar');
+  if (fj)  fj.style.display  = isOrbit ? 'none' : 'flex';
+  if (thr) thr.style.display = isOrbit ? 'none' : 'flex';
+  if (bar) bar.style.display = 'flex'; // pasek zawsze widoczny w locie
+
+  // PFD chowamy w orbit (jest orbit-panel)
+  const pfd = document.getElementById('pfd');
+  if (pfd) pfd.style.display = isOrbit ? 'none' : '';
 }
