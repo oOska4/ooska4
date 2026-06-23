@@ -127,19 +127,34 @@ function _onCamModeChange() {
 function updateCameraHUD() {
   const el = document.getElementById('hud-cam-badge');
   if (el) el.textContent = camMode;
-  const j  = document.getElementById('joy-wrap');
-  const z  = document.getElementById('zoom-btns');
-  const ft = document.getElementById('flight-touch');
+
   const isCoarse = matchMedia('(pointer:coarse)').matches;
+  if (!isCoarse) return; // na PC żadne mobile-elementy nie istnieją
+
+  // Elementy orbit (mapa)
+  const joyWrap  = document.getElementById('joy-wrap');
+  const zoomBtns = document.getElementById('zoom-btns');
+  // Elementy lotu (joystick + slider + ruder + guziki)
+  const flyJoy   = document.getElementById('fly-joy-wrap');
+  const thrSldr  = document.getElementById('throttle-slider-wrap');
+  const rudder   = document.getElementById('mob-rudder');
+  const btnBar   = document.getElementById('mob-btn-bar');
+
   if (camMode === CameraMode.ORBIT) {
-    if (isCoarse) { j.style.display = 'block'; z.style.display = 'flex'; }
-    ft.classList.remove('active');
-    document.getElementById('ft-toggles').classList.remove('active');
+    // Orbit: pokaż mapę-joy i zoom, ukryj kontrolki lotu
+    if (joyWrap)  joyWrap.style.display  = 'block';
+    if (zoomBtns) zoomBtns.style.display = 'flex';
+    if (flyJoy)   flyJoy.style.display   = 'none';
+    if (thrSldr)  thrSldr.style.display  = 'none';
+    if (rudder)   rudder.style.display   = 'none';
+    if (btnBar)   btnBar.style.display   = 'none';
   } else {
-    j.style.display = 'none'; z.style.display = 'none';
-    if (isCoarse) {
-      ft.classList.add('active');
-      document.getElementById('ft-toggles').classList.add('active');
-    }
+    // Cockpit / inne: ukryj mapę-joy, pokaż kontrolki lotu
+    if (joyWrap)  joyWrap.style.display  = 'none';
+    if (zoomBtns) zoomBtns.style.display = 'none';
+    if (flyJoy)   flyJoy.style.display   = 'block';
+    if (thrSldr)  thrSldr.style.display  = 'flex';
+    if (rudder)   rudder.style.display   = 'flex';
+    if (btnBar)   btnBar.style.display   = 'flex';
   }
 }
