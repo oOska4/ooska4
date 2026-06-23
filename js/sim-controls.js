@@ -1,15 +1,22 @@
 'use strict';
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// STEROWANIE — KAMERA (mysz, klawiatura, touch) + SAMOLOT + MOBILE UI
+// sim-controls.js  —  sterowanie kamerą (mysz/klawiatura/touch) + samolotem
 // ═══════════════════════════════════════════════════════════════════════════════
 
+const IS_TOUCH = matchMedia('(pointer:coarse)').matches;
 const WASD_SPEED = 30, QE_SPEED = 30;
-let mDown = false, rDown = false, lx = 0, ly = 0;
-const keys = new Set();
 const cv = document.getElementById('c');
 
-// ── Desktop: mysz ────────────────────────────────────────────────────────────
+// ── Stan klawiaturowy ────────────────────────────────────────────────────────
+const keys     = new Set();   // orbit/mapa
+const planeKeys = {};         // samolot
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  DESKTOP — mysz (orbit + cockpit)
+// ═══════════════════════════════════════════════════════════════════════════════
+let mDown = false, rDown = false, lx = 0, ly = 0;
+
 cv.addEventListener('mousedown', e => {
   if (e.button === 0) mDown = true;
   if (e.button === 2) rDown = true;
@@ -17,24 +24,29 @@ cv.addEventListener('mousedown', e => {
   e.preventDefault();
 });
 window.addEventListener('mouseup', () => { mDown = false; rDown = false; });
+
 window.addEventListener('mousemove', e => {
   const dx = e.clientX - lx, dy = e.clientY - ly;
-  if (mDown && camMode === CameraMode.ORBIT) {
-    orb.yaw   -= dx * 0.3;
-    orb.pitch  = Math.max(5, Math.min(89, orb.pitch + dy * 0.25));
-  } else if (mDown && camMode === CameraMode.COCKPIT) {
-    cockpitLook.yaw   = Math.max(-2.6, Math.min(2.6, cockpitLook.yaw   - dx * 0.006));
-    cockpitLook.pitch = Math.max(-1.3, Math.min(1.3, cockpitLook.pitch + dy * 0.004));
+  lx = e.clientX; ly = e.clientY;
+  if (!dx && !dy) return;
+  if (mDown) {
+    if (camMode === CameraMode.ORBIT) {
+      orb.yaw   -= dx * 0.3;
+      orb.pitch  = Math.max(5, Math.min(89, orb.pitch + dy * 0.25));
+    } else if (camMode === CameraMode.COCKPIT) {
+      cockpitLook.yaw   = Math.max(-2.6, Math.min(2.6, cockpitLook.yaw   - dx * 0.006));
+      cockpitLook.pitch = Math.max(-1.3, Math.min(1.3, cockpitLook.pitch + dy * 0.004));
+    }
   }
   if (rDown && camMode === CameraMode.ORBIT) {
     const cosRef = Math.cos(Units.degToRad(refLat));
     const spd    = orb.dist / EARTH_RADIUS * 180 / Math.PI * 0.003;
     const yr     = Units.degToRad(orb.yaw);
-    orb.lon += ( Math.sin(yr) * dy - Math.cos(yr) * dx) * spd / cosRef;
-    orb.lat += ( Math.cos(yr) * dy + Math.sin(yr) * dx) * spd;
+    orb.lon += (Math.sin(yr) * dy - Math.cos(yr) * dx) * spd / cosRef;
+    orb.lat += (Math.cos(yr) * dy + Math.sin(yr) * dx) * spd;
   }
-  lx = e.clientX; ly = e.clientY;
 });
+
 cv.addEventListener('wheel', e => {
   if (camMode === CameraMode.ORBIT)
     orb.dist = Math.max(30, Math.min(900_000, orb.dist * (1 + e.deltaY * 0.001)));
@@ -42,12 +54,22 @@ cv.addEventListener('wheel', e => {
 }, { passive: false });
 cv.addEventListener('contextmenu', e => e.preventDefault());
 
-// ── Desktop: klawiatura (orbit) ───────────────────────────────────────────────
+// ── Desktop: klawiatura orbit ────────────────────────────────────────────────
 window.addEventListener('keydown', e => {
   const k = e.key.toLowerCase();
-  if (['w','a','s','d','q','e','c','v'].includes(k)) keys.add(k);
+  if (['w','a','s','d','q','e'].includes(k)) keys.add(k);
 });
-window.addEventListener('keyup', e => keys.delete(e.key.toLowerCase()));
+window.addEventListener('keyup', e => {
+  keys.delete(e.key.toLowerCase());
+  const p = activeEntity;
+  switch (e.code) {
+    case 'KeyF': if (p)            { p.flaps = (p.flaps + 1) % 4; }               break;
+    case 'KeyG': if (p && !p.onGround) { p.gearDown = !p.gearDown; p.updateGearVisibility(); } break;
+    case 'KeyB': if (p)            { p.spoilers = !p.spoilers; }                   break;
+    case 'KeyR': resetPlane();                                                      break;
+    case 'KeyC': cycleCameraMode();                                                 break;
+  }
+});
 
 function updateOrbitKeyboard(dt) {
   if (camMode !== CameraMode.ORBIT) return;
@@ -58,48 +80,50 @@ function updateOrbitKeyboard(dt) {
   const cosRef = Math.cos(Units.degToRad(refLat));
   const yr     = Units.degToRad(orb.yaw);
   const base   = Math.max(50, orb.dist * 0.0015);
-  const hm     = base * WASD_SPEED * dt, vm = base * QE_SPEED * dt;
+  const hm = base * WASD_SPEED * dt, vm = base * QE_SPEED * dt;
   orb.lon += ((fwd * Math.sin(yr) + str * Math.cos(yr)) * hm / (EARTH_RADIUS * cosRef)) * 180 / Math.PI;
-  orb.lat += ((fwd * Math.cos(yr) - str * Math.sin(yr)) * hm /  EARTH_RADIUS)            * 180 / Math.PI;
+  orb.lat += ((fwd * Math.cos(yr) - str * Math.sin(yr)) * hm / EARTH_RADIUS)            * 180 / Math.PI;
   orb.y   +=  clb * vm;
 }
 
-// ── Touch pinch/pan na canvas (orbit & cockpit) ───────────────────────────────
+// ── Desktop: klawiatura samolot ──────────────────────────────────────────────
+const PLANE_CODES = ['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','KeyW','KeyS','KeyQ','KeyE'];
+window.addEventListener('keydown', e => {
+  if (PLANE_CODES.includes(e.code)) { planeKeys[e.code] = true; e.preventDefault(); }
+});
+window.addEventListener('keyup', e => { planeKeys[e.code] = false; });
+
+// ── Canvas pinch/pan touch (orbit + cockpit camera) ──────────────────────────
 const activeT = new Map(), prevT = new Map();
 let lastPinchDist = null, lastPanMid = null;
-function touchDist(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
-function touchMid(a, b)  { return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }; }
+const _td = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+const _tm = (a, b) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
 
 cv.addEventListener('touchstart', e => {
-  [...e.changedTouches].forEach(t => {
+  for (const t of e.changedTouches) {
     const p = { x: t.clientX, y: t.clientY };
-    prevT.set(t.identifier, activeT.has(t.identifier) ? { ...activeT.get(t.identifier) } : p);
-    activeT.set(t.identifier, p);
-  });
+    prevT.set(t.identifier, { ...p }); activeT.set(t.identifier, p);
+  }
   if (activeT.size === 2) {
     const [a, b] = [...activeT.values()];
-    lastPinchDist = touchDist(a, b); lastPanMid = touchMid(a, b);
+    lastPinchDist = _td(a, b); lastPanMid = _tm(a, b);
   }
 }, { passive: true });
 
 cv.addEventListener('touchmove', e => {
-  [...e.changedTouches].forEach(t => {
-    prevT.set(t.identifier, activeT.has(t.identifier) ? { ...activeT.get(t.identifier) } : { x: t.clientX, y: t.clientY });
+  for (const t of e.changedTouches) {
+    prevT.set(t.identifier, { ...activeT.get(t.identifier) } ?? { x: t.clientX, y: t.clientY });
     activeT.set(t.identifier, { x: t.clientX, y: t.clientY });
-  });
+  }
   if (camMode === CameraMode.ORBIT) {
     if (activeT.size === 1) {
       const t = e.changedTouches[0], pr = prevT.get(t.identifier);
-      if (pr) {
-        orb.yaw   -= (t.clientX - pr.x) * 0.3;
-        orb.pitch  = Math.max(5, Math.min(89, orb.pitch + (t.clientY - pr.y) * 0.25));
-      }
+      if (pr) { orb.yaw -= (t.clientX - pr.x) * 0.3; orb.pitch = Math.max(5, Math.min(89, orb.pitch + (t.clientY - pr.y) * 0.25)); }
     } else if (activeT.size === 2) {
       const [a, b] = [...activeT.values()];
-      const dist = touchDist(a, b), mid = touchMid(a, b);
-      if (lastPinchDist !== null)
-        orb.dist = Math.max(30, Math.min(900_000, orb.dist * (lastPinchDist / dist)));
-      if (lastPanMid !== null) {
+      const dist = _td(a, b), mid = _tm(a, b);
+      if (lastPinchDist) orb.dist = Math.max(30, Math.min(900_000, orb.dist * (lastPinchDist / dist)));
+      if (lastPanMid) {
         const cosRef = Math.cos(Units.degToRad(refLat)), yr = Units.degToRad(orb.yaw);
         const spd = orb.dist / EARTH_RADIUS * 180 / Math.PI * 0.003;
         const dx = mid.x - lastPanMid.x, dy = mid.y - lastPanMid.y;
@@ -108,226 +132,230 @@ cv.addEventListener('touchmove', e => {
       }
       lastPinchDist = dist; lastPanMid = mid;
     }
-  } else if (camMode === CameraMode.COCKPIT) {
-    if (activeT.size === 1) {
-      const t = e.changedTouches[0], pr = prevT.get(t.identifier);
-      if (pr) {
-        cockpitLook.yaw   = Math.max(-2.6, Math.min(2.6, cockpitLook.yaw   + (t.clientX - pr.x) * 0.006));
-        cockpitLook.pitch = Math.max(-1.3, Math.min(1.3, cockpitLook.pitch + (t.clientY - pr.y) * 0.004));
-      }
+  } else if (camMode === CameraMode.COCKPIT && activeT.size === 1) {
+    const t = e.changedTouches[0], pr = prevT.get(t.identifier);
+    if (pr) {
+      cockpitLook.yaw   = Math.max(-2.6, Math.min(2.6, cockpitLook.yaw   + (t.clientX - pr.x) * 0.006));
+      cockpitLook.pitch = Math.max(-1.3, Math.min(1.3, cockpitLook.pitch + (t.clientY - pr.y) * 0.004));
     }
   }
 }, { passive: true });
 
-cv.addEventListener('touchend',   e => {
-  [...e.changedTouches].forEach(t => { activeT.delete(t.identifier); prevT.delete(t.identifier); });
-  if (activeT.size < 2) { lastPinchDist = null; lastPanMid = null; }
-});
-cv.addEventListener('touchcancel', e => {
-  [...e.changedTouches].forEach(t => { activeT.delete(t.identifier); prevT.delete(t.identifier); });
-  lastPinchDist = null; lastPanMid = null;
-});
+cv.addEventListener('touchend',    e => { for (const t of e.changedTouches) { activeT.delete(t.identifier); prevT.delete(t.identifier); } if (activeT.size < 2) { lastPinchDist = null; lastPanMid = null; } });
+cv.addEventListener('touchcancel', e => { for (const t of e.changedTouches) { activeT.delete(t.identifier); prevT.delete(t.identifier); } lastPinchDist = null; lastPanMid = null; });
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  MOBILE — JOYSTICK LOTU (lewy, pitch + roll)
+//  MOBILE — JOYSTICK LOTU (pitch + roll)
 // ═══════════════════════════════════════════════════════════════════════════════
-
 const flyJoyBase = document.getElementById('fly-joy-base');
 const flyJoyKnob = document.getElementById('fly-joy-knob');
-const FLY_JOY_R  = 35;   // maks. przemieszczenie knoba (px)
-let flyJoyActive = false, flyJoyId = null;
-let flyJoyOrigin = { x: 0, y: 0 }, flyJoyDelta = { x: 0, y: 0 };
+const FLY_R = 38;
+let flyActive = false, flyId = null;
+let flyOrigin = { x: 0, y: 0 };
+let flyDelta  = { x: 0, y: 0 };
+
+function _flyStart(clientX, clientY, id) {
+  flyActive = true; flyId = id;
+  const r = flyJoyBase.getBoundingClientRect();
+  flyOrigin = { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+  _flyMove(clientX, clientY);
+}
+function _flyMove(clientX, clientY) {
+  const dx = clientX - flyOrigin.x, dy = clientY - flyOrigin.y;
+  const len = Math.hypot(dx, dy), c = Math.min(len, FLY_R);
+  const nx = len > 0 ? dx / len * c : 0, ny = len > 0 ? dy / len * c : 0;
+  flyJoyKnob.style.transform = `translate(calc(-50% + ${nx}px), calc(-50% + ${ny}px))`;
+  flyDelta = { x: nx / FLY_R, y: ny / FLY_R };
+}
+function _flyEnd() {
+  flyActive = false; flyId = null; flyDelta = { x: 0, y: 0 };
+  flyJoyKnob.style.transform = 'translate(-50%,-50%)';
+}
 
 flyJoyBase.addEventListener('touchstart', e => {
-  const t = e.changedTouches[0];
-  flyJoyActive = true; flyJoyId = t.identifier;
-  const r = flyJoyBase.getBoundingClientRect();
-  flyJoyOrigin = { x: r.left + r.width / 2, y: r.top + r.height / 2 };
   e.stopPropagation();
+  const t = e.changedTouches[0];
+  _flyStart(t.clientX, t.clientY, t.identifier);
 }, { passive: true });
 
 window.addEventListener('touchmove', e => {
-  if (!flyJoyActive) return;
-  for (const t of e.changedTouches) {
-    if (t.identifier !== flyJoyId) continue;
-    const dx = t.clientX - flyJoyOrigin.x;
-    const dy = t.clientY - flyJoyOrigin.y;
-    const len = Math.hypot(dx, dy);
-    const clamp = Math.min(len, FLY_JOY_R);
-    const nx = len > 0 ? dx / len * clamp : 0;
-    const ny = len > 0 ? dy / len * clamp : 0;
-    flyJoyKnob.style.transform = `translate(calc(-50% + ${nx}px), calc(-50% + ${ny}px))`;
-    // x→roll, y→pitch (ujemny Y = nos w górę)
-    flyJoyDelta = { x: nx / FLY_JOY_R, y: ny / FLY_JOY_R };
-  }
+  if (!flyActive) return;
+  for (const t of e.changedTouches) if (t.identifier === flyId) _flyMove(t.clientX, t.clientY);
 }, { passive: true });
 
 window.addEventListener('touchend', e => {
-  for (const t of e.changedTouches) {
-    if (t.identifier !== flyJoyId) continue;
-    flyJoyActive = false; flyJoyId = null; flyJoyDelta = { x: 0, y: 0 };
-    flyJoyKnob.style.transform = 'translate(-50%, -50%)';
-  }
+  for (const t of e.changedTouches) if (t.identifier === flyId) _flyEnd();
 });
 window.addEventListener('touchcancel', e => {
-  for (const t of e.changedTouches) {
-    if (t.identifier !== flyJoyId) continue;
-    flyJoyActive = false; flyJoyId = null; flyJoyDelta = { x: 0, y: 0 };
-    flyJoyKnob.style.transform = 'translate(-50%, -50%)';
-  }
+  for (const t of e.changedTouches) if (t.identifier === flyId) _flyEnd();
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  MOBILE — SLIDER GAZU (prawy)
+//  MOBILE — SLIDER GAZU (pionowy)
 // ═══════════════════════════════════════════════════════════════════════════════
+const thrTrack = document.getElementById('thr-track');
+const thrFill  = document.getElementById('thr-fill');
+const thrThumb = document.getElementById('thr-thumb');
+const thrPct   = document.getElementById('thr-pct');
 
-const thrTrack  = document.getElementById('thr-track');
-const thrFill   = document.getElementById('thr-fill');
-const thrThumb  = document.getElementById('thr-thumb');
-const thrPctLbl = document.getElementById('thr-pct-label');
+let thrActive = false, thrId = null;
+// -1 = suwak jeszcze nie dotknięty (pozwól silnikowi działać normalnie)
+let thrValue = -1;
 
-let thrSliderActive = false, thrSliderId = null;
-// Wartość 0–1 z suwaka; -1 = niekontrolowany (używamy klawiaturowych KeyW/S)
-let thrSliderValue = -1;
-
-function _thrTrackRect() { return thrTrack.getBoundingClientRect(); }
-
-function _setThrFromY(clientY) {
-  const r    = _thrTrackRect();
-  const rel  = Math.max(0, Math.min(1, 1 - (clientY - r.top) / r.height));
-  thrSliderValue = rel;
-  _updateThrVisual(rel);
+function _thrY(clientY) {
+  const r = thrTrack.getBoundingClientRect();
+  return Math.max(0, Math.min(1, 1 - (clientY - r.top) / r.height));
 }
-
-function _updateThrVisual(v) {
+function _thrSet(v) {
+  thrValue = v;
   const pct = (v * 100).toFixed(0);
   thrFill.style.height  = pct + '%';
-  thrThumb.style.bottom = `calc(${pct}% - 10px)`;
-  thrPctLbl.textContent = pct + '%';
+  // kciuk: bottom = fill height - pół kciuka
+  thrThumb.style.bottom = `calc(${pct}% - 11px)`;
+  thrPct.textContent    = pct + '%';
+}
+// Aktualizacja wizualna bez blokowania silnika (gdy suwak nie jest trzymany)
+function _thrSync(engineVal) {
+  if (thrActive) return;
+  const pct = (engineVal * 100).toFixed(0);
+  thrFill.style.height  = pct + '%';
+  thrThumb.style.bottom = `calc(${pct}% - 11px)`;
+  thrPct.textContent    = pct + '%';
 }
 
 thrTrack.addEventListener('touchstart', e => {
+  e.stopPropagation(); e.preventDefault();
   const t = e.changedTouches[0];
-  thrSliderActive = true; thrSliderId = t.identifier;
-  _setThrFromY(t.clientY);
-  e.stopPropagation();
-}, { passive: true });
+  thrActive = true; thrId = t.identifier;
+  _thrSet(_thrY(t.clientY));
+}, { passive: false });
 
 window.addEventListener('touchmove', e => {
-  if (!thrSliderActive) return;
-  for (const t of e.changedTouches) {
-    if (t.identifier !== thrSliderId) continue;
-    _setThrFromY(t.clientY);
-  }
+  if (!thrActive) return;
+  for (const t of e.changedTouches) if (t.identifier === thrId) _thrSet(_thrY(t.clientY));
 }, { passive: true });
 
-window.addEventListener('touchend', e => {
-  for (const t of e.changedTouches)
-    if (t.identifier === thrSliderId) { thrSliderActive = false; thrSliderId = null; }
-});
-window.addEventListener('touchcancel', e => {
-  for (const t of e.changedTouches)
-    if (t.identifier === thrSliderId) { thrSliderActive = false; thrSliderId = null; }
-});
+window.addEventListener('touchend',    e => { for (const t of e.changedTouches) if (t.identifier === thrId) { thrActive = false; thrId = null; } });
+window.addEventListener('touchcancel', e => { for (const t of e.changedTouches) if (t.identifier === thrId) { thrActive = false; thrId = null; } });
 
-// Zsynchronizuj wizualnie slider z aktualnym throttle (gdy wracamy z PK lub animacji)
-function syncThrSlider(throttleVal) {
-  if (thrSliderActive) return;   // slider jest trzymany — nie nadpisuj
-  if (thrSliderValue < 0) {
-    // slider jeszcze nie dotknięty — pokaż aktualny throttle silnika, ale nie blokuj
-    _updateThrVisual(throttleVal);
-  }
+// ═══════════════════════════════════════════════════════════════════════════════
+//  MOBILE — RUDER (Q/E)
+// ═══════════════════════════════════════════════════════════════════════════════
+const rudState = { L: false, R: false };
+function _bindHold(id, key) {
+  const el = document.getElementById(id);
+  el.addEventListener('touchstart',  e => { rudState[key] = true;  e.preventDefault(); }, { passive: false });
+  el.addEventListener('touchend',    () => { rudState[key] = false; });
+  el.addEventListener('touchcancel', () => { rudState[key] = false; });
+}
+_bindHold('mob-rud-l', 'L');
+_bindHold('mob-rud-r', 'R');
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  MOBILE — PASEK KONFIGURACYJNY
+// ═══════════════════════════════════════════════════════════════════════════════
+let brakesHeld = false;
+
+function _mb(id, fn) {
+  const el = document.getElementById(id);
+  if (el) el.addEventListener('click', fn);
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-//  MOBILE — RUDER (lewy/prawy obok suwaka)
-// ═══════════════════════════════════════════════════════════════════════════════
-
-const rudderState = { L: false, R: false };
-const rudL = document.getElementById('mob-rud-l');
-const rudR = document.getElementById('mob-rud-r');
-
-function _bindHold(el, key) {
-  el.addEventListener('touchstart',  e => { rudderState[key] = true;  e.preventDefault(); }, { passive: false });
-  el.addEventListener('touchend',    () => rudderState[key] = false);
-  el.addEventListener('touchcancel', () => rudderState[key] = false);
-  // mousedown dla testów na PC
-  el.addEventListener('mousedown', () => rudderState[key] = true);
-  el.addEventListener('mouseup',   () => rudderState[key] = false);
-}
-_bindHold(rudL, 'L');
-_bindHold(rudR, 'R');
-
-// ═══════════════════════════════════════════════════════════════════════════════
-//  MOBILE — GUZIKI KONFIGURACYJNE (pasek dolny)
-// ═══════════════════════════════════════════════════════════════════════════════
-
-// Guziki: FLAPS, GEAR, SPLR, RESET, APPROACH, CAM
-document.getElementById('mob-btn-flaps').addEventListener('click', () => {
+_mb('mb-flaps', () => {
   if (!activeEntity) return;
   activeEntity.flaps = (activeEntity.flaps + 1) % 4;
-  document.getElementById('mob-btn-flaps').querySelector('.mb-label').textContent = 'FLAP ' + activeEntity.flaps;
+  const lbl = document.getElementById('mb-flaps-lbl');
+  if (lbl) lbl.textContent = 'FLAP ' + activeEntity.flaps;
 });
-document.getElementById('mob-btn-gear').addEventListener('click', () => {
+
+_mb('mb-gear', () => {
   const p = activeEntity; if (!p || p.onGround) return;
   p.gearDown = !p.gearDown; p.updateGearVisibility();
-  document.getElementById('mob-btn-gear').classList.toggle('active', p.gearDown);
+  document.getElementById('mb-gear')?.classList.toggle('active', p.gearDown);
 });
-document.getElementById('mob-btn-splr').addEventListener('click', () => {
+
+_mb('mb-splr', () => {
   const p = activeEntity; if (!p) return;
   p.spoilers = !p.spoilers;
-  document.getElementById('mob-btn-splr').classList.toggle('active', p.spoilers);
+  document.getElementById('mb-splr')?.classList.toggle('active', p.spoilers);
 });
-document.getElementById('mob-btn-reset').addEventListener('click', resetPlane);
-document.getElementById('mob-btn-appr').addEventListener('click', spawnApproach);
-document.getElementById('mob-btn-cam').addEventListener('click', cycleCameraMode);
 
-// ═══════════════════════════════════════════════════════════════════════════════
-//  ORBIT JOYSTICK (mapa, ORBIT mode)
-// ═══════════════════════════════════════════════════════════════════════════════
-
-const joyBase = document.getElementById('joy-base');
-const joyKnob = document.getElementById('joy-knob');
-let joyActive = false, joyId = null, joyOrigin = { x: 0, y: 0 }, joyDelta = { x: 0, y: 0 };
-const JOY_R = 33;
-joyBase.addEventListener('touchstart', e => {
-  const t = e.changedTouches[0]; joyActive = true; joyId = t.identifier;
-  const r = joyBase.getBoundingClientRect();
-  joyOrigin = { x: r.left + r.width / 2, y: r.top + r.height / 2 };
-  e.stopPropagation();
-}, { passive: true });
-window.addEventListener('touchmove', e => {
-  if (!joyActive) return;
-  for (const t of e.changedTouches) {
-    if (t.identifier !== joyId) continue;
-    const dx = t.clientX - joyOrigin.x, dy = t.clientY - joyOrigin.y;
-    const len = Math.hypot(dx, dy), c = Math.min(len, JOY_R);
-    const nx = len > 0 ? dx / len * c : 0, ny = len > 0 ? dy / len * c : 0;
-    joyKnob.style.transform = `translate(calc(-50% + ${nx}px),calc(-50% + ${ny}px))`;
-    joyDelta = { x: nx / JOY_R, y: ny / JOY_R };
-  }
-}, { passive: true });
-window.addEventListener('touchend', e => {
-  for (const t of e.changedTouches) {
-    if (t.identifier !== joyId) continue;
-    joyActive = false; joyId = null; joyDelta = { x: 0, y: 0 };
-    joyKnob.style.transform = 'translate(-50%,-50%)';
-  }
-});
-function applyJoystick(dt) {
-  if (!joyActive || (!joyDelta.x && !joyDelta.y) || camMode !== CameraMode.ORBIT) return;
-  const cosRef = Math.cos(Units.degToRad(refLat)), yr = Units.degToRad(orb.yaw);
-  const spd    = Math.max(50, orb.dist * 0.0015) * WASD_SPEED * dt;
-  orb.lon += ((joyDelta.x * Math.cos(yr) - joyDelta.y * Math.sin(yr)) * spd / (EARTH_RADIUS * cosRef)) * 180 / Math.PI;
-  orb.lat += ((joyDelta.x * Math.sin(yr) + joyDelta.y * Math.cos(yr)) * spd / EARTH_RADIUS)            * 180 / Math.PI;
+// Hamulce — trzymane
+const brakesBtn = document.getElementById('mb-brakes');
+if (brakesBtn) {
+  brakesBtn.addEventListener('touchstart',  e => { brakesHeld = true;  brakesBtn.classList.add('pressed');    e.preventDefault(); }, { passive: false });
+  brakesBtn.addEventListener('touchend',    () => { brakesHeld = false; brakesBtn.classList.remove('pressed'); });
+  brakesBtn.addEventListener('touchcancel', () => { brakesHeld = false; brakesBtn.classList.remove('pressed'); });
 }
 
-// ── Zoom buttons (orbit) ─────────────────────────────────────────────────────
+_mb('mb-reset', resetPlane);
+_mb('mb-appr',  spawnApproach);
+_mb('mb-cam',   cycleCameraMode);
+
+// Airport picker
+let aptPickerOpen = false;
+_mb('mb-apt', () => {
+  aptPickerOpen = !aptPickerOpen;
+  const el = document.getElementById('apt-picker');
+  if (el) el.style.display = aptPickerOpen ? 'flex' : 'none';
+  document.getElementById('mb-apt')?.classList.toggle('active', aptPickerOpen);
+});
+_mb('apt-close', () => {
+  aptPickerOpen = false;
+  const el = document.getElementById('apt-picker');
+  if (el) el.style.display = 'none';
+  document.getElementById('mb-apt')?.classList.remove('active');
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  MOBILE — ORBIT JOYSTICK (mapa)
+// ═══════════════════════════════════════════════════════════════════════════════
+const orbitJoyBase = document.getElementById('orbit-joy-base');
+const orbitJoyKnob = document.getElementById('orbit-joy-knob');
+const ORB_R = 30;
+let orbActive = false, orbId = null, orbOrigin = { x: 0, y: 0 }, orbDelta = { x: 0, y: 0 };
+
+orbitJoyBase.addEventListener('touchstart', e => {
+  e.stopPropagation();
+  const t = e.changedTouches[0]; orbActive = true; orbId = t.identifier;
+  const r = orbitJoyBase.getBoundingClientRect();
+  orbOrigin = { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+}, { passive: true });
+
+window.addEventListener('touchmove', e => {
+  if (!orbActive) return;
+  for (const t of e.changedTouches) {
+    if (t.identifier !== orbId) continue;
+    const dx = t.clientX - orbOrigin.x, dy = t.clientY - orbOrigin.y;
+    const len = Math.hypot(dx, dy), c = Math.min(len, ORB_R);
+    const nx = len > 0 ? dx / len * c : 0, ny = len > 0 ? dy / len * c : 0;
+    orbitJoyKnob.style.transform = `translate(calc(-50% + ${nx}px),calc(-50% + ${ny}px))`;
+    orbDelta = { x: nx / ORB_R, y: ny / ORB_R };
+  }
+}, { passive: true });
+
+window.addEventListener('touchend', e => {
+  for (const t of e.changedTouches) if (t.identifier === orbId) {
+    orbActive = false; orbId = null; orbDelta = { x: 0, y: 0 };
+    orbitJoyKnob.style.transform = 'translate(-50%,-50%)';
+  }
+});
+
+function applyJoystick(dt) {
+  if (!orbActive || camMode !== CameraMode.ORBIT) return;
+  const cosRef = Math.cos(Units.degToRad(refLat)), yr = Units.degToRad(orb.yaw);
+  const spd    = Math.max(50, orb.dist * 0.0015) * WASD_SPEED * dt;
+  orb.lon += ((orbDelta.x * Math.cos(yr) - orbDelta.y * Math.sin(yr)) * spd / (EARTH_RADIUS * cosRef)) * 180 / Math.PI;
+  orb.lat += ((orbDelta.x * Math.sin(yr) + orbDelta.y * Math.cos(yr)) * spd / EARTH_RADIUS)            * 180 / Math.PI;
+}
+
+// ── Orbit zoom buttons ───────────────────────────────────────────────────────
 let zoomInHeld = false, zoomOutHeld = false;
-document.getElementById('btn-zoom-in').addEventListener('touchstart',  () => zoomInHeld  = true, { passive: true });
-document.getElementById('btn-zoom-in').addEventListener('touchend',    () => zoomInHeld  = false);
-document.getElementById('btn-zoom-out').addEventListener('touchstart', () => zoomOutHeld = true, { passive: true });
-document.getElementById('btn-zoom-out').addEventListener('touchend',   () => zoomOutHeld = false);
+const zbIn  = document.getElementById('btn-zoom-in');
+const zbOut = document.getElementById('btn-zoom-out');
+if (zbIn)  { zbIn.addEventListener('touchstart',  () => zoomInHeld  = true, { passive: true }); zbIn.addEventListener('touchend',  () => zoomInHeld  = false); }
+if (zbOut) { zbOut.addEventListener('touchstart', () => zoomOutHeld = true, { passive: true }); zbOut.addEventListener('touchend', () => zoomOutHeld = false); }
+
 function applyZoomButtons(dt) {
   if (camMode !== CameraMode.ORBIT) return;
   if (zoomInHeld)  orb.dist = Math.max(500,     orb.dist * (1 - 1.5 * dt));
@@ -335,54 +363,29 @@ function applyZoomButtons(dt) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  STEROWANIE SAMOLOTEM — klawiatura
+//  updatePlaneInput — łączy wszystkie źródła wejścia
 // ═══════════════════════════════════════════════════════════════════════════════
-
-const planeKeys = {};
-const PLANE_CODES = ['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','KeyW','KeyS','KeyQ','KeyE'];
-window.addEventListener('keydown', e => {
-  if (PLANE_CODES.includes(e.code)) { planeKeys[e.code] = true; e.preventDefault(); }
-});
-window.addEventListener('keyup', e => {
-  planeKeys[e.code] = false;
-  const p = activeEntity;
-  if (e.code === 'KeyF' && p) { p.flaps = (p.flaps + 1) % 4; }
-  if (e.code === 'KeyG' && p && !p.onGround) { p.gearDown = !p.gearDown; p.updateGearVisibility(); }
-  if (e.code === 'KeyB' && p) p.spoilers = !p.spoilers;
-  if (e.code === 'KeyR') resetPlane();
-  if (e.code === 'KeyC') cycleCameraMode();
-});
-
-// ── updatePlaneInput — łączy klawiaturę + joystick mobilny + slider + ruder ──
 function updatePlaneInput() {
-  const isMobile = matchMedia('(pointer:coarse)').matches;
-
-  // Pitch i roll z joysticka lotniczego (mobile) LUB strzałek (PC)
+  // ── Pitch + Roll ──────────────────────────────────────────────────────────
   let pitch = (planeKeys['ArrowUp'] ? 1 : 0) - (planeKeys['ArrowDown']  ? 1 : 0);
   let roll  = (planeKeys['ArrowRight'] ? 1 : 0) - (planeKeys['ArrowLeft'] ? 1 : 0);
+  if (IS_TOUCH && flyActive) { pitch = -flyDelta.y; roll = flyDelta.x; }
 
-  if (isMobile && flyJoyActive) {
-    pitch = -flyJoyDelta.y;   // joystick w górę = nos w górę
-    roll  =  flyJoyDelta.x;
-  }
-
-  // Ruder (Q/E na PC, guziki na mobile)
+  // ── Ruder ─────────────────────────────────────────────────────────────────
   let yaw = (planeKeys['KeyQ'] ? -1 : 0) + (planeKeys['KeyE'] ? 1 : 0);
-  if (isMobile) {
-    if (rudderState.L) yaw = -1;
-    if (rudderState.R) yaw =  1;
-  }
+  if (IS_TOUCH) { if (rudState.L) yaw = -1; if (rudState.R) yaw = 1; }
 
-  // Throttle: slider mobile ma pierwszeństwo, potem W/S
+  // ── Throttle ──────────────────────────────────────────────────────────────
   let throttleUp   = !!planeKeys['KeyW'];
   let throttleDown = !!planeKeys['KeyS'];
-  let brakes       = !!planeKeys['KeyS'];
+  let brakes       = !!planeKeys['KeyS'] || brakesHeld;
 
-  if (isMobile && thrSliderValue >= 0 && activeEntity) {
-    // Zamiast inkrementować — ustawiamy throttle bezpośrednio na wartość suwaka
-    activeEntity.throttle = thrSliderValue;
-    throttleUp   = false;
-    throttleDown = false;
+  if (IS_TOUCH && thrValue >= 0 && activeEntity) {
+    activeEntity.throttle = thrValue;
+    throttleUp = false; throttleDown = false;
+  } else if (IS_TOUCH && activeEntity) {
+    // suwak jeszcze nie tknięty — synchronizuj wizualnie
+    _thrSync(activeEntity.throttle);
   }
 
   planeInput.pitch        = pitch;
@@ -391,20 +394,15 @@ function updatePlaneInput() {
   planeInput.throttleUp   = throttleUp;
   planeInput.throttleDown = throttleDown;
   planeInput.brakes       = brakes;
-
-  // Synchronizuj slider z faktycznym throttle jeśli nie jest dotknięty
-  if (isMobile && activeEntity) syncThrSlider(activeEntity.throttle);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  RESET / SPAWN / AIRPORT
 // ═══════════════════════════════════════════════════════════════════════════════
-
 function resetPlane() {
   if (!activeEntity) return;
   const apt = AIRPORTS[currentAirport];
-  // zresetuj slider
-  thrSliderValue = -1;
+  thrValue = -1;
   activeEntity.reset({
     lat: apt.spawnLat, lon: apt.spawnLon,
     yawRad: Units.degToRad((180 - apt.heading + 360) % 360),
@@ -413,27 +411,22 @@ function resetPlane() {
 
 function spawnApproach() {
   const plane = activeEntity; if (!plane) return;
-  const apt    = AIRPORTS[currentAirport];
+  const apt = AIRPORTS[currentAirport];
   const yawRad = Units.degToRad((180 - apt.heading + 360) % 360);
-  const bearingBack = (apt.heading + 180) % 360;
   const D = 6000;
-  const dEast  = D * Math.sin(Units.degToRad(bearingBack));
-  const dNorth = D * Math.cos(Units.degToRad(bearingBack));
-  const p = offsetGeo(apt.spawnLat, apt.spawnLon, dEast, dNorth);
+  const bearBack = (apt.heading + 180) % 360;
+  const p = offsetGeo(apt.spawnLat, apt.spawnLon,
+    D * Math.sin(Units.degToRad(bearBack)),
+    D * Math.cos(Units.degToRad(bearBack)));
   const groundH = terrainHeightBest(p.lat, p.lon);
-  // Ustaw slider na 55%
-  thrSliderValue = 0.55;
+  thrValue = 0.55;
   plane.reset({
-    lat: p.lat, lon: p.lon,
-    altM: groundH + 300,
+    lat: p.lat, lon: p.lon, altM: groundH + 300,
     yawRad, pitchRad: 0.02,
     velX: Math.sin(yawRad) * 70, velY: -2, velZ: Math.cos(yawRad) * 70,
     throttle: 0.55, flaps: 2, gearDown: true, onGround: false,
   });
-  prefetchDEM(p.lat, p.lon, 2, 17);
-  prefetchDEM(p.lat, p.lon, 3, 15);
-  prefetchDEM(p.lat, p.lon, 4, 13);
-  prefetchDEM(p.lat, p.lon, 5, 11);
+  for (const [r, z] of [[2,17],[3,15],[4,13],[5,11]]) prefetchDEM(p.lat, p.lon, r, z);
 }
 
 function selectAirport(code) {
@@ -442,29 +435,47 @@ function selectAirport(code) {
   const apt = AIRPORTS[code];
   refLat = apt.refLat; refLon = apt.refLon;
   document.querySelectorAll('.airport-btn').forEach(b => b.classList.remove('active'));
-  document.getElementById('btn-airport-' + code.toLowerCase()).classList.add('active');
+  document.querySelectorAll(`[id="btn-airport-${code.toLowerCase()}"]`).forEach(b => b.classList.add('active'));
   const lt = document.getElementById('loading-text');
   if (lt) lt.textContent = `ŁADOWANIE TERENU ${code} · ${apt.name.toUpperCase()}`;
-  thrSliderValue = -1;
+  thrValue = -1;
+  // Zamknij picker
+  aptPickerOpen = false;
+  const pk = document.getElementById('apt-picker');
+  if (pk) pk.style.display = 'none';
+  document.getElementById('mb-apt')?.classList.remove('active');
+
   if (activeEntity) {
     activeEntity.reset({ lat: apt.spawnLat, lon: apt.spawnLon, yawRad: Units.degToRad((180 - apt.heading + 360) % 360) });
     orb.lat = apt.spawnLat; orb.lon = apt.spawnLon;
-    prefetchDEM(apt.spawnLat, apt.spawnLon, 2, 17);
-    prefetchDEM(apt.spawnLat, apt.spawnLon, 3, 15);
-    prefetchDEM(apt.spawnLat, apt.spawnLon, 4, 13);
-    prefetchDEM(apt.spawnLat, apt.spawnLon, 5, 11);
+    for (const [r, z] of [[2,17],[3,15],[4,13],[5,11]]) prefetchDEM(apt.spawnLat, apt.spawnLon, r, z);
   }
 }
 
-document.getElementById('btn-airport-epwr').addEventListener('click', () => selectAirport('EPWR'));
-document.getElementById('btn-airport-lowi').addEventListener('click', () => selectAirport('LOWI'));
-document.getElementById('btn-reset').addEventListener('click', resetPlane);
-document.getElementById('btn-approach').addEventListener('click', spawnApproach);
-document.getElementById('btn-camera').addEventListener('click', cycleCameraMode);
-document.getElementById('btn-orbit-free').addEventListener('click', () => {
+// ── Guziki desktop (controls panel) ─────────────────────────────────────────
+document.getElementById('btn-airport-epwr')?.addEventListener('click', () => selectAirport('EPWR'));
+document.getElementById('btn-airport-lowi')?.addEventListener('click', () => selectAirport('LOWI'));
+document.getElementById('btn-reset')?.addEventListener('click', resetPlane);
+document.getElementById('btn-approach')?.addEventListener('click', spawnApproach);
+document.getElementById('btn-camera')?.addEventListener('click', cycleCameraMode);
+document.getElementById('btn-orbit-free')?.addEventListener('click', () => {
   if (activeEntity) { orb.lat = activeEntity.lat; orb.lon = activeEntity.lon; orb.y = activeEntity.worldPos.y; }
   orb.dist = 8000; orb.pitch = 40; orb.free = true;
   setCameraMode(CameraMode.ORBIT);
+});
+
+// Airport picker - duplikaty dla mobile
+document.getElementById('apt-close')?.addEventListener('click', () => {
+  aptPickerOpen = false;
+  const el = document.getElementById('apt-picker'); if (el) el.style.display = 'none';
+  document.getElementById('mb-apt')?.classList.remove('active');
+});
+// Listener na guzikach w apt-picker (moga byc duplikaty id - querySelectorAll)
+document.querySelectorAll('#apt-picker .airport-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const code = btn.id === 'btn-airport-epwr' ? 'EPWR' : 'LOWI';
+    selectAirport(code);
+  });
 });
 
 // ── Emisja spalin ─────────────────────────────────────────────────────────────
