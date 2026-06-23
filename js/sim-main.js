@@ -76,6 +76,17 @@ const loadInterval = setInterval(() => {
   setTimeout(() => {
     document.getElementById('loading').style.display = 'none';
     document.getElementById('hud').style.display = 'block';
+
+    // Wymusz pokazanie mobile UI niezaleznie od matchMedia
+    // (niektorе przegladarki mobilne potrzebuja tego po renderze DOM)
+    if ('ontouchstart' in window || navigator.maxTouchPoints > 0) {
+      const show = (id, disp) => { const e = document.getElementById(id); if (e) e.style.display = disp; };
+      show('fly-joy-wrap', 'flex');
+      show('thr-wrap',     'flex');
+      show('mob-bar',      'flex');
+      show('orbit-joy-wrap', 'none');
+      show('orbit-zoom',     'none');
+    }
     setInterval(() => {
       if (activeEntity) {
         const la = activeEntity.lat, lo = activeEntity.lon;
