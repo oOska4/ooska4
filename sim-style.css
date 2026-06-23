@@ -366,8 +366,13 @@ canvas { display: block; }
   /* Ukryj desktop throttle display */
   #throttle-display { display: none; }
 
-  /* Pokaż mobilne elementy */
-  #mob-bar   { display: flex; }
+  /* Pokaż mobilne elementy zawsze przy starcie */
+  #fly-joy-wrap { display: flex !important; }
+  #thr-wrap     { display: flex !important; }
+  #mob-bar      { display: flex !important; }
+  /* Orbit joy i zoom - ukryte (zbedne) */
+  #orbit-joy-wrap { display: none !important; }
+  #orbit-zoom     { display: none !important; }
 }
 
 /* Bardzo małe ekrany */
