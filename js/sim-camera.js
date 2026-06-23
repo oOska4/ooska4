@@ -125,29 +125,22 @@ function _onCamModeChange() {
 }
 
 function updateCameraHUD() {
-  // Odznaka trybu kamery
   const badge = document.getElementById('hud-cam-badge');
   if (badge) badge.textContent = camMode;
 
-  if (!matchMedia('(pointer:coarse)').matches) return; // desktop — nic do pokazania/ukrycia
+  if (!matchMedia('(pointer:coarse)').matches) return;
 
-  const isOrbit = camMode === CameraMode.ORBIT;
-
-  // ORBIT: joystick mapy + zoom
-  const oj = document.getElementById('orbit-joy-wrap');
-  const oz = document.getElementById('orbit-zoom');
-  if (oj) oj.style.display = isOrbit ? 'flex' : 'none';
-  if (oz) oz.style.display = isOrbit ? 'flex' : 'none';
-
-  // LOT: joystick lotu + slider gazu + pasek guzików
+  // Na mobile: joystick lotu, slider i pasek guzikow ZAWSZE widoczne
   const fj  = document.getElementById('fly-joy-wrap');
   const thr = document.getElementById('thr-wrap');
   const bar = document.getElementById('mob-bar');
-  if (fj)  fj.style.display  = isOrbit ? 'none' : 'flex';
-  if (thr) thr.style.display = isOrbit ? 'none' : 'flex';
-  if (bar) bar.style.display = 'flex'; // pasek zawsze widoczny w locie
+  if (fj)  fj.style.display  = 'flex';
+  if (thr) thr.style.display = 'flex';
+  if (bar) bar.style.display = 'flex';
 
-  // PFD chowamy w orbit (jest orbit-panel)
-  const pfd = document.getElementById('pfd');
-  if (pfd) pfd.style.display = isOrbit ? 'none' : '';
+  // Orbit-joy i zoom — ukryte (zbedne)
+  const oj = document.getElementById('orbit-joy-wrap');
+  const oz = document.getElementById('orbit-zoom');
+  if (oj) oj.style.display = 'none';
+  if (oz) oz.style.display = 'none';
 }
