@@ -128,7 +128,7 @@ function updateCameraHUD() {
   const badge = document.getElementById('hud-cam-badge');
   if (badge) badge.textContent = camMode;
 
-  if (!matchMedia('(pointer:coarse)').matches) return;
+  if (!document.body.classList.contains('is-touch')) return;
 
   // Na mobile: joystick lotu, slider i pasek guzikow ZAWSZE widoczne
   const fj  = document.getElementById('fly-joy-wrap');
