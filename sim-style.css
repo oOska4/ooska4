@@ -290,3 +290,31 @@ body.is-touch .nd-info .pl { font-size: 7px; }
   #fly-joy-base { width: 96px; height: 96px; }
   #fly-joy-knob { width: 38px; height: 38px; }
 }
+
+/* ── Menu popup (mobile) ──────────────────────────────────────── */
+#mob-menu-popup {
+  display: none;
+  position: fixed; bottom: 116px; left: 50%; transform: translateX(-50%);
+  z-index: 60; pointer-events: all;
+  background: rgba(4,12,28,0.97); border: 1px solid #2a5a8c;
+  border-radius: 12px; padding: 14px;
+  flex-direction: column; gap: 8px; min-width: 280px;
+}
+body.is-touch #mob-menu-popup.open { display: flex; }
+.popup-title {
+  font-size: 9px; letter-spacing: 2px; color: #3a7aaa;
+  text-align: center; font-family: 'Courier New', monospace;
+}
+.popup-divider { height: 1px; background: #1a3a5c; }
+.popup-row {
+  display: flex; gap: 8px;
+}
+.popup-row button, #mpop-close {
+  flex: 1; padding: 10px 8px;
+  background: #0e1e35; border: 1px solid #1a3a5c; border-radius: 8px;
+  color: #c8e8ff; font-size: 11px; font-family: 'Courier New', monospace;
+  cursor: pointer; text-align: center;
+}
+.popup-row button:active, #mpop-close:active { background: #1a3050; }
+.popup-row .airport-btn.active { background: #1a3a5c; border-color: #3a8abf; color: #fff; }
+#mpop-close { color: #667788; font-size: 10px; }
