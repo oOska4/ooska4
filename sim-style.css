@@ -41,17 +41,17 @@ canvas { display: block; }
   border-bottom: 1px solid #1a3a5c;
 }
 
-/* ── Statusbar (góra lewa) ────────────────────────────────────── */
+/* ── Statusbar ────────────────────────────────────────────────── */
 #statusbar { top: 8px; left: 8px; padding: 0; min-width: 155px; pointer-events: none; }
-.sb-row  { font-size: 8px; line-height: 1.55; padding: 0 8px; color: #c8e8ff; }
+.sb-row   { font-size: 8px; line-height: 1.55; padding: 0 8px; color: #c8e8ff; }
 .sb-row b { color: #fff; }
 .sb-row.dim { color: #446688; }
-.phase   { font-size: 10px; font-weight: bold; letter-spacing: 2px; color: #44ff88; padding: 4px 8px 2px; }
+.phase    { font-size: 10px; font-weight: bold; letter-spacing: 2px; color: #44ff88; padding: 4px 8px 2px; }
 @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.15} }
 .warn-blink { animation: blink .5s infinite; font-size: 9px; font-weight: bold; color: #ff3333; padding: 2px 8px; }
 .warn-blink.warn-orange { color: #ff8800; }
 
-/* ── Controls panel (góra prawa, tylko desktop) ───────────────── */
+/* ── Controls panel (desktop, góra prawa) ─────────────────────── */
 #controls { top: 8px; right: 8px; padding: 0; min-width: 175px; max-width: 190px; pointer-events: all; }
 .hint-row { font-size: 8px; line-height: 1.7; color: #4a8fbf; padding: 0 8px; }
 .hint-row .k { color: #c8e8ff; background: #1a3a5c; border-radius: 2px; padding: 0 3px; font-size: 7px; }
@@ -69,12 +69,12 @@ canvas { display: block; }
 .airport-btn.active { background: #1a3a5c; border-color: #3a8abf; color: #fff; }
 .dim { color: #446688; }
 
-/* ── Speed tape (lewa środek) ─────────────────────────────────── */
+/* ── Speed / Alt tapes ────────────────────────────────────────── */
 #speedtape { top: 50%; left: 8px; transform: translateY(-50%); width: 50px; height: 160px; overflow: hidden; padding: 0; }
 #alt-tape  { top: 50%; right: 8px; transform: translateY(-50%); width: 50px; height: 160px; overflow: hidden; padding: 0; }
 .tape-wrap canvas { display: block; width: 100%; height: 100%; }
 
-/* ── PFD (dół lewa) ───────────────────────────────────────────── */
+/* ── PFD ──────────────────────────────────────────────────────── */
 #pfd { bottom: 12px; left: 64px; padding: 0; width: 160px; }
 #attitude-canvas { display: block; width: 110px; height: 110px; margin: 6px auto 4px; border-radius: 50%; border: 1px solid #1a4a7a; }
 .pfd-grid { display: grid; grid-template-columns: auto 1fr; padding: 2px 8px 6px; gap: 1px 6px; }
@@ -84,67 +84,78 @@ canvas { display: block; }
 .pv.warn   { color: #ffaa00; }
 .pv.danger { color: #ff4444; }
 
-/* ── ND (dół prawa) ───────────────────────────────────────────── */
+/* ── ND ───────────────────────────────────────────────────────── */
 #nd { bottom: 12px; right: 64px; padding: 0; width: 160px; text-align: center; }
 #nd .panel-title span { font-size: 13px; font-weight: bold; color: #c8e8ff; }
 #compass-canvas { display: block; margin: 4px auto; }
 .nd-info { display: grid; grid-template-columns: auto 1fr; padding: 2px 8px 6px; gap: 1px 6px; }
 
-/* ── Throttle desktop (dół środek) ───────────────────────────── */
+/* ── Throttle desktop ─────────────────────────────────────────── */
 #throttle-display { bottom: 12px; left: 50%; transform: translateX(-50%); padding: 0; width: 100px; text-align: center; }
 #throttle-bar-bg  { height: 5px; background: #0a1522; overflow: hidden; margin: 4px 8px; border: 1px solid #1a3a5c; }
 #throttle-bar     { height: 100%; background: linear-gradient(90deg,#0a5a22,#44ff88); width: 0%; transition: width .1s; }
 #throttle-pct     { font-size: 14px; font-weight: bold; color: #44ff88; padding: 2px 0 6px; }
 
 /* ═══════════════════════════════════════════════════════════════
-   MOBILE CONTROLS — domyślnie ukryte, JS pokazuje po załadowaniu
+   MOBILE CONTROLS
+   Wszystkie ukryte domyślnie — JS pokazuje je TYLKO gdy
+   wykryje prawdziwy ekran dotykowy (body.is-touch)
    ═══════════════════════════════════════════════════════════════ */
 #fly-joy-wrap, #thr-wrap, #mob-bar, #apt-picker,
-#orbit-joy-wrap, #orbit-zoom { display: none; }
+#orbit-joy-wrap, #orbit-zoom { display: none !important; }
+
+/* Klasa .is-touch dodawana przez JS tylko na prawdziwym mobile */
+body.is-touch #fly-joy-wrap { display: flex !important; }
+body.is-touch #thr-wrap     { display: flex !important; }
+body.is-touch #mob-bar      { display: flex !important; }
+
+/* Na mobile ukryj desktop UI */
+body.is-touch #controls          { display: none !important; }
+body.is-touch #throttle-display  { display: none !important; }
 
 /* ── Joystick lotu (lewy dół) ─────────────────────────────────── */
 #fly-joy-wrap {
-  position: fixed; bottom: 76px; left: 10px;
+  position: fixed; bottom: 72px; left: 10px;
   z-index: 50; pointer-events: all;
   flex-direction: column; align-items: center; gap: 4px;
 }
-.joy-label { font-size: 7px; letter-spacing: 2px; color: rgba(80,160,240,0.6); }
+.joy-label { font-size: 7px; letter-spacing: 2px; color: rgba(80,160,240,0.55); }
 #fly-joy-base {
-  width: 120px; height: 120px; border-radius: 50%;
-  background: rgba(10,40,80,0.45);
-  border: 2px solid rgba(60,140,220,0.35);
+  width: 110px; height: 110px; border-radius: 50%;
+  background: rgba(10,40,80,0.40);
+  border: 2px solid rgba(60,140,220,0.30);
   position: relative;
 }
 #fly-joy-label-u, #fly-joy-label-d,
 #fly-joy-label-l, #fly-joy-label-r {
-  position: absolute; font-size: 9px;
-  color: rgba(150,200,255,0.30); pointer-events: none;
+  position: absolute; font-size: 8px;
+  color: rgba(150,200,255,0.28); pointer-events: none;
 }
-#fly-joy-label-u { top: 5px;    left: 50%; transform: translateX(-50%); }
-#fly-joy-label-d { bottom: 5px; left: 50%; transform: translateX(-50%); }
-#fly-joy-label-l { left: 5px;   top: 50%;  transform: translateY(-50%); }
-#fly-joy-label-r { right: 5px;  top: 50%;  transform: translateY(-50%); }
+#fly-joy-label-u { top: 4px;    left: 50%; transform: translateX(-50%); }
+#fly-joy-label-d { bottom: 4px; left: 50%; transform: translateX(-50%); }
+#fly-joy-label-l { left: 4px;   top: 50%;  transform: translateY(-50%); }
+#fly-joy-label-r { right: 4px;  top: 50%;  transform: translateY(-50%); }
 #fly-joy-knob {
-  width: 48px; height: 48px; border-radius: 50%;
-  background: radial-gradient(circle at 35% 35%, rgba(120,200,255,0.80), rgba(30,90,200,0.65));
-  border: 2px solid rgba(140,210,255,0.90);
+  width: 44px; height: 44px; border-radius: 50%;
+  background: radial-gradient(circle at 35% 35%, rgba(120,200,255,0.78), rgba(30,90,200,0.62));
+  border: 2px solid rgba(140,210,255,0.88);
   position: absolute; top: 50%; left: 50%;
   transform: translate(-50%,-50%);
-  box-shadow: 0 0 14px rgba(60,160,255,0.50);
+  box-shadow: 0 0 12px rgba(60,160,255,0.45);
 }
 
 /* ── Slider gazu (prawy dół) ──────────────────────────────────── */
 #thr-wrap {
-  position: fixed; bottom: 76px; right: 10px;
+  position: fixed; bottom: 72px; right: 10px;
   z-index: 50; pointer-events: all;
   flex-direction: column; align-items: center; gap: 4px;
 }
-.thr-title { font-size: 7px; letter-spacing: 2px; color: rgba(80,160,240,0.6); }
+.thr-title { font-size: 7px; letter-spacing: 2px; color: rgba(80,160,240,0.55); }
 #thr-track {
-  width: 56px; height: 160px;
+  width: 52px; height: 140px;
   background: rgba(4,14,28,0.80);
-  border: 1px solid #1a3a5c;
-  border-radius: 28px;
+  border: 1px solid #1c3a5a;
+  border-radius: 26px;
   position: relative;
   touch-action: none;
   overflow: hidden;
@@ -152,32 +163,32 @@ canvas { display: block; }
 #thr-fill {
   position: absolute; bottom: 0; left: 0; right: 0; height: 0%;
   background: linear-gradient(to top, #074a1c, #22cc55);
-  border-radius: 0 0 28px 28px;
+  border-radius: 0 0 26px 26px;
   pointer-events: none;
 }
 #thr-thumb {
-  position: absolute; left: 5px; right: 5px; height: 24px;
-  bottom: -12px;
+  position: absolute; left: 5px; right: 5px; height: 22px;
+  bottom: -11px;
   background: rgba(50,200,90,0.92);
   border: 2px solid #44ff88;
-  border-radius: 12px;
-  box-shadow: 0 0 12px rgba(68,255,120,0.60);
+  border-radius: 11px;
+  box-shadow: 0 0 10px rgba(68,255,120,0.55);
   pointer-events: none;
 }
 #thr-pct {
   position: absolute; top: 50%; left: 0; right: 0;
   transform: translateY(-50%);
-  text-align: center; font-size: 13px; font-weight: bold;
+  text-align: center; font-size: 14px; font-weight: bold;
   color: rgba(200,255,210,0.95);
   pointer-events: none;
-  text-shadow: 0 0 6px #000, 0 0 12px #000;
+  text-shadow: 0 0 8px #000, 0 0 16px #000;
 }
-/* Ruder pod sliderem */
+/* Ruder Q/E pod sliderem */
 #rud-row { display: flex; gap: 5px; }
 .rud-btn {
-  width: 52px; height: 40px; border-radius: 8px;
+  width: 50px; height: 38px; border-radius: 8px;
   background: rgba(8,24,50,0.85); border: 1px solid #1a4a7a;
-  color: #c8e8ff; font-size: 16px; font-family: inherit;
+  color: #c8e8ff; font-size: 13px; font-family: inherit;
   display: flex; align-items: center; justify-content: center;
   pointer-events: all;
 }
@@ -185,12 +196,12 @@ canvas { display: block; }
 
 /* ── Pasek guzików (dół środek) ───────────────────────────────── */
 #mob-bar {
-  position: fixed; bottom: 8px; left: 50%; transform: translateX(-50%);
+  position: fixed; bottom: 6px; left: 50%; transform: translateX(-50%);
   z-index: 50; pointer-events: all;
   flex-direction: row; gap: 5px; align-items: center;
 }
 .mb {
-  width: 54px; height: 50px; border-radius: 10px;
+  width: 56px; height: 52px; border-radius: 10px;
   background: rgba(6,18,40,0.88); border: 1px solid #1a3a5c;
   color: #a0c8e8;
   display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -203,7 +214,7 @@ canvas { display: block; }
 
 /* ── Airport picker ───────────────────────────────────────────── */
 #apt-picker {
-  position: fixed; bottom: 68px; left: 50%; transform: translateX(-50%);
+  position: fixed; bottom: 66px; left: 50%; transform: translateX(-50%);
   z-index: 60; pointer-events: all;
   background: rgba(4,12,28,0.96); border: 1px solid #2a5a8c;
   border-radius: 10px; padding: 12px;
@@ -221,66 +232,57 @@ canvas { display: block; }
   border-radius: 6px; color: #668; font-size: 10px; font-family: inherit;
   cursor: pointer; text-align: center;
 }
-
-/* Orbit joystick + zoom — ukryte (nieużywane) */
+/* Orbit joy/zoom — zawsze ukryte */
 #orbit-joy-wrap, #orbit-zoom { display: none !important; }
 
 /* ═══════════════════════════════════════════════════════════════
-   RESPONSIVE — pointer:coarse (mobile)
+   Mobile layout — gdy body.is-touch
    ═══════════════════════════════════════════════════════════════ */
-@media (pointer: coarse) {
+body.is-touch #statusbar { top: 5px; left: 5px; max-width: 170px; }
+body.is-touch .sb-row    { font-size: 7px; line-height: 1.45; }
+body.is-touch .phase     { font-size: 8px; padding: 3px 6px 1px; }
 
-  .kb-only  { display: none !important; }
-  #controls { display: none !important; }
-  #throttle-display { display: none !important; }
-
-  /* Statusbar — mały, góra lewa, nie zasłania niczego ważnego */
-  #statusbar { top: 5px; left: 5px; max-width: 175px; }
-  .sb-row    { font-size: 7px; line-height: 1.5; }
-  .phase     { font-size: 8px; padding: 3px 6px 1px; }
-
-  /* Speed tapes — wąskie, wzdłuż krawędzi */
-  #speedtape { left: 4px;  width: 38px; height: 120px; top: 42%; }
-  #alt-tape  { right: 4px; width: 38px; height: 120px; top: 42%; }
-  .tape-wrap canvas { width: 38px; height: 120px; }
-
-  /* PFD — lewy dół, nad paskiem guzików, nie zasłania canvasu */
-  #pfd {
-    left: 50%; bottom: 68px;
-    transform: translateX(-50%);
-    width: 140px;
-  }
-  #attitude-canvas { width: 80px; height: 80px; margin: 4px auto 3px; }
-  .pfd-grid  { padding: 1px 6px 4px; gap: 0 4px; }
-  .pl        { font-size: 7px; }
-  .pv        { font-size: 9px; }
-
-  /* ND — prawy górny róg, kompaktowy */
-  #nd {
-    top: 5px; right: 5px; bottom: auto;
-    width: 110px; transform: none;
-  }
-  #compass-canvas { width: 86px; height: 86px; }
-  #nd .panel-title     { font-size: 7px; padding: 3px 6px; }
-  #nd .panel-title span { font-size: 10px; }
-  .nd-info   { padding: 1px 6px 3px; }
-  .nd-info .pv { font-size: 9px; }
-  .nd-info .pl { font-size: 7px; }
-
-  /* Pokaż mobile controls */
-  #fly-joy-wrap { display: flex !important; }
-  #thr-wrap     { display: flex !important; }
-  #mob-bar      { display: flex !important; }
+/* Tapes: wąskie, środek ekranu (nie nachodzą na joystick/slider) */
+body.is-touch #speedtape {
+  left: 4px; width: 36px; height: 110px;
+  top: 38%; transform: translateY(-50%);
 }
+body.is-touch #alt-tape {
+  right: 4px; width: 36px; height: 110px;
+  top: 38%; transform: translateY(-50%);
+}
+body.is-touch .tape-wrap canvas { width: 36px; height: 110px; }
 
-/* Telefony wąskie (< 400px) */
-@media (pointer: coarse) and (max-width: 400px) {
-  #fly-joy-base { width: 105px; height: 105px; }
-  #fly-joy-knob { width: 42px;  height: 42px;  }
-  #thr-track    { width: 50px;  height: 140px; }
-  .mb           { width: 46px;  height: 46px;  }
-  .mb-i         { font-size: 16px; }
-  #mob-bar      { gap: 4px; }
-  /* PFD zbyt szeroki — ukryj na wąskich, dane są w statusbar */
-  #pfd          { display: none !important; }
+/* PFD — lewy dół, nad paskiem, mały */
+body.is-touch #pfd {
+  left: 10px; bottom: 66px;
+  transform: none;
+  width: 130px;
+}
+body.is-touch #attitude-canvas { width: 74px; height: 74px; margin: 3px auto 2px; }
+body.is-touch .pfd-grid { padding: 1px 6px 4px; gap: 0 4px; }
+body.is-touch .pl { font-size: 7px; }
+body.is-touch .pv { font-size: 9px; }
+
+/* ND — prawy górny, kompaktowy */
+body.is-touch #nd {
+  top: 5px; right: 5px; bottom: auto;
+  width: 108px; transform: none;
+}
+body.is-touch #compass-canvas { width: 84px; height: 84px; }
+body.is-touch #nd .panel-title     { font-size: 7px; padding: 3px 6px; }
+body.is-touch #nd .panel-title span { font-size: 10px; }
+body.is-touch .nd-info { padding: 1px 6px 3px; }
+body.is-touch .nd-info .pv { font-size: 9px; }
+body.is-touch .nd-info .pl { font-size: 7px; }
+
+/* Bardzo wąskie ekrany — ukryj PFD (jest statusbar) */
+@media (max-width: 390px) {
+  body.is-touch #pfd { display: none !important; }
+  .mb { width: 48px; height: 46px; }
+  .mb-i { font-size: 16px; }
+  #mob-bar { gap: 4px; }
+  #thr-track { width: 46px; height: 120px; }
+  #fly-joy-base { width: 96px; height: 96px; }
+  #fly-joy-knob { width: 38px; height: 38px; }
 }
