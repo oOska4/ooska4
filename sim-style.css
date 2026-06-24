@@ -115,7 +115,7 @@ body.is-touch #throttle-display  { display: none !important; }
 
 /* ── Joystick lotu (lewy dół) ─────────────────────────────────── */
 #fly-joy-wrap {
-  position: fixed; bottom: 72px; left: 10px;
+  position: fixed; bottom: 116px; left: 10px;
   z-index: 50; pointer-events: all;
   flex-direction: column; align-items: center; gap: 4px;
 }
@@ -146,7 +146,7 @@ body.is-touch #throttle-display  { display: none !important; }
 
 /* ── Slider gazu (prawy dół) ──────────────────────────────────── */
 #thr-wrap {
-  position: fixed; bottom: 72px; right: 10px;
+  position: fixed; bottom: 116px; right: 10px;
   z-index: 50; pointer-events: all;
   flex-direction: column; align-items: center; gap: 4px;
 }
@@ -194,27 +194,30 @@ body.is-touch #throttle-display  { display: none !important; }
 }
 .rud-btn:active { background: rgba(50,120,200,0.45); }
 
-/* ── Pasek guzików (dół środek) ───────────────────────────────── */
+/* ── Pasek guzików (dół środek, 2 rzędy × 4) ─────────────────── */
 #mob-bar {
   position: fixed; bottom: 6px; left: 50%; transform: translateX(-50%);
   z-index: 50; pointer-events: all;
-  flex-direction: row; gap: 5px; align-items: center;
+  flex-direction: column; gap: 4px; align-items: center;
+}
+.mob-row {
+  display: flex; flex-direction: row; gap: 5px; align-items: center;
 }
 .mb {
-  width: 56px; height: 52px; border-radius: 10px;
-  background: rgba(6,18,40,0.88); border: 1px solid #1a3a5c;
+  width: 72px; height: 46px; border-radius: 10px;
+  background: rgba(6,18,40,0.90); border: 1px solid #1a3a5c;
   color: #a0c8e8;
   display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: 3px; cursor: pointer;
+  gap: 2px; cursor: pointer;
 }
-.mb-i { font-size: 18px; line-height: 1; }
+.mb-i { font-size: 17px; line-height: 1; }
 .mb-t { font-size: 7px; letter-spacing: .5px; }
-.mb.active  { background: rgba(15,70,35,0.80); border-color: #44ff88; color: #44ff88; }
-.mb.pressed { background: rgba(30,70,160,0.70); border-color: #44aaff; color: #44aaff; }
+.mb.active  { background: rgba(15,70,35,0.85); border-color: #44ff88; color: #44ff88; }
+.mb.pressed { background: rgba(30,70,160,0.75); border-color: #44aaff; color: #44aaff; }
 
 /* ── Airport picker ───────────────────────────────────────────── */
 #apt-picker {
-  position: fixed; bottom: 66px; left: 50%; transform: translateX(-50%);
+  position: fixed; bottom: 116px; left: 50%; transform: translateX(-50%);
   z-index: 60; pointer-events: all;
   background: rgba(4,12,28,0.96); border: 1px solid #2a5a8c;
   border-radius: 10px; padding: 12px;
@@ -255,7 +258,7 @@ body.is-touch .tape-wrap canvas { width: 36px; height: 110px; }
 
 /* PFD — lewy dół, nad paskiem, mały */
 body.is-touch #pfd {
-  left: 10px; bottom: 66px;
+  left: 10px; bottom: 116px;
   transform: none;
   width: 130px;
 }
@@ -279,9 +282,10 @@ body.is-touch .nd-info .pl { font-size: 7px; }
 /* Bardzo wąskie ekrany — ukryj PFD (jest statusbar) */
 @media (max-width: 390px) {
   body.is-touch #pfd { display: none !important; }
-  .mb { width: 48px; height: 46px; }
-  .mb-i { font-size: 16px; }
-  #mob-bar { gap: 4px; }
+  .mb { width: 62px; height: 42px; }
+  .mb-i { font-size: 15px; }
+  .mob-row { gap: 4px; }
+  #mob-bar { gap: 3px; }
   #thr-track { width: 46px; height: 120px; }
   #fly-joy-base { width: 96px; height: 96px; }
   #fly-joy-knob { width: 38px; height: 38px; }
