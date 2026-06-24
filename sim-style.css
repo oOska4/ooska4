@@ -1,387 +1,286 @@
 /* ═══════════════════════════════════════════════════════════════
-   sim-style.css  —  A321 Flight Sim
-   Desktop + Mobile (pointer:coarse)
+   sim-style.css  —  A321 Flight Sim  (desktop + mobile)
    ═══════════════════════════════════════════════════════════════ */
 
-/* ── Reset ──────────────────────────────────────────────────── */
 *, *::before, *::after {
   margin: 0; padding: 0; box-sizing: border-box;
   -webkit-tap-highlight-color: transparent;
   -webkit-touch-callout: none;
 }
 body {
-  background: #060a12;
-  overflow: hidden;
+  background: #060a12; overflow: hidden;
   font-family: 'Courier New', monospace;
   touch-action: none;
-  user-select: none;
-  -webkit-user-select: none;
+  user-select: none; -webkit-user-select: none;
 }
 canvas { display: block; }
 #c { width: 100vw; height: 100vh; }
 #hud { position: fixed; inset: 0; pointer-events: none; z-index: 10; }
 
-/* ── Loading ─────────────────────────────────────────────────── */
+/* ── Loading ──────────────────────────────────────────────────── */
 #loading {
   position: fixed; inset: 0; background: #050810; z-index: 200;
-  display: flex; flex-direction: column; align-items: center; justify-content: center;
-  color: #c8e8ff;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center; color: #c8e8ff;
 }
-#loading h1  { font-size: 32px; letter-spacing: 8px; color: #fff; margin-bottom: 6px; }
-#loading p   { font-size: 11px; letter-spacing: 3px; color: #4a8fbf; margin-bottom: 36px; text-align: center; line-height: 1.8; }
+#loading h1 { font-size: 32px; letter-spacing: 8px; color: #fff; margin-bottom: 6px; }
+#loading p  { font-size: 11px; letter-spacing: 3px; color: #4a8fbf; margin-bottom: 36px; text-align: center; line-height: 1.8; }
 .load-bar-bg { width: 280px; height: 3px; background: #1a2a3a; border-radius: 2px; }
-.load-bar    { height: 100%; background: linear-gradient(90deg, #1a7aff, #44ccff); border-radius: 2px; width: 0%; transition: width .3s; }
+.load-bar    { height: 100%; background: linear-gradient(90deg,#1a7aff,#44ccff); border-radius: 2px; width: 0%; transition: width .3s; }
 
-/* ── Shared panel ────────────────────────────────────────────── */
+/* ── Panel bazowy ─────────────────────────────────────────────── */
 .panel {
   position: absolute;
-  background: rgba(4, 9, 18, 0.90);
-  border: 1px solid #1a3a5c;
-  border-radius: 6px;
+  background: rgba(4,9,18,0.88);
+  border: 1px solid #1a3a5c; border-radius: 6px;
   color: #c8e8ff;
-  backdrop-filter: blur(2px);
-  -webkit-backdrop-filter: blur(2px);
 }
 .panel-title {
   font-size: 8px; letter-spacing: 2px; color: #3a7aaa;
-  text-transform: uppercase; padding: 5px 8px 4px;
+  text-transform: uppercase; padding: 4px 8px;
   border-bottom: 1px solid #1a3a5c;
 }
 
-/* ── Status bar (top-left) ───────────────────────────────────── */
-#statusbar {
-  top: 8px; left: 8px;
-  padding: 0;
-  min-width: 160px;
-  pointer-events: none;
-}
-#statusbar .panel-title { padding: 4px 8px; }
-.sb-row { font-size: 8px; line-height: 1.6; padding: 0 8px; color: #c8e8ff; }
+/* ── Statusbar (góra lewa) ────────────────────────────────────── */
+#statusbar { top: 8px; left: 8px; padding: 0; min-width: 155px; pointer-events: none; }
+.sb-row  { font-size: 8px; line-height: 1.55; padding: 0 8px; color: #c8e8ff; }
 .sb-row b { color: #fff; }
 .sb-row.dim { color: #446688; }
-.phase { font-size: 10px; font-weight: bold; letter-spacing: 2px; color: #44ff88; padding: 4px 8px 2px; }
-@keyframes blink { 0%,100% { opacity:1 } 50% { opacity:.15 } }
-.warn-blink       { animation: blink .5s infinite; font-size: 9px; font-weight: bold; color: #ff3333; padding: 2px 8px; letter-spacing: 1px; }
+.phase   { font-size: 10px; font-weight: bold; letter-spacing: 2px; color: #44ff88; padding: 4px 8px 2px; }
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:.15} }
+.warn-blink { animation: blink .5s infinite; font-size: 9px; font-weight: bold; color: #ff3333; padding: 2px 8px; }
 .warn-blink.warn-orange { color: #ff8800; }
 
-/* ── Controls panel (top-right, desktop) ─────────────────────── */
-#controls {
-  top: 8px; right: 8px;
-  padding: 0;
-  min-width: 175px; max-width: 190px;
-  pointer-events: all;
-}
+/* ── Controls panel (góra prawa, tylko desktop) ───────────────── */
+#controls { top: 8px; right: 8px; padding: 0; min-width: 175px; max-width: 190px; pointer-events: all; }
 .hint-row { font-size: 8px; line-height: 1.7; color: #4a8fbf; padding: 0 8px; }
 .hint-row .k { color: #c8e8ff; background: #1a3a5c; border-radius: 2px; padding: 0 3px; font-size: 7px; }
 .hint-row b  { color: #c8e8ff; }
-.col-orange  { color: #ffaa00; }
-.col-green   { color: #44ff88; }
+.col-orange { color: #ffaa00; }
+.col-green  { color: #44ff88; }
 .ctrl-divider { height: 1px; background: #1a3a5c; margin: 4px 0; }
 .btn-row { display: flex; gap: 4px; padding: 3px 6px; }
 .btn-row button, #controls button {
-  flex: 1;
-  border: 1px solid #1a3a5c; border-radius: 4px;
+  flex: 1; border: 1px solid #1a3a5c; border-radius: 4px;
   background: #0e1e35; color: #c8e8ff;
-  padding: 5px 4px; font-size: 8px; font-family: inherit;
-  cursor: pointer; transition: background .15s;
+  padding: 5px 4px; font-size: 8px; font-family: inherit; cursor: pointer;
 }
 .btn-row button:hover, #controls button:hover { background: #1a3050; }
 .airport-btn.active { background: #1a3a5c; border-color: #3a8abf; color: #fff; }
 .dim { color: #446688; }
 
-/* ── Speed / Alt tapes (mid left/right) ──────────────────────── */
+/* ── Speed tape (lewa środek) ─────────────────────────────────── */
 #speedtape { top: 50%; left: 8px; transform: translateY(-50%); width: 50px; height: 160px; overflow: hidden; padding: 0; }
 #alt-tape  { top: 50%; right: 8px; transform: translateY(-50%); width: 50px; height: 160px; overflow: hidden; padding: 0; }
 .tape-wrap canvas { display: block; width: 100%; height: 100%; }
 
-/* ── PFD — attitude (bottom-left) ────────────────────────────── */
-#pfd {
-  bottom: 12px; left: 64px;
-  padding: 0; width: 160px;
-}
-#attitude-canvas {
-  display: block; width: 110px; height: 110px;
-  margin: 6px auto 4px; border-radius: 50%;
-  border: 1px solid #1a4a7a;
-}
-.pfd-grid {
-  display: grid; grid-template-columns: auto 1fr;
-  padding: 2px 8px 6px; gap: 1px 6px;
-}
+/* ── PFD (dół lewa) ───────────────────────────────────────────── */
+#pfd { bottom: 12px; left: 64px; padding: 0; width: 160px; }
+#attitude-canvas { display: block; width: 110px; height: 110px; margin: 6px auto 4px; border-radius: 50%; border: 1px solid #1a4a7a; }
+.pfd-grid { display: grid; grid-template-columns: auto 1fr; padding: 2px 8px 6px; gap: 1px 6px; }
 .pl { font-size: 8px; color: #3a7aaa; letter-spacing: 1px; align-self: center; }
 .pv { font-size: 11px; font-weight: bold; color: #c8e8ff; text-align: right; }
 .pv.green  { color: #44ff88; }
 .pv.warn   { color: #ffaa00; }
 .pv.danger { color: #ff4444; }
 
-/* ── ND — compass (bottom-right) ─────────────────────────────── */
-#nd {
-  bottom: 12px; right: 64px;
-  padding: 0; width: 160px; text-align: center;
-}
-#nd .panel-title { font-size: 9px; }
+/* ── ND (dół prawa) ───────────────────────────────────────────── */
+#nd { bottom: 12px; right: 64px; padding: 0; width: 160px; text-align: center; }
 #nd .panel-title span { font-size: 13px; font-weight: bold; color: #c8e8ff; }
-#compass-canvas  { display: block; margin: 4px auto; }
-.nd-info {
-  display: grid; grid-template-columns: auto 1fr;
-  padding: 2px 8px 6px; gap: 1px 6px;
-}
+#compass-canvas { display: block; margin: 4px auto; }
+.nd-info { display: grid; grid-template-columns: auto 1fr; padding: 2px 8px 6px; gap: 1px 6px; }
 
-/* ── Throttle display (desktop, bottom-center) ───────────────── */
-#throttle-display {
-  bottom: 12px; left: 50%; transform: translateX(-50%);
-  padding: 0; width: 100px; text-align: center;
-}
-#throttle-bar-bg {
-  height: 5px; background: #0a1522; border-bottom: 1px solid #1a3a5c;
-  overflow: hidden; margin: 4px 8px;
-}
-#throttle-bar {
-  height: 100%;
-  background: linear-gradient(90deg, #0a5a22, #44ff88);
-  width: 0%; transition: width .1s;
-}
-#throttle-pct { font-size: 14px; font-weight: bold; color: #44ff88; padding: 2px 0 6px; }
+/* ── Throttle desktop (dół środek) ───────────────────────────── */
+#throttle-display { bottom: 12px; left: 50%; transform: translateX(-50%); padding: 0; width: 100px; text-align: center; }
+#throttle-bar-bg  { height: 5px; background: #0a1522; overflow: hidden; margin: 4px 8px; border: 1px solid #1a3a5c; }
+#throttle-bar     { height: 100%; background: linear-gradient(90deg,#0a5a22,#44ff88); width: 0%; transition: width .1s; }
+#throttle-pct     { font-size: 14px; font-weight: bold; color: #44ff88; padding: 2px 0 6px; }
 
 /* ═══════════════════════════════════════════════════════════════
-   MOBILE CONTROLS  —  widoczne i ukrywane przez JS (display:none domyślnie)
+   MOBILE CONTROLS — domyślnie ukryte, JS pokazuje po załadowaniu
    ═══════════════════════════════════════════════════════════════ */
-
-/* Wspólne: wszystkie mobile-elementy domyślnie ukryte */
 #fly-joy-wrap, #thr-wrap, #mob-bar, #apt-picker,
 #orbit-joy-wrap, #orbit-zoom { display: none; }
 
-/* ── Joystick lotu (lewy dół) ────────────────────────────────── */
+/* ── Joystick lotu (lewy dół) ─────────────────────────────────── */
 #fly-joy-wrap {
-  position: fixed; bottom: 80px; left: 12px;
+  position: fixed; bottom: 76px; left: 10px;
   z-index: 50; pointer-events: all;
-  flex-direction: column; align-items: center; gap: 6px;
+  flex-direction: column; align-items: center; gap: 4px;
 }
-.joy-label {
-  font-size: 8px; letter-spacing: 2px; color: #3a7aaa;
-  text-align: center;
-}
+.joy-label { font-size: 7px; letter-spacing: 2px; color: rgba(80,160,240,0.6); }
 #fly-joy-base {
-  width: 130px; height: 130px; border-radius: 50%;
-  background: rgba(10, 40, 80, 0.50);
-  border: 2px solid rgba(60, 140, 220, 0.40);
+  width: 120px; height: 120px; border-radius: 50%;
+  background: rgba(10,40,80,0.45);
+  border: 2px solid rgba(60,140,220,0.35);
   position: relative;
 }
-/* etykiety kierunków */
-#fly-joy-label-u, #fly-joy-label-d, #fly-joy-label-l, #fly-joy-label-r {
-  position: absolute; font-size: 10px; color: rgba(150, 200, 255, 0.35);
-  pointer-events: none;
+#fly-joy-label-u, #fly-joy-label-d,
+#fly-joy-label-l, #fly-joy-label-r {
+  position: absolute; font-size: 9px;
+  color: rgba(150,200,255,0.30); pointer-events: none;
 }
-#fly-joy-label-u { top: 6px;  left: 50%; transform: translateX(-50%); }
-#fly-joy-label-d { bottom: 6px; left: 50%; transform: translateX(-50%); }
-#fly-joy-label-l { left: 6px;  top: 50%; transform: translateY(-50%); }
-#fly-joy-label-r { right: 6px; top: 50%; transform: translateY(-50%); }
-
+#fly-joy-label-u { top: 5px;    left: 50%; transform: translateX(-50%); }
+#fly-joy-label-d { bottom: 5px; left: 50%; transform: translateX(-50%); }
+#fly-joy-label-l { left: 5px;   top: 50%;  transform: translateY(-50%); }
+#fly-joy-label-r { right: 5px;  top: 50%;  transform: translateY(-50%); }
 #fly-joy-knob {
-  width: 54px; height: 54px; border-radius: 50%;
-  background: radial-gradient(circle at 35% 35%, rgba(120, 200, 255, 0.75), rgba(40, 100, 200, 0.60));
-  border: 2px solid rgba(140, 210, 255, 0.85);
+  width: 48px; height: 48px; border-radius: 50%;
+  background: radial-gradient(circle at 35% 35%, rgba(120,200,255,0.80), rgba(30,90,200,0.65));
+  border: 2px solid rgba(140,210,255,0.90);
   position: absolute; top: 50%; left: 50%;
-  transform: translate(-50%, -50%);
-  box-shadow: 0 0 16px rgba(60, 160, 255, 0.45), inset 0 1px 3px rgba(255,255,255,0.25);
-  transition: box-shadow .1s;
+  transform: translate(-50%,-50%);
+  box-shadow: 0 0 14px rgba(60,160,255,0.50);
 }
 
-/* ── Slider gazu (prawy dół) ─────────────────────────────────── */
+/* ── Slider gazu (prawy dół) ──────────────────────────────────── */
 #thr-wrap {
-  position: fixed; bottom: 80px; right: 12px;
+  position: fixed; bottom: 76px; right: 10px;
   z-index: 50; pointer-events: all;
-  flex-direction: column; align-items: center; gap: 5px;
+  flex-direction: column; align-items: center; gap: 4px;
 }
-.thr-title {
-  font-size: 8px; letter-spacing: 2px; color: #3a7aaa;
-}
+.thr-title { font-size: 7px; letter-spacing: 2px; color: rgba(80,160,240,0.6); }
 #thr-track {
-  width: 52px; height: 150px;
-  background: rgba(4, 14, 28, 0.85);
+  width: 56px; height: 160px;
+  background: rgba(4,14,28,0.80);
   border: 1px solid #1a3a5c;
-  border-radius: 26px;
+  border-radius: 28px;
   position: relative;
   touch-action: none;
   overflow: hidden;
 }
 #thr-fill {
   position: absolute; bottom: 0; left: 0; right: 0; height: 0%;
-  background: linear-gradient(to top, #0a5a22, #1acc55);
-  border-radius: 0 0 26px 26px;
+  background: linear-gradient(to top, #074a1c, #22cc55);
+  border-radius: 0 0 28px 28px;
   pointer-events: none;
-  transition: height .04s;
 }
 #thr-thumb {
-  position: absolute; left: 4px; right: 4px; height: 22px;
-  bottom: 0;
-  background: rgba(68, 220, 100, 0.90);
+  position: absolute; left: 5px; right: 5px; height: 24px;
+  bottom: -12px;
+  background: rgba(50,200,90,0.92);
   border: 2px solid #44ff88;
-  border-radius: 11px;
-  box-shadow: 0 0 10px rgba(68, 255, 120, 0.55);
+  border-radius: 12px;
+  box-shadow: 0 0 12px rgba(68,255,120,0.60);
   pointer-events: none;
 }
 #thr-pct {
-  position: absolute; bottom: 4px; left: 0; right: 0;
-  text-align: center; font-size: 10px; font-weight: bold;
-  color: rgba(200, 255, 220, 0.90);
+  position: absolute; top: 50%; left: 0; right: 0;
+  transform: translateY(-50%);
+  text-align: center; font-size: 13px; font-weight: bold;
+  color: rgba(200,255,210,0.95);
   pointer-events: none;
-  text-shadow: 0 1px 4px #000;
+  text-shadow: 0 0 6px #000, 0 0 12px #000;
 }
-
 /* Ruder pod sliderem */
-#rud-row {
-  display: flex; gap: 6px;
-}
+#rud-row { display: flex; gap: 5px; }
 .rud-btn {
-  width: 48px; height: 38px; border-radius: 8px;
-  background: rgba(8, 24, 50, 0.85);
-  border: 1px solid #1a4a7a;
-  color: #c8e8ff; font-size: 11px; font-family: inherit;
+  width: 52px; height: 40px; border-radius: 8px;
+  background: rgba(8,24,50,0.85); border: 1px solid #1a4a7a;
+  color: #c8e8ff; font-size: 16px; font-family: inherit;
   display: flex; align-items: center; justify-content: center;
   pointer-events: all;
 }
-.rud-btn:active { background: rgba(50, 120, 200, 0.40); }
+.rud-btn:active { background: rgba(50,120,200,0.45); }
 
-/* ── Pasek konfiguracyjny (dół środek) ───────────────────────── */
+/* ── Pasek guzików (dół środek) ───────────────────────────────── */
 #mob-bar {
-  position: fixed; bottom: 10px; left: 50%; transform: translateX(-50%);
+  position: fixed; bottom: 8px; left: 50%; transform: translateX(-50%);
   z-index: 50; pointer-events: all;
-  flex-direction: row; gap: 6px; align-items: center;
-  padding: 0 4px;
+  flex-direction: row; gap: 5px; align-items: center;
 }
 .mb {
-  width: 52px; height: 48px; border-radius: 10px;
-  background: rgba(6, 18, 40, 0.88);
-  border: 1px solid #1a3a5c;
-  color: #a0c8e8; font-size: 8px; letter-spacing: .5px;
+  width: 54px; height: 50px; border-radius: 10px;
+  background: rgba(6,18,40,0.88); border: 1px solid #1a3a5c;
+  color: #a0c8e8;
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: 3px; cursor: pointer;
 }
-.mb-i { font-size: 17px; line-height: 1; }
+.mb-i { font-size: 18px; line-height: 1; }
 .mb-t { font-size: 7px; letter-spacing: .5px; }
-.mb.active  { background: rgba(20, 80, 40, 0.70); border-color: #44ff88; color: #44ff88; }
-.mb.pressed { background: rgba(40, 80, 160, 0.60); border-color: #44aaff; }
+.mb.active  { background: rgba(15,70,35,0.80); border-color: #44ff88; color: #44ff88; }
+.mb.pressed { background: rgba(30,70,160,0.70); border-color: #44aaff; color: #44aaff; }
 
-/* ── Airport picker popup ────────────────────────────────────── */
+/* ── Airport picker ───────────────────────────────────────────── */
 #apt-picker {
-  position: fixed; bottom: 70px; left: 50%; transform: translateX(-50%);
+  position: fixed; bottom: 68px; left: 50%; transform: translateX(-50%);
   z-index: 60; pointer-events: all;
-  background: rgba(4, 12, 28, 0.96);
-  border: 1px solid #2a5a8c;
-  border-radius: 10px;
-  padding: 12px;
-  display: flex; flex-direction: column; gap: 8px;
-  min-width: 200px;
+  background: rgba(4,12,28,0.96); border: 1px solid #2a5a8c;
+  border-radius: 10px; padding: 12px;
+  flex-direction: column; gap: 8px; min-width: 210px;
 }
 .apt-title { font-size: 9px; letter-spacing: 2px; color: #3a7aaa; text-align: center; }
 #apt-picker .airport-btn {
-  width: 100%; padding: 9px 12px;
+  width: 100%; padding: 10px 12px;
   background: #0e1e35; border: 1px solid #1a3a5c; border-radius: 6px;
-  color: #c8e8ff; font-size: 11px; font-family: inherit; cursor: pointer;
-  text-align: left;
+  color: #c8e8ff; font-size: 12px; font-family: inherit; cursor: pointer; text-align: left;
 }
 #apt-picker .airport-btn.active { background: #1a3a5c; border-color: #3a8abf; }
 #apt-close {
-  padding: 7px; background: #1a1a2a; border: 1px solid #334; border-radius: 6px;
-  color: #668; font-size: 10px; font-family: inherit; cursor: pointer; text-align: center;
+  padding: 8px; background: #1a1a2a; border: 1px solid #334;
+  border-radius: 6px; color: #668; font-size: 10px; font-family: inherit;
+  cursor: pointer; text-align: center;
 }
 
-/* ── Orbit joystick (lewy dół, tylko ORBIT mode) ─────────────── */
-#orbit-joy-wrap {
-  position: fixed; bottom: 80px; left: 12px;
-  z-index: 50; pointer-events: all;
-  flex-direction: column; align-items: center; gap: 6px;
-}
-#orbit-joy-base {
-  width: 110px; height: 110px; border-radius: 50%;
-  background: rgba(255,255,255,0.08);
-  border: 2px solid rgba(255,255,255,0.20);
-  position: relative;
-}
-#orbit-joy-knob {
-  width: 44px; height: 44px; border-radius: 50%;
-  background: rgba(255,255,255,0.35);
-  border: 2px solid rgba(255,255,255,0.65);
-  position: absolute; top: 50%; left: 50%;
-  transform: translate(-50%,-50%);
-}
-
-/* ── Orbit zoom (prawy dół) ──────────────────────────────────── */
-#orbit-zoom {
-  position: fixed; bottom: 80px; right: 12px;
-  z-index: 50; pointer-events: all;
-  flex-direction: column; gap: 10px;
-}
-.zoom-btn {
-  width: 56px; height: 56px; border-radius: 50%;
-  background: rgba(6, 18, 40, 0.85);
-  border: 1px solid #2a4a6a; color: #c8e8ff;
-  font-size: 28px; display: flex; align-items: center; justify-content: center;
-  cursor: pointer;
-}
-.zoom-btn:active { background: rgba(30, 70, 140, 0.70); }
+/* Orbit joystick + zoom — ukryte (nieużywane) */
+#orbit-joy-wrap, #orbit-zoom { display: none !important; }
 
 /* ═══════════════════════════════════════════════════════════════
-   RESPONSIVE — mobile (pointer:coarse)
+   RESPONSIVE — pointer:coarse (mobile)
    ═══════════════════════════════════════════════════════════════ */
 @media (pointer: coarse) {
 
-  /* Ukryj klawiaturowe hinty */
-  .kb-only { display: none !important; }
+  .kb-only  { display: none !important; }
+  #controls { display: none !important; }
+  #throttle-display { display: none !important; }
 
-  /* Statusbar — kompaktowy, górny lewy */
-  #statusbar { top: 6px; left: 6px; max-width: 155px; }
-  .sb-row    { font-size: 7px; }
-  .phase     { font-size: 9px; }
+  /* Statusbar — mały, góra lewa, nie zasłania niczego ważnego */
+  #statusbar { top: 5px; left: 5px; max-width: 175px; }
+  .sb-row    { font-size: 7px; line-height: 1.5; }
+  .phase     { font-size: 8px; padding: 3px 6px 1px; }
 
-  /* Controls panel — ukryj na mobile (jest zastąpiony paskiem) */
-  #controls { display: none; }
+  /* Speed tapes — wąskie, wzdłuż krawędzi */
+  #speedtape { left: 4px;  width: 38px; height: 120px; top: 42%; }
+  #alt-tape  { right: 4px; width: 38px; height: 120px; top: 42%; }
+  .tape-wrap canvas { width: 38px; height: 120px; }
 
-  /* Tapes — trochę mniejsze, nie zasłaniają joysticka */
-  #speedtape { left: 4px; width: 42px; height: 130px; }
-  #alt-tape  { right: 4px; width: 42px; height: 130px; }
-
-  /* PFD — przesuń wyżej, nad pasek */
+  /* PFD — lewy dół, nad paskiem guzików, nie zasłania canvasu */
   #pfd {
-    bottom: 70px; left: 50%;
+    left: 50%; bottom: 68px;
     transform: translateX(-50%);
-    width: 150px;
+    width: 140px;
   }
-  #attitude-canvas { width: 90px; height: 90px; }
-  .pfd-grid { padding: 2px 6px 4px; }
-  .pv { font-size: 10px; }
+  #attitude-canvas { width: 80px; height: 80px; margin: 4px auto 3px; }
+  .pfd-grid  { padding: 1px 6px 4px; gap: 0 4px; }
+  .pl        { font-size: 7px; }
+  .pv        { font-size: 9px; }
 
-  /* ND — prawy górny zamiast dołu (nie zasłania guzików) */
+  /* ND — prawy górny róg, kompaktowy */
   #nd {
-    top: 6px; right: 6px; bottom: auto;
-    transform: none;
-    width: 120px;
+    top: 5px; right: 5px; bottom: auto;
+    width: 110px; transform: none;
   }
-  #compass-canvas { width: 90px; height: 90px; }
-  #nd .panel-title span { font-size: 11px; }
-  .nd-info { padding: 2px 6px 4px; }
-  .nd-info .pv { font-size: 10px; }
+  #compass-canvas { width: 86px; height: 86px; }
+  #nd .panel-title     { font-size: 7px; padding: 3px 6px; }
+  #nd .panel-title span { font-size: 10px; }
+  .nd-info   { padding: 1px 6px 3px; }
+  .nd-info .pv { font-size: 9px; }
+  .nd-info .pl { font-size: 7px; }
 
-  /* Ukryj desktop throttle display */
-  #throttle-display { display: none; }
-
-  /* Pokaż mobilne elementy zawsze przy starcie */
+  /* Pokaż mobile controls */
   #fly-joy-wrap { display: flex !important; }
   #thr-wrap     { display: flex !important; }
   #mob-bar      { display: flex !important; }
-  /* Orbit joy i zoom - ukryte (zbedne) */
-  #orbit-joy-wrap { display: none !important; }
-  #orbit-zoom     { display: none !important; }
 }
 
-/* Bardzo małe ekrany */
-@media (pointer: coarse) and (max-width: 390px) {
-  #fly-joy-base    { width: 110px; height: 110px; }
-  #fly-joy-knob    { width: 46px;  height: 46px;  }
-  #thr-track       { width: 46px;  height: 130px; }
-  .mb              { width: 45px;  height: 44px;  }
-  .mb-i            { font-size: 15px; }
-  .mob-bar         { gap: 4px; }
-  #pfd             { display: none; }
+/* Telefony wąskie (< 400px) */
+@media (pointer: coarse) and (max-width: 400px) {
+  #fly-joy-base { width: 105px; height: 105px; }
+  #fly-joy-knob { width: 42px;  height: 42px;  }
+  #thr-track    { width: 50px;  height: 140px; }
+  .mb           { width: 46px;  height: 46px;  }
+  .mb-i         { font-size: 16px; }
+  #mob-bar      { gap: 4px; }
+  /* PFD zbyt szeroki — ukryj na wąskich, dane są w statusbar */
+  #pfd          { display: none !important; }
 }
