@@ -21,30 +21,25 @@
 <!-- ══ HUD ══════════════════════════════════════════════════════════════════ -->
 <div id="hud" style="display:none">
 
-  <!-- Speed tape (lewa środkowa) -->
   <div id="speedtape" class="panel tape-wrap">
     <canvas id="speed-canvas" width="60" height="200"></canvas>
   </div>
-
-  <!-- Alt tape (prawa środkowa) -->
   <div id="alt-tape" class="panel tape-wrap">
     <canvas id="alt-canvas" width="60" height="200"></canvas>
   </div>
 
-  <!-- Attitude indicator (lewy dół) -->
   <div id="pfd" class="panel">
     <div class="panel-title">PFD · <span id="hud-cam-badge">ORBIT</span></div>
     <canvas id="attitude-canvas" width="110" height="110"></canvas>
     <div class="pfd-grid">
-      <span class="pl">IAS</span><span class="pv" id="ias-val">0 kt</span>
-      <span class="pl">VS</span> <span class="pv" id="vs-val">0 fpm</span>
+      <span class="pl">IAS</span><span class="pv"    id="ias-val">0 kt</span>
+      <span class="pl">VS</span> <span class="pv"    id="vs-val">0 fpm</span>
       <span class="pl">G/S</span><span class="pv green" id="gs-val">0 kt</span>
-      <span class="pl">PTH</span><span class="pv" id="pitch-val">0°</span>
-      <span class="pl">BNK</span><span class="pv" id="bank-val">0°</span>
+      <span class="pl">PTH</span><span class="pv"   id="pitch-val">0°</span>
+      <span class="pl">BNK</span><span class="pv"   id="bank-val">0°</span>
     </div>
   </div>
 
-  <!-- Compass (prawy dół) -->
   <div id="nd" class="panel">
     <div class="panel-title">HDG <span id="hdg-val">360°</span></div>
     <canvas id="compass-canvas" width="140" height="140"></canvas>
@@ -54,48 +49,45 @@
     </div>
   </div>
 
-  <!-- Throttle indicator (desktop, środek dół) -->
   <div id="throttle-display" class="panel">
     <div class="panel-title">N1</div>
     <div id="throttle-bar-bg"><div id="throttle-bar"></div></div>
     <div id="throttle-pct">0%</div>
   </div>
 
-  <!-- Status + warnings (góra lewa) -->
   <div id="statusbar" class="panel">
     <div class="phase" id="phase-disp">ON GROUND</div>
-    <div id="stall-disp" class="warn-blink" style="display:none">⚠ STALL</div>
+    <div id="stall-disp"     class="warn-blink"             style="display:none">⚠ STALL</div>
     <div id="overspeed-disp" class="warn-blink warn-orange" style="display:none">⚠ OVERSPD</div>
-    <div class="sb-row">ALT <b id="alt-m-val">0 m</b></div>
+    <div class="sb-row">ALT  <b id="alt-m-val">0 m</b></div>
     <div class="sb-row">TERR <b id="terr-val">0 m</b></div>
-    <div class="sb-row">AoA <b id="aoa-val">0°</b></div>
+    <div class="sb-row">AoA  <b id="aoa-val">0°</b></div>
     <div class="sb-row">FLAPS <b id="flaps-val">1</b> · GEAR <b id="gear-val">DN</b> · SPLR <b id="spoilers-val">OFF</b></div>
     <div class="sb-row dim" id="h-tiles">–</div>
-    <!-- Debug -->
-    <div class="sb-row dim" id="cam-pos-val" style="display:none"></div>
-    <div class="sb-row dim" id="cam-rot-val" style="display:none"></div>
-    <div class="sb-row dim" id="plane-rot-val" style="display:none"></div>
-    <div class="sb-row dim" id="cam-drot-val" style="display:none"></div>
-    <div class="sb-row dim" id="cam-dpos-val" style="display:none"></div>
-    <div class="sb-row dim" id="lat-val" style="display:none"></div>
-    <div class="sb-row dim" id="lon-val" style="display:none"></div>
-    <div class="sb-row dim" id="sat-z-val" style="display:none"></div>
+    <div id="cam-pos-val"   style="display:none"></div>
+    <div id="cam-rot-val"   style="display:none"></div>
+    <div id="plane-rot-val" style="display:none"></div>
+    <div id="cam-drot-val"  style="display:none"></div>
+    <div id="cam-dpos-val"  style="display:none"></div>
+    <div id="lat-val"       style="display:none"></div>
+    <div id="lon-val"       style="display:none"></div>
+    <div id="sat-z-val"     style="display:none"></div>
   </div>
 
-  <!-- Controls panel (desktop, góra prawa) -->
+  <!-- ── Desktop controls panel (góra prawa) ─────────────────────────────── -->
   <div id="controls" class="panel">
     <div class="panel-title">STEROWANIE</div>
-    <div class="kb-only hint-row"><span class="k">↑↓←→</span> Lotki/Pochylenie</div>
-    <div class="kb-only hint-row"><span class="k">W/S</span> Gaz/Hamulce</div>
-    <div class="kb-only hint-row"><span class="k">Q/E</span> Ster kierunku</div>
+    <div class="kb-only hint-row"><span class="k">↑↓←→</span> Pochylenie/Lotki</div>
+    <div class="kb-only hint-row"><span class="k">W/S</span> Gaz/Hamulce &nbsp; <span class="k">Q/E</span> Ster kier.</div>
     <div class="kb-only hint-row"><span class="k">F</span> Klapy · <span class="k">G</span> Podwozie · <span class="k">B</span> Spoilery</div>
     <div class="kb-only hint-row"><span class="k">C</span> Kamera · <span class="k">R</span> Reset</div>
     <div class="ctrl-divider"></div>
     <div class="hint-row dim">LOTNISKO</div>
     <div class="btn-row">
-      <button id="btn-airport-epwr" class="airport-btn active">✈ WROCŁAW</button>
-      <button id="btn-airport-lowi" class="airport-btn">✈ INNSBRUCK</button>
+      <button class="airport-btn active" data-apt="EPWR">✈ WROCŁAW</button>
+      <button class="airport-btn"        data-apt="LOWI">✈ INNSBRUCK</button>
     </div>
+    <div class="ctrl-divider"></div>
     <div class="btn-row">
       <button id="btn-reset">↺ Reset</button>
       <button id="btn-approach">⬇ Approach</button>
@@ -110,12 +102,9 @@
 
 </div><!-- /#hud -->
 
-<!-- ══════════════════════════════════════════════════════════════════════════
-     MOBILE FLIGHT CONTROLS
-     Widoczne tylko na urządzeniach touch (pointer:coarse), sterowane przez JS
-     ══════════════════════════════════════════════════════════════════════════ -->
+<!-- ══ MOBILE CONTROLS ═══════════════════════════════════════════════════════ -->
 
-<!-- LEWY DÓŁ: Joystick lotu (pitch + roll) -->
+<!-- Joystick lotu (lewy dół) -->
 <div id="fly-joy-wrap">
   <div class="joy-label">PITCH · ROLL</div>
   <div id="fly-joy-base">
@@ -127,7 +116,7 @@
   </div>
 </div>
 
-<!-- PRAWY DÓŁ: Slider gazu -->
+<!-- Slider gazu + ruder (prawy dół) -->
 <div id="thr-wrap">
   <div class="thr-title">THR</div>
   <div id="thr-track">
@@ -135,16 +124,14 @@
     <div id="thr-thumb"></div>
     <div id="thr-pct">0%</div>
   </div>
-  <!-- Ruder pod sliderem -->
   <div id="rud-row">
     <div class="rud-btn" id="mob-rud-l">Q</div>
     <div class="rud-btn" id="mob-rud-r">E</div>
   </div>
 </div>
 
-<!-- DÓŁ ŚRODEK: Pasek konfiguracyjny (2 rzędy × 4) -->
+<!-- Pasek guzików (dół środek) — 2 rzędy × 4 -->
 <div id="mob-bar">
-  <!-- Rząd górny: sterowanie samolotem -->
   <div class="mob-row">
     <div class="mb" id="mb-flaps">
       <span class="mb-i">⛶</span><span class="mb-t" id="mb-flaps-lbl">FLAP 1</span>
@@ -159,7 +146,6 @@
       <span class="mb-i">🅱</span><span class="mb-t">BRAKES</span>
     </div>
   </div>
-  <!-- Rząd dolny: nawigacja / misc -->
   <div class="mob-row">
     <div class="mb" id="mb-reset">
       <span class="mb-i">↺</span><span class="mb-t">RESET</span>
@@ -170,33 +156,35 @@
     <div class="mb" id="mb-cam">
       <span class="mb-i">📷</span><span class="mb-t">CAM</span>
     </div>
-    <div class="mb" id="mb-apt">
-      <span class="mb-i">🏁</span><span class="mb-t">APT</span>
+    <div class="mb" id="mb-menu">
+      <span class="mb-i">☰</span><span class="mb-t">MENU</span>
     </div>
   </div>
 </div>
 
-<!-- Airport picker (popup) -->
-<div id="apt-picker">
-  <div class="apt-title">WYBIERZ LOTNISKO</div>
-  <button id="btn-airport-epwr" class="airport-btn active">✈ WROCŁAW (EPWR)</button>
-  <button id="btn-airport-lowi" class="airport-btn">✈ INNSBRUCK (LOWI)</button>
-  <button id="apt-close">✕ Zamknij</button>
-</div>
-
-<!-- ORBIT: joystick mapy (lewy dół) -->
-<div id="orbit-joy-wrap">
-  <div class="joy-label">MAPA</div>
-  <div id="orbit-joy-base">
-    <div id="orbit-joy-knob"></div>
+<!-- Menu popup (lotniska + więcej akcji) -->
+<div id="mob-menu-popup">
+  <div class="popup-title">LOTNISKO</div>
+  <div class="popup-row">
+    <button class="airport-btn active" data-apt="EPWR">✈ WROCŁAW (EPWR)</button>
+    <button class="airport-btn"        data-apt="LOWI">✈ INNSBRUCK (LOWI)</button>
   </div>
+  <div class="popup-divider"></div>
+  <div class="popup-row">
+    <button id="mpop-reset">↺ Reset</button>
+    <button id="mpop-appr">⬇ Approach</button>
+  </div>
+  <div class="popup-row">
+    <button id="mpop-cam">📷 Kamera</button>
+    <button id="mpop-map">🌍 Wolna mapa</button>
+  </div>
+  <div class="popup-divider"></div>
+  <button id="mpop-close">✕ Zamknij</button>
 </div>
 
-<!-- ORBIT: zoom (prawy dół) -->
-<div id="orbit-zoom">
-  <div class="zoom-btn" id="btn-zoom-in">+</div>
-  <div class="zoom-btn" id="btn-zoom-out">−</div>
-</div>
+<!-- Orbit joy i zoom — ukryte (nieużywane) -->
+<div id="orbit-joy-wrap" style="display:none!important"></div>
+<div id="orbit-zoom"     style="display:none!important"></div>
 
 <!-- ══ SCRIPTS ═══════════════════════════════════════════════════════════════ -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
