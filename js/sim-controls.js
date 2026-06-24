@@ -10,7 +10,9 @@
 //   • Dotyk canvasu         → kamera (orbit: obrót/zoom | cockpit: rozglądanie)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-const IS_TOUCH  = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+// IS_TOUCH ustawiane przez sim-main.js (body.is-touch) — sprawdzamy po załadowaniu
+// W trakcie działania używamy document.body.classList.contains('is-touch')
+function _isMobile() { return document.body.classList.contains('is-touch'); }
 const WASD_SPEED = 30, QE_SPEED = 30;
 const cv = document.getElementById('c');
 
@@ -348,14 +350,14 @@ function updatePlaneInput() {
   // Pitch + roll: klawiatura lub joystick (joystick ma pierwszeństwo na touch)
   let pitch = (planeKeys['ArrowUp']    ? 1 : 0) - (planeKeys['ArrowDown']  ? 1 : 0);
   let roll  = (planeKeys['ArrowRight'] ? 1 : 0) - (planeKeys['ArrowLeft']  ? 1 : 0);
-  if (IS_TOUCH && flyId >= 0) {
+  if (_isMobile() && flyId >= 0) {
     pitch = -flyDelta.y;   // joystick góra = nos w górę
     roll  =  flyDelta.x;
   }
 
   // Yaw: klawiatura lub guziki rudera
   let yaw = (planeKeys['KeyQ'] ? -1 : 0) + (planeKeys['KeyE'] ? 1 : 0);
-  if (IS_TOUCH) {
+  if (_isMobile()) {
     if (rudState.L) yaw = -1;
     if (rudState.R) yaw  =  1;
   }
@@ -365,7 +367,7 @@ function updatePlaneInput() {
   let throttleDown = !!planeKeys['KeyS'];
   let brakes       = !!planeKeys['KeyS'] || brakesHeld;
 
-  if (IS_TOUCH && activeEntity) {
+  if (_isMobile() && activeEntity) {
     if (thrValue >= 0) {
       // Slider tknięty — ustaw bezpośrednio
       activeEntity.throttle = thrValue;
