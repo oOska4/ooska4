@@ -127,7 +127,7 @@ cv.addEventListener('touchmove', e => {
     const id=cvT.keys().next().value,cur=cvT.get(id),old=prev.get(id);
     if (cur&&old){
       cockpitLook.yaw  =Math.max(-2.6,Math.min(2.6,cockpitLook.yaw  -(cur.x-old.x)*0.006));
-      cockpitLook.pitch=Math.max(-1.3,Math.min(1.3,cockpitLook.pitch-(cur.y-old.y)*0.004));
+      cockpitLook.pitch=Math.max(-1.3,Math.min(1.3,cockpitLook.pitch+(cur.y-old.y)*0.004));
     }
   }
 }, { passive: true });
