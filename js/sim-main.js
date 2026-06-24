@@ -77,15 +77,13 @@ const loadInterval = setInterval(() => {
     document.getElementById('loading').style.display = 'none';
     document.getElementById('hud').style.display = 'block';
 
-    // Wymusz pokazanie mobile UI niezaleznie od matchMedia
-    // (niektorе przegladarki mobilne potrzebuja tego po renderze DOM)
-    if ('ontouchstart' in window || navigator.maxTouchPoints > 0) {
-      const show = (id, disp) => { const e = document.getElementById(id); if (e) e.style.display = disp; };
-      show('fly-joy-wrap', 'flex');
-      show('thr-wrap',     'flex');
-      show('mob-bar',      'flex');
-      show('orbit-joy-wrap', 'none');
-      show('orbit-zoom',     'none');
+    // Wykryj prawdziwy ekran dotykowy (wyklucz PC z touchscreen przez sprawdzenie
+    // czy urządzenie ma mysz — pointer:fine = mysz, pointer:coarse = palec)
+    const hasFinePointer = matchMedia('(pointer:fine)').matches;
+    const hasTouchEvents = navigator.maxTouchPoints > 0;
+    const isRealMobile   = hasTouchEvents && !hasFinePointer;
+    if (isRealMobile) {
+      document.body.classList.add('is-touch');
     }
     setInterval(() => {
       if (activeEntity) {
