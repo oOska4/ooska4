@@ -142,31 +142,37 @@
   </div>
 </div>
 
-<!-- DÓŁ ŚRODEK: Pasek konfiguracyjny -->
+<!-- DÓŁ ŚRODEK: Pasek konfiguracyjny (2 rzędy × 4) -->
 <div id="mob-bar">
-  <div class="mb" id="mb-flaps">
-    <span class="mb-i">⛶</span><span class="mb-t" id="mb-flaps-lbl">FLAP 1</span>
+  <!-- Rząd górny: sterowanie samolotem -->
+  <div class="mob-row">
+    <div class="mb" id="mb-flaps">
+      <span class="mb-i">⛶</span><span class="mb-t" id="mb-flaps-lbl">FLAP 1</span>
+    </div>
+    <div class="mb active" id="mb-gear">
+      <span class="mb-i">⬇</span><span class="mb-t">GEAR</span>
+    </div>
+    <div class="mb" id="mb-splr">
+      <span class="mb-i">🛑</span><span class="mb-t">SPLR</span>
+    </div>
+    <div class="mb" id="mb-brakes">
+      <span class="mb-i">🅱</span><span class="mb-t">BRAKES</span>
+    </div>
   </div>
-  <div class="mb active" id="mb-gear">
-    <span class="mb-i">⬇</span><span class="mb-t">GEAR</span>
-  </div>
-  <div class="mb" id="mb-splr">
-    <span class="mb-i">🛑</span><span class="mb-t">SPLR</span>
-  </div>
-  <div class="mb" id="mb-brakes">
-    <span class="mb-i">🅱</span><span class="mb-t">BRAKES</span>
-  </div>
-  <div class="mb" id="mb-reset">
-    <span class="mb-i">↺</span><span class="mb-t">RESET</span>
-  </div>
-  <div class="mb" id="mb-appr">
-    <span class="mb-i">✈</span><span class="mb-t">APPR</span>
-  </div>
-  <div class="mb" id="mb-cam">
-    <span class="mb-i">📷</span><span class="mb-t">CAM</span>
-  </div>
-  <div class="mb" id="mb-apt">
-    <span class="mb-i">🏁</span><span class="mb-t">APT</span>
+  <!-- Rząd dolny: nawigacja / misc -->
+  <div class="mob-row">
+    <div class="mb" id="mb-reset">
+      <span class="mb-i">↺</span><span class="mb-t">RESET</span>
+    </div>
+    <div class="mb" id="mb-appr">
+      <span class="mb-i">⬇✈</span><span class="mb-t">APPR</span>
+    </div>
+    <div class="mb" id="mb-cam">
+      <span class="mb-i">📷</span><span class="mb-t">CAM</span>
+    </div>
+    <div class="mb" id="mb-apt">
+      <span class="mb-i">🏁</span><span class="mb-t">APT</span>
+    </div>
   </div>
 </div>
 
