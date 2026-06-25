@@ -365,13 +365,32 @@ function selectAirport(code) {
 }
 
 // ── Emisja spalin ─────────────────────────────────────────────────────────────
-const EXHAUST_LOCAL_POS=[new THREE.Vector3(1,-1,5),new THREE.Vector3(1,-1,-5)];
-const _exhaustBackDir=new THREE.Vector3(), _exhaustWorldPos=new THREE.Vector3();
-function emitExhaust(plane,exhaust) {
+// Pozycje wylotów silników są pobierane z modelu (_engineLocalR/L) po załadowaniu.
+// Dopóki model się ładuje, używamy fallbacków.
+const _EXHAUST_FALLBACK = [new THREE.Vector3(6.5,-1.5,8), new THREE.Vector3(-6.5,-1.5,8)];
+const _exhaustBackDir  = new THREE.Vector3();
+const _exhaustWorldPos = new THREE.Vector3();
+const _exhaustLocalPos = new THREE.Vector3();
+
+function emitExhaust(plane, exhaust) {
+  if (!plane.mesh) return;
   plane.mesh.updateMatrixWorld(true);
-  _exhaustBackDir.set(-Math.sin(plane.yawRad),0,-Math.cos(plane.yawRad));
-  for (const lp of EXHAUST_LOCAL_POS) {
-    _exhaustWorldPos.copy(lp).applyMatrix4(plane.mesh.matrixWorld);
-    exhaust.emit(_exhaustWorldPos,plane.throttle,_exhaustBackDir);
+
+  // Kierunek wylotu = tył samolotu w world space
+  _exhaustBackDir.set(
+    -Math.sin(plane.yawRad),
+     0,
+    -Math.cos(plane.yawRad)
+  );
+
+  // Użyj pozycji z modelu jeśli są już załadowane, inaczej fallback
+  const hasModel = plane.modelLoaded && plane._engineLocalR && plane._engineLocalL;
+  const posR = hasModel ? plane._engineLocalR : _EXHAUST_FALLBACK[0];
+  const posL = hasModel ? plane._engineLocalL : _EXHAUST_FALLBACK[1];
+
+  for (const lp of [posR, posL]) {
+    // Transformuj pozycję lokalną do world space przez matrixWorld modelu
+    _exhaustLocalPos.copy(lp).applyMatrix4(plane.mesh.matrixWorld);
+    exhaust.emit(_exhaustLocalPos, plane.throttle, _exhaustBackDir);
   }
 }
