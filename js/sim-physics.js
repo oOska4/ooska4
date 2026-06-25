@@ -3,7 +3,7 @@
 // ── Offset wylotu spalin względem środka gondoli silnika (w przestrzeni lokalnej modelu)
 // Zwiększ Z żeby spaliny wychodziły dalej z tyłu, zmniejsz jeśli są za daleko.
 // Y ujemne = w dół (normalnie silnik jest pod skrzydłem).
-const ENGINE_EXHAUST_OFFSET = new THREE.Vector3(0, 0, 9);
+const ENGINE_EXHAUST_OFFSET = new THREE.Vector3(0, 0, 8);
 
 // ── Ładowanie modelu A321 z a321.obj + a321.mtl ───────────────────────────────
 // (a321.mtl wskazuje tekstury w folderze objwmtl/ — ścieżki względne, nie
