@@ -420,3 +420,4 @@ function emitExhaust(plane, exhaust) {
   exhaust.emit(_exPosR, plane.throttle, _exBackDir);
   exhaust.emit(_exPosL, plane.throttle, _exBackDir);
 }
+
