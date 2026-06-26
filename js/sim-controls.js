@@ -371,8 +371,8 @@ function selectAirport(code) {
 //   Z = przód/tył  (ujemne = do tyłu, za skrzydłem)
 // Jednostki = world space jednostki Three.js modelu.
 
-const EXHAUST_OFFSET_X =  6;   // odległość od osi kadłuba (na zewnątrz)
-const EXHAUST_OFFSET_Y =  -2;   // w dół (pod skrzydło)
+const EXHAUST_OFFSET_X =  2;   // odległość od osi kadłuba (na zewnątrz)
+const EXHAUST_OFFSET_Y =  2;   // w dół (pod skrzydło)
 const EXHAUST_OFFSET_Z =  -4;   // do tyłu (za wentylatorem)
 
 const _exNose    = new THREE.Vector3();
