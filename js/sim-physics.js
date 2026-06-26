@@ -1,10 +1,5 @@
 'use strict';
 
-// ── Offset wylotu spalin względem środka gondoli silnika (w przestrzeni lokalnej modelu)
-// Zwiększ Z żeby spaliny wychodziły dalej z tyłu, zmniejsz jeśli są za daleko.
-// Y ujemne = w dół (normalnie silnik jest pod skrzydłem).
-const ENGINE_EXHAUST_OFFSET = new THREE.Vector3(0, 0, 24);
-
 // ── Ładowanie modelu A321 z a321.obj + a321.mtl ───────────────────────────────
 // (a321.mtl wskazuje tekstury w folderze objwmtl/ — ścieżki względne, nie
 // trzeba ich tu powtarzać; wystarczy wczytać .mtl, a potem .obj z tymi materiałami)
@@ -194,37 +189,6 @@ class A321Entity extends Entity {
         rudder:    this.mesh.getObjectByName('rudder'),
       };
 
-      // Pobierz pozycje silników w przestrzeni lokalnej siatki samolotu.
-      // fan_R / fan_L to wentylatory — ich pozycja ≈ środek gondoli silnika.
-      // Przesuwamy je do tyłu wzdłuż lokalnej osi Z o 8 jednostek (wylot dyszy).
-      // Jeśli model nie ma tych części, fallback = hardcoded offset.
-      this._engineLocalR = new THREE.Vector3();
-      this._engineLocalL = new THREE.Vector3();
-      const _tmpWorld = new THREE.Vector3();
-      const _tmpLocal = new THREE.Vector3();
-
-      if (this._parts.fanR) {
-        // Wymuś update matrixWorld żeby pozycja była aktualna
-        this.mesh.updateMatrixWorld(true);
-        this._parts.fanR.getWorldPosition(_tmpWorld);
-        // Przekształć do przestrzeni lokalnej grp (mesh samolotu)
-        grp.worldToLocal(_tmpLocal.copy(_tmpWorld));
-        // Przesuń do tyłu silnika (w lokalnym układzie modelu: +Z = tył)
-        this._engineLocalR.copy(_tmpLocal).add(ENGINE_EXHAUST_OFFSET);
-        console.log('[A321] engine R local pos:', this._engineLocalR);
-      } else {
-        this._engineLocalR.set(6.5, -1.5, 8);  // fallback
-      }
-
-      if (this._parts.fanL) {
-        this.mesh.updateMatrixWorld(true);
-        this._parts.fanL.getWorldPosition(_tmpWorld);
-        grp.worldToLocal(_tmpLocal.copy(_tmpWorld));
-        this._engineLocalL.copy(_tmpLocal).add(ENGINE_EXHAUST_OFFSET);
-        console.log('[A321] engine L local pos:', this._engineLocalL);
-      } else {
-        this._engineLocalL.set(-6.5, -1.5, 8);  // fallback
-      }
     }).catch(err => console.error('[A321] Błąd wczytywania modelu:', err));
 
     this.fanAngle = 0;
@@ -465,4 +429,3 @@ class A321Entity extends Entity {
     if (p.rudder) p.rudder.rotation.y = this.yawRate * 2;
   }
 }
-
