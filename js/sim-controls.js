@@ -1,4 +1,4 @@
-6'use strict';
+'use strict';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // sim-controls.js
@@ -374,9 +374,9 @@ function selectAirport(code) {
 // Podaj wartości w metrach (jednostki world space ≈ metry poziomo).
 // Silniki A321 są ~7m od kadłuba, ~2m poniżej skrzydła, wylot ~5m za centrem.
 
-const ENG_RIGHT  =  3;    // odległość od osi kadłuba (na zewnątrz)
-const ENG_DOWN   = -1;    // poniżej skrzydła (ujemne = w dół)
-const ENG_BACK   = 20;    // do tyłu od centrum mesha (ujemne = za skrzydłem)
+const ENG_RIGHT  =  7;    // odległość od osi kadłuba (na zewnątrz)
+const ENG_DOWN   = -2;    // poniżej skrzydła (ujemne = w dół)
+const ENG_BACK   = -5;    // do tyłu od centrum mesha (ujemne = za skrzydłem)
 
 // Pre-alokowane vektory (bez alokacji co klatkę)
 const _eq = new THREE.Quaternion();
