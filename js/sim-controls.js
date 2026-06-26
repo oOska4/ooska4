@@ -365,58 +365,59 @@ function selectAirport(code) {
 }
 
 // ── Emisja spalin ─────────────────────────────────────────────────────────────
-// Offset w lokalnym układzie samolotu (prawa ręka, Y=góra):
-//   X = na zewnątrz (+ = prawy silnik, - = lewy silnik)
-//   Y = góra/dół   (ujemne = w dół, pod skrzydło)
-//   Z = przód/tył  (ujemne = do tyłu, za skrzydłem)
-// Jednostki = world space jednostki Three.js modelu.
+//
+// Offsets w lokalnym układzie współrzędnych plane.mesh (THREE.Group):
+//   +Z = nos samolotu (przód)
+//   +X = prawe skrzydło
+//   +Y = góra
+//
+// Podaj wartości w metrach (jednostki world space ≈ metry poziomo).
+// Silniki A321 są ~7m od kadłuba, ~2m poniżej skrzydła, wylot ~5m za centrem.
 
-const EXHAUST_OFFSET_X =  0;   // odległość od osi kadłuba (na zewnątrz)
-const EXHAUST_OFFSET_Y =  0;   // w dół (pod skrzydło)
-const EXHAUST_OFFSET_Z =  -3;   // do tyłu (za wentylatorem)
+const ENG_RIGHT  =  7;    // odległość od osi kadłuba (na zewnątrz)
+const ENG_DOWN   = -2;    // poniżej skrzydła (ujemne = w dół)
+const ENG_BACK   = -5;    // do tyłu od centrum mesha (ujemne = za skrzydłem)
 
-const _exNose    = new THREE.Vector3();
-const _exRight   = new THREE.Vector3();
-const _exUp      = new THREE.Vector3();
-const _exPosR    = new THREE.Vector3();
-const _exPosL    = new THREE.Vector3();
-const _exBackDir = new THREE.Vector3();
-const _exWorldUp = new THREE.Vector3(0, 1, 0);
+// Pre-alokowane vektory (bez alokacji co klatkę)
+const _eq = new THREE.Quaternion();
+const _eR = new THREE.Vector3();
+const _eL = new THREE.Vector3();
+const _eBk = new THREE.Vector3();
+let _exhaustDebugFrames = 0;
 
 function emitExhaust(plane, exhaust) {
   if (!plane.mesh) return;
 
-  // Wektor nosa samolotu w world space
-  _exNose.set(
-    Math.sin(plane.yawRad) * Math.cos(plane.pitchRad),
-    Math.sin(plane.pitchRad),
-    Math.cos(plane.yawRad) * Math.cos(plane.pitchRad)
-  );
+  // Pobierz kwaternion mesha — zawiera całą rotację (yaw+pitch+roll)
+  // bez konieczności ręcznego liczenia wektorów z kątów Eulera.
+  _eq.copy(plane.mesh.quaternion);
 
-  // Wektor w prawo (prostopadle do nosa, w poziomie)
-  _exRight.crossVectors(_exWorldUp, _exNose).normalize();
+  // ----- PRAWY silnik -----
+  // Zacznij od offsetu w przestrzeni lokalnej mesha
+  _eR.set(ENG_RIGHT, ENG_DOWN, ENG_BACK);
+  // Obróć offset do world space używając kwaternionu
+  _eR.applyQuaternion(_eq);
+  // Dodaj pozycję mesha (world space)
+  _eR.add(plane.mesh.position);
 
-  // Wektor w górę (prostopadle do nosa i prawo)
-  _exUp.crossVectors(_exNose, _exRight).normalize();
+  // ----- LEWY silnik -----
+  _eL.set(-ENG_RIGHT, ENG_DOWN, ENG_BACK);
+  _eL.applyQuaternion(_eq);
+  _eL.add(plane.mesh.position);
 
-  // Kierunek wylotu dymu = tył samolotu
-  _exBackDir.copy(_exNose).negate();
+  // Kierunek wylotu: lokalne -Z (tył samolotu) obrócone do world space
+  _eBk.set(0, 0, -1).applyQuaternion(_eq);
 
-  // Pozycja bazowa = faktyczna pozycja mesha w scenie (nie worldPos z DEM_EXAG)
-  const base = plane.mesh.position;
+  // Log co 120 klatek żeby móc kalibrować bez zaśmiecania konsoli
+  if (++_exhaustDebugFrames % 120 === 1) {
+    console.log(
+      '[exhaust] mesh.pos:', plane.mesh.position.x.toFixed(1), plane.mesh.position.y.toFixed(1), plane.mesh.position.z.toFixed(1),
+      '| R:', _eR.x.toFixed(1), _eR.y.toFixed(1), _eR.z.toFixed(1),
+      '| L:', _eL.x.toFixed(1), _eL.y.toFixed(1), _eL.z.toFixed(1),
+      '| ENG_RIGHT:', ENG_RIGHT, 'ENG_DOWN:', ENG_DOWN, 'ENG_BACK:', ENG_BACK
+    );
+  }
 
-  // Prawy silnik: +X w prawo, Y w dół, Z do tyłu
-  _exPosR.copy(base)
-    .addScaledVector(_exRight, +EXHAUST_OFFSET_X)
-    .addScaledVector(_exUp,     EXHAUST_OFFSET_Y)
-    .addScaledVector(_exNose,   EXHAUST_OFFSET_Z);
-
-  // Lewy silnik: -X (lustrzanie)
-  _exPosL.copy(base)
-    .addScaledVector(_exRight, -EXHAUST_OFFSET_X)
-    .addScaledVector(_exUp,     EXHAUST_OFFSET_Y)
-    .addScaledVector(_exNose,   EXHAUST_OFFSET_Z);
-
-  exhaust.emit(_exPosR, plane.throttle, _exBackDir);
-  exhaust.emit(_exPosL, plane.throttle, _exBackDir);
+  exhaust.emit(_eR, plane.throttle, _eBk);
+  exhaust.emit(_eL, plane.throttle, _eBk);
 }
