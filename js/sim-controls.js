@@ -365,45 +365,58 @@ function selectAirport(code) {
 }
 
 // ── Emisja spalin ─────────────────────────────────────────────────────────────
-// Strategia: pobieramy world position fan_R i fan_L na żywo każdą klatką
-// (po updateMatrixWorld), a potem przesuwamy do tyłu wzdłuż osi silnika.
+// Offset w lokalnym układzie samolotu (prawa ręka, Y=góra):
+//   X = na zewnątrz (+ = prawy silnik, - = lewy silnik)
+//   Y = góra/dół   (ujemne = w dół, pod skrzydło)
+//   Z = przód/tył  (ujemne = do tyłu, za skrzydłem)
+// Jednostki = world space jednostki Three.js modelu.
 
-const _exhaustBackDir = new THREE.Vector3();
-const _exhaustPosR    = new THREE.Vector3();
-const _exhaustPosL    = new THREE.Vector3();
-const _exhaustNoseDir = new THREE.Vector3();
+const EXHAUST_OFFSET_X =  10;   // odległość od osi kadłuba (na zewnątrz)
+const EXHAUST_OFFSET_Y =  -3;   // w dół (pod skrzydło)
+const EXHAUST_OFFSET_Z =  -5;   // do tyłu (za wentylatorem)
+
+const _exNose    = new THREE.Vector3();
+const _exRight   = new THREE.Vector3();
+const _exUp      = new THREE.Vector3();
+const _exPosR    = new THREE.Vector3();
+const _exPosL    = new THREE.Vector3();
+const _exBackDir = new THREE.Vector3();
+const _exWorldUp = new THREE.Vector3(0, 1, 0);
 
 function emitExhaust(plane, exhaust) {
-  if (!plane.mesh || !plane.modelLoaded) return;
+  if (!plane.mesh) return;
 
-  // Wymuś aktualizację wszystkich matrixWorld w hierarchii modelu
-  plane.mesh.updateMatrixWorld(true);
-
-  // Kierunek nosa samolotu w world space (do tyłu = negacja)
-  _exhaustNoseDir.set(
+  // Wektor nosa samolotu w world space
+  _exNose.set(
     Math.sin(plane.yawRad) * Math.cos(plane.pitchRad),
     Math.sin(plane.pitchRad),
     Math.cos(plane.yawRad) * Math.cos(plane.pitchRad)
   );
-  // Kierunek wylotu = tył samolotu
-  _exhaustBackDir.copy(_exhaustNoseDir).negate();
 
-  const p = plane._parts;
-  const fanR = p && p.fanR;
-  const fanL = p && p.fanL;
+  // Wektor w prawo (prostopadle do nosa, w poziomie)
+  _exRight.crossVectors(_exWorldUp, _exNose).normalize();
 
-  if (!fanR || !fanL) return;
+  // Wektor w górę (prostopadle do nosa i prawo)
+  _exUp.crossVectors(_exNose, _exRight).normalize();
 
-  // Pobierz aktualne pozycje world wentylatorów
-  fanR.getWorldPosition(_exhaustPosR);
-  fanL.getWorldPosition(_exhaustPosL);
+  // Kierunek wylotu dymu = tył samolotu
+  _exBackDir.copy(_exNose).negate();
 
-  // Przesuń do tyłu wzdłuż osi samolotu (wylot dyszy za wentylatorem)
-  // Wartość w jednostkach world space — dostosuj jeśli dym jest za daleko/blisko
-  const EXHAUST_BACK = 5.0;
-  _exhaustPosR.addScaledVector(_exhaustNoseDir, -EXHAUST_BACK);
-  _exhaustPosL.addScaledVector(_exhaustNoseDir, -EXHAUST_BACK);
+  // Pozycja bazowa = worldPos samolotu
+  const base = plane.worldPos;
 
-  exhaust.emit(_exhaustPosR, plane.throttle, _exhaustBackDir);
-  exhaust.emit(_exhaustPosL, plane.throttle, _exhaustBackDir);
+  // Prawy silnik: +X w prawo, Y w dół, Z do tyłu
+  _exPosR.copy(base)
+    .addScaledVector(_exRight, +EXHAUST_OFFSET_X)
+    .addScaledVector(_exUp,     EXHAUST_OFFSET_Y)
+    .addScaledVector(_exNose,   EXHAUST_OFFSET_Z);
+
+  // Lewy silnik: -X (lustrzanie)
+  _exPosL.copy(base)
+    .addScaledVector(_exRight, -EXHAUST_OFFSET_X)
+    .addScaledVector(_exUp,     EXHAUST_OFFSET_Y)
+    .addScaledVector(_exNose,   EXHAUST_OFFSET_Z);
+
+  exhaust.emit(_exPosR, plane.throttle, _exBackDir);
+  exhaust.emit(_exPosL, plane.throttle, _exBackDir);
 }
