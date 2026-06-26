@@ -400,7 +400,7 @@ function emitExhaust(plane, exhaust) {
 
   // Przesuń do tyłu wzdłuż osi samolotu (wylot dyszy za wentylatorem)
   // Wartość w jednostkach world space — dostosuj jeśli dym jest za daleko/blisko
-  const EXHAUST_BACK = 3.0;
+  const EXHAUST_BACK = 5.0;
   _exhaustPosR.addScaledVector(_exhaustNoseDir, -EXHAUST_BACK);
   _exhaustPosL.addScaledVector(_exhaustNoseDir, -EXHAUST_BACK);
 
