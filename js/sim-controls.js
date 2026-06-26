@@ -374,7 +374,7 @@ function selectAirport(code) {
 // Podaj wartości w metrach (jednostki world space ≈ metry poziomo).
 // Silniki A321 są ~7m od kadłuba, ~2m poniżej skrzydła, wylot ~5m za centrem.
 
-const ENG_RIGHT  =  3;    // odległość od osi kadłuba (na zewnątrz)
+const ENG_RIGHT  =  0;    // odległość od osi kadłuba (na zewnątrz)
 const ENG_DOWN   = 0;    // poniżej skrzydła (ujemne = w dół)
 const ENG_BACK   = 20;    // do tyłu od centrum mesha (ujemne = za skrzydłem)
 
