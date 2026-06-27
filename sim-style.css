@@ -357,12 +357,12 @@ body.is-touch #mob-menu-popup.open { display: flex; }
 /* Popup pogody (mobile) */
 #weather-popup {
   display: none;
-  position: fixed; bottom: 116px; left: 50%; transform: translateX(-50%);
-  z-index: 60; pointer-events: all;
+  position: fixed; bottom: 125px; left: 50%; transform: translateX(-50%);
+  z-index: 200; pointer-events: all;
   background: rgba(4,12,28,0.97); border: 1px solid #2a5a8c;
   border-radius: 12px; padding: 12px;
   flex-direction: column; gap: 7px;
-  min-width: 300px; max-height: 70vh; overflow-y: auto;
+  min-width: 300px; max-width: calc(100vw - 24px); max-height: 65vh; overflow-y: auto;
 }
 .wpop-title { font-size: 9px; letter-spacing: 2px; color: #3a7aaa; text-align: center; }
 .wpop-divider { height: 1px; background: #1a3a5c; }
