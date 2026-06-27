@@ -17,6 +17,7 @@
 
 <!-- ══ CANVAS ═══════════════════════════════════════════════════════════════ -->
 <canvas id="c"></canvas>
+<canvas id="weather-overlay"></canvas>
 
 <!-- ══ HUD ══════════════════════════════════════════════════════════════════ -->
 <div id="hud" style="display:none">
@@ -98,6 +99,32 @@
     </div>
     <div class="ctrl-divider"></div>
     <div class="hint-row dim">V1 <b class="col-orange">135kt</b> · VR <b class="col-orange">145kt</b> · V2 <b class="col-green">155kt</b></div>
+    <div class="ctrl-divider"></div>
+    <div class="hint-row" style="display:flex;justify-content:space-between;align-items:center">
+      <span class="dim">POGODA</span>
+      <button id="btn-weather-toggle" style="width:auto;padding:1px 6px;font-size:9px">▼</button>
+    </div>
+    <div id="weather-panel">
+      <div class="w-row"><label>Zachmurzenie</label><input type="range" id="dw-coverage" min="0" max="100" value="30"><span class="w-lbl" id="dw-coverage-lbl">30%</span></div>
+      <div class="w-row"><label>Wys. chmur</label><input type="range" id="dw-alt" min="100" max="6000" step="100" value="2000"><span class="w-lbl" id="dw-alt-lbl">2000 m</span></div>
+      <div class="w-row"><label>Opady</label>
+        <select id="dw-precip"><option value="none">Brak</option><option value="rain">Deszcz</option><option value="snow">Śnieg</option></select>
+      </div>
+      <div class="w-row"><label>Intensywność</label><input type="range" id="dw-precip-int" min="0" max="100" value="60"><span class="w-lbl" id="dw-precip-int-lbl">60%</span></div>
+      <div class="w-row"><label>Wiatr (m/s)</label><input type="range" id="dw-wind" min="0" max="40" value="5"><span class="w-lbl" id="dw-wind-lbl">5 m/s</span></div>
+      <div class="w-row"><label>Kierunek</label><input type="range" id="dw-wdir" min="0" max="359" value="270"><span class="w-lbl" id="dw-wdir-lbl">W 270°</span></div>
+      <div class="w-row"><label>Porywy (m/s)</label><input type="range" id="dw-gust" min="0" max="15" value="2"><span class="w-lbl" id="dw-gust-lbl">2 m/s</span></div>
+      <div class="w-row"><label>Turbulencja</label><input type="range" id="dw-turb" min="0" max="100" value="10"><span class="w-lbl" id="dw-turb-lbl">10%</span></div>
+      <div class="w-presets">
+        <button data-preset="clear">☀ Clear</button>
+        <button data-preset="cloudy">⛅ Cloudy</button>
+        <button data-preset="overcast">☁ Overcast</button>
+        <button data-preset="rain">🌧 Rain</button>
+        <button data-preset="storm">⛈ Storm</button>
+        <button data-preset="snow">❄ Snow</button>
+        <button data-preset="fog">🌫 Fog</button>
+      </div>
+    </div>
   </div>
 
 </div><!-- /#hud -->
@@ -156,6 +183,9 @@
     <div class="mb" id="mb-cam">
       <span class="mb-i">📷</span><span class="mb-t">CAM</span>
     </div>
+    <div class="mb" id="mb-weather">
+      <span class="mb-i">🌤</span><span class="mb-t">WTHR</span>
+    </div>
     <div class="mb" id="mb-menu">
       <span class="mb-i">☰</span><span class="mb-t">MENU</span>
     </div>
@@ -182,6 +212,32 @@
   <button id="mpop-close">✕ Zamknij</button>
 </div>
 
+<!-- Weather popup (mobile) -->
+<div id="weather-popup">
+  <div class="wpop-title">🌤 POGODA</div>
+  <div class="wpop-presets">
+    <button data-preset-mob="clear">☀ Clear</button>
+    <button data-preset-mob="cloudy">⛅ Cloudy</button>
+    <button data-preset-mob="overcast">☁ Overcast</button>
+    <button data-preset-mob="rain">🌧 Rain</button>
+    <button data-preset-mob="storm">⛈ Storm</button>
+    <button data-preset-mob="snow">❄ Snow</button>
+    <button data-preset-mob="fog">🌫 Fog</button>
+  </div>
+  <div class="wpop-divider"></div>
+  <div class="wpop-row"><label>Zachmurzenie</label><input type="range" id="w-coverage" min="0" max="100" value="30"><span class="wlbl" id="w-coverage-lbl">30%</span></div>
+  <div class="wpop-row"><label>Wys. chmur</label><input type="range" id="w-alt" min="100" max="6000" step="100" value="2000"><span class="wlbl" id="w-alt-lbl">2000 m</span></div>
+  <div class="wpop-row"><label>Opady</label>
+    <select id="w-precip"><option value="none">Brak</option><option value="rain">Deszcz</option><option value="snow">Śnieg</option></select>
+  </div>
+  <div class="wpop-row"><label>Intensywność</label><input type="range" id="w-precip-int" min="0" max="100" value="60"><span class="wlbl" id="w-precip-int-lbl">60%</span></div>
+  <div class="wpop-row"><label>Wiatr (m/s)</label><input type="range" id="w-wind" min="0" max="40" value="5"><span class="wlbl" id="w-wind-lbl">5 m/s</span></div>
+  <div class="wpop-row"><label>Kierunek</label><input type="range" id="w-wdir" min="0" max="359" value="270"><span class="wlbl" id="w-wdir-lbl">270°</span></div>
+  <div class="wpop-row"><label>Porywy (m/s)</label><input type="range" id="w-gust" min="0" max="15" value="2"><span class="wlbl" id="w-gust-lbl">2 m/s</span></div>
+  <div class="wpop-row"><label>Turbulencja</label><input type="range" id="w-turb" min="0" max="100" value="10"><span class="wlbl" id="w-turb-lbl">10%</span></div>
+  <button id="wpop-close">✕ Zamknij</button>
+</div>
+
 <!-- Orbit joy i zoom — ukryte (nieużywane) -->
 <div id="orbit-joy-wrap" style="display:none!important"></div>
 <div id="orbit-zoom"     style="display:none!important"></div>
@@ -199,6 +255,9 @@
 <script src="js/sim-physics.js"></script>
 <script src="js/sim-camera.js"></script>
 <script src="js/sim-hud.js"></script>
+<script src="js/sim-shaders.js"></script>
+<script src="js/sim-weather.js"></script>
+<script src="js/sim-weather-ui.js"></script>
 <script src="js/sim-controls.js"></script>
 <script src="js/sim-main.js"></script>
 </body>
