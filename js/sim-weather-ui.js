@@ -1,6 +1,48 @@
 'use strict';
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// Natychmiastowy binding guzika popup — nie czeka na weatherUI.init()
+// Działa niezależnie od tego czy WeatherSystem się zainicjował
+// ═══════════════════════════════════════════════════════════════════════════════
+(function bindWeatherPopupEarly() {
+  function tryBind() {
+    const btn   = document.getElementById('mb-weather');
+    const popup = document.getElementById('weather-popup');
+    const close = document.getElementById('wpop-close');
+    if (!btn || !popup) return;
+
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const isOpen = popup.style.display === 'flex';
+      popup.style.display = isOpen ? 'none' : 'flex';
+      btn.classList.toggle('active', !isOpen);
+    });
+
+    if (close) {
+      close.addEventListener('click', () => {
+        popup.style.display = 'none';
+        btn.classList.remove('active');
+      });
+    }
+
+    // Zamknij po kliknięciu poza popupem
+    document.addEventListener('click', (e) => {
+      if (popup.style.display === 'flex' &&
+          !popup.contains(e.target) && e.target !== btn) {
+        popup.style.display = 'none';
+        btn.classList.remove('active');
+      }
+    });
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', tryBind);
+  } else {
+    tryBind();
+  }
+})();
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // sim-weather-ui.js  —  UI do sterowania pogodą
 // Zależy od: sim-weather.js (WeatherState, WeatherPresets, weather)
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -51,18 +93,7 @@ const weatherUI = {
       document.getElementById('btn-weather-toggle').textContent = this._open ? '▲' : '▼';
     });
 
-    // Mobile popup
-    document.getElementById('mb-weather')?.addEventListener('click', () => {
-      const popup = document.getElementById('weather-popup');
-      if (!popup) return;
-      const isOpen = popup.style.display === 'flex';
-      popup.style.display = isOpen ? 'none' : 'flex';
-      document.getElementById('mb-weather')?.classList.toggle('active', !isOpen);
-    });
-    document.getElementById('wpop-close')?.addEventListener('click', () => {
-      document.getElementById('weather-popup').style.display = 'none';
-      document.getElementById('mb-weather')?.classList.remove('active');
-    });
+    // Mobile popup binding — obsługiwany przez bindWeatherPopupEarly() powyżej
 
     // Presety w mobile popup
     document.querySelectorAll('[data-preset-mob]').forEach(btn => {
