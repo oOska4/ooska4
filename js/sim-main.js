@@ -35,6 +35,7 @@ function animate(t) {
   exhaust.update(dt);
 
   if (fc % 3 === 0) updateHUD();
+  if (fc % 2 === 0 && weather) weather.update(dt, camera.position, activeEntity ? activeEntity.altM : 0);
 
   renderer.render(scene, camera);
 }
@@ -94,6 +95,11 @@ const loadInterval = setInterval(() => {
         prefetchDEM(la, lo, 5, 11);
       }
     }, 800);
+    // Inicjalizacja pogody
+    weather = new WeatherSystem();
+    weatherUI.init();
+    weatherUI.syncUI();
+
     lastRenderT = performance.now();
     animate(lastRenderT);
   }, 400);
