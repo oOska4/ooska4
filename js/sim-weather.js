@@ -51,7 +51,7 @@ class WeatherSystem {
     this._time     = 0;
     this._gustTime = 0;
 
-    this._N_CLOUD = this._isMobile ?  80 : 280;
+    this._N_CLOUD = this._isMobile ? 200 : 600;
     this._N_RAIN  = this._isMobile ? 800 : 2500;
     this._N_SNOW  = this._isMobile ? 600 : 1800;
     this._N_2D    = this._isMobile ?  80 : 200;
@@ -219,6 +219,50 @@ class WeatherSystem {
     this._cloudMesh.renderOrder   = 50;
     this._cloudDummy  = new THREE.Object3D();
     scene.add(this._cloudMesh);
+
+    // ── Overcast sheet: duża płaszczyzna przy wysokim zachmurzeniu ────────────
+    // Widoczna gdy coverage > 0.65, daje efekt jednolitego nieba (stratus/overcast).
+    const sheetTex  = this._makeOvercastTex();
+    const sheetMat  = new THREE.MeshBasicMaterial({
+      map:         sheetTex,
+      transparent: true,
+      depthWrite:  false,
+      depthTest:   false,
+      side:        THREE.DoubleSide,
+      opacity:     0,
+    });
+    const sheetGeo = new THREE.PlaneGeometry(60000, 60000);
+    this._overcastSheet = new THREE.Mesh(sheetGeo, sheetMat);
+    this._overcastSheet.rotation.x = -Math.PI / 2;
+    this._overcastSheet.frustumCulled = false;
+    this._overcastSheet.renderOrder   = 48;
+    scene.add(this._overcastSheet);
+  }
+
+  // ── Tekstura overcast (tileable szara warstwa) ────────────────────────────
+  _makeOvercastTex() {
+    const S   = 512;
+    const cv  = document.createElement('canvas');
+    cv.width  = cv.height = S;
+    const ctx = cv.getContext('2d');
+    // Jednolite jasnoszare tło
+    ctx.fillStyle = '#c2c8d2';
+    ctx.fillRect(0, 0, S, S);
+    // Subtelny noise (nieregularność warstwy)
+    for (let i = 0; i < 220; i++) {
+      const x  = Math.random() * S, y = Math.random() * S;
+      const r  = 18 + Math.random() * 55;
+      const br = 170 + Math.floor(Math.random() * 35);
+      const g  = ctx.createRadialGradient(x, y, 0, x, y, r);
+      g.addColorStop(0, `rgba(${br},${br},${br+4},0.35)`);
+      g.addColorStop(1, 'rgba(200,205,215,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(Math.max(0, x-r), Math.max(0, y-r), r*2, r*2);
+    }
+    const tex  = new THREE.CanvasTexture(cv);
+    tex.wrapS  = tex.wrapT = THREE.RepeatWrapping;
+    tex.repeat.set(10, 10);
+    return tex;
   }
 
   // ── Inicjalizacja deszczu 3D ──────────────────────────────────────────────────
@@ -313,36 +357,56 @@ class WeatherSystem {
 
     const cov = WeatherState.cloudCoverage;
     this._cloudMesh.visible = cov > 0.02;
+
+    // ── Overcast sheet ────────────────────────────────────────────────────────
+    if (this._overcastSheet) {
+      const sheetCov = Math.max(0, (cov - 0.62) / 0.38);  // 0 przy cov<0.62, 1 przy cov=1
+      this._overcastSheet.visible = sheetCov > 0.01;
+      if (this._overcastSheet.visible) {
+        const sheetY = WeatherState.cloudAltitudeM * Y_SCALE;
+        this._overcastSheet.position.set(camPos.x, sheetY, camPos.z);
+        this._overcastSheet.material.opacity = Math.min(0.90, sheetCov * 1.1);
+        // Lekko przyciemnij przy burzowej pogodzie
+        const dark = 1 - WeatherState.cloudCoverage * 0.3;
+        this._overcastSheet.material.color.setRGB(dark, dark, dark * 1.05);
+      }
+    }
+
     if (!this._cloudMesh.visible) return;
 
-    // Opacity skalowana z zachmurzeniem
-    this._cloudMesh.material.opacity = Math.min(1, cov * 1.8);
+    const N = this._cloudPos.length;
+
+    // Ile instancji renderować — zależy od zachmurzenia
+    // coverage 0.1 → ~15% instancji, coverage 1.0 → 100%
+    const visibleFrac = Math.min(1, cov * 1.15 + 0.05);
+    this._cloudMesh.count = Math.max(1, Math.ceil(N * visibleFrac));
+
+    // Mnożnik skali: większe chmury przy wyższym zachmurzeniu
+    const scaleMul = 0.45 + cov * 1.25;
 
     const dummy   = this._cloudDummy;
-    const N       = this._cloudPos.length;
     const RECYCLE = 23000 * 23000;
-
-    // Pobierz kwaternion kamery raz (billboard = każdy plane zwrócony do kamery)
-    const camQ = camera.quaternion;
+    const camQ    = camera.quaternion;
 
     for (let i = 0; i < N; i++) {
       const p = this._cloudPos[i];
 
-      // Recykling: za daleka chmura → losowa pozycja w pobliżu kamery
+      // Recykling: za daleka chmura
       const dx = p.x - camPos.x, dz = p.z - camPos.z;
       if (dx*dx + dz*dz > RECYCLE) {
-        const r = 4000 + Math.random() * 18000;
-        const a = Math.random() * Math.PI * 2;
+        // Przy wysokim zachmurzeniu wypełniaj bliżej (mniejszy rozrzut)
+        const rMax = 6000 + (1 - cov) * 16000;
+        const r    = 2000 + Math.random() * rMax;
+        const a    = Math.random() * Math.PI * 2;
         p.x = camPos.x + Math.cos(a) * r;
         p.z = camPos.z + Math.sin(a) * r;
         p.y = (WeatherState.cloudAltitudeM +
                Math.random() * WeatherState.cloudThicknessM) * Y_SCALE;
       }
 
-      // Ustaw macierz instancji: pozycja + billboard rotation + skala
       dummy.position.set(p.x, p.y, p.z);
       dummy.quaternion.copy(camQ);
-      dummy.scale.setScalar(this._cloudScale[i]);
+      dummy.scale.setScalar(this._cloudScale[i] * scaleMul);
       dummy.updateMatrix();
       this._cloudMesh.setMatrixAt(i, dummy.matrix);
     }
