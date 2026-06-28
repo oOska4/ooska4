@@ -56,7 +56,6 @@ class WeatherSystem {
     this._N_SNOW  = this._isMobile ? 600 : 1800;
     this._N_2D    = this._isMobile ?  80 : 200;
 
-    this._cloudGeo  = null;
     this._cloudMesh = null;
     this._rainGeo   = null;
     this._rainMesh  = null;
@@ -127,45 +126,98 @@ class WeatherSystem {
     return WeatherState.turbulence * (inCloud ? 1.4 : 1.0);
   }
 
-  // ── Inicjalizacja chmur ───────────────────────────────────────────────────────
-  _initClouds() {
-    const N = this._N_CLOUD;
-    const pos = new Float32Array(N * 3);
-    const sz  = new Float32Array(N);
-    const op  = new Float32Array(N);
-    const tp  = new Float32Array(N);
+  // ── Tekstura chmury z Canvas (soft multi-blob cumulus) ───────────────────────
+  _makeCloudTex() {
+    const S = 256;
+    const cv = document.createElement('canvas');
+    cv.width = cv.height = S;
+    const ctx = cv.getContext('2d');
+    ctx.clearRect(0, 0, S, S);
 
-    for (let i = 0; i < N; i++) {
-      const r = 3000 + Math.random() * 22000, a = Math.random() * Math.PI * 2;
+    // Wiele zachodzących na siebie miękkich kół = kształt cumulus
+    const blobs = [
+      [0.50, 0.60, 0.36],   // [cx, cy, r] w jednostkach 0–1
+      [0.26, 0.66, 0.26],
+      [0.74, 0.66, 0.29],
+      [0.50, 0.44, 0.23],
+      [0.37, 0.54, 0.21],
+      [0.63, 0.54, 0.21],
+      [0.50, 0.72, 0.19],
+      [0.20, 0.74, 0.16],
+      [0.80, 0.74, 0.16],
+    ];
+    for (const [bx, by, br] of blobs) {
+      const g = ctx.createRadialGradient(bx*S, by*S, 0, bx*S, by*S, br*S);
+      g.addColorStop(0.0, 'rgba(255,255,255,0.88)');
+      g.addColorStop(0.5, 'rgba(250,250,250,0.55)');
+      g.addColorStop(0.8, 'rgba(240,240,242,0.20)');
+      g.addColorStop(1.0, 'rgba(255,255,255,0.00)');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, S, S);
+    }
+    // Lekkie przyciemnienie dolnej części (cień chmury)
+    const shadow = ctx.createLinearGradient(0, S*0.55, 0, S);
+    shadow.addColorStop(0, 'rgba(160,170,180,0.00)');
+    shadow.addColorStop(1, 'rgba(140,155,170,0.30)');
+    ctx.fillStyle = shadow;
+    ctx.fillRect(0, 0, S, S);
+
+    const tex = new THREE.CanvasTexture(cv);
+    tex.premultiplyAlpha = false;
+    return tex;
+  }
+
+  // ── Inicjalizacja chmur — InstancedMesh + billboard ──────────────────────────
+  // InstancedMesh: 1 draw call, brak limitu gl_PointSize, prawdziwe billboard.
+  // Każda "chmura bazowa" ma N_PUFFS puffsów rozrzuconych wokół niej → realistyczny kształt.
+  _initClouds() {
+    // Generuj klastry puffsów
+    this._cloudPos    = [];   // {x,y,z} — pozycja każdego puffsa w świecie
+    this._cloudScale  = [];   // rozmiar każdego puffsa (world units)
+    this._cloudBright = [];   // jasność (0=ciemniejszy spód, 1=jasny)
+    this._cloudBaseIdx = [];  // indeks chmury bazowej dla recyklingu
+
+    const N_BASE = Math.ceil(this._N_CLOUD / 5);  // ~56 chmur bazowych
+    const basePositions = [];
+
+    for (let c = 0; c < N_BASE; c++) {
+      const r = 3000 + Math.random() * 22000;
+      const a = Math.random() * Math.PI * 2;
       const altY = (WeatherState.cloudAltitudeM + Math.random() * WeatherState.cloudThicknessM) * Y_SCALE;
-      pos[i*3] = Math.cos(a)*r; pos[i*3+1] = altY; pos[i*3+2] = Math.sin(a)*r;
-      sz[i] = 300 + Math.random() * 500;
-      op[i] = 0.35 + Math.random() * 0.55;
-      tp[i] = Math.random() < 0.3 ? 1 : 0;
+      basePositions.push({ x: Math.cos(a)*r, y: altY, z: Math.sin(a)*r });
+
+      const nPuffs = 4 + Math.floor(Math.random() * 4);  // 4–7 puffsów per chmura
+      for (let p = 0; p < nPuffs && this._cloudPos.length < this._N_CLOUD; p++) {
+        const spread = 300 + Math.random() * 400;
+        this._cloudPos.push({
+          x: Math.cos(a)*r + (Math.random()-0.5)*spread,
+          y: altY + (Math.random()-0.5)*80*Y_SCALE,
+          z: Math.sin(a)*r + (Math.random()-0.5)*spread,
+        });
+        this._cloudScale.push(250 + Math.random() * 450);
+        this._cloudBright.push(0.85 + Math.random() * 0.15);
+        this._cloudBaseIdx.push(c);
+      }
     }
 
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-    geo.setAttribute('aSize',    new THREE.BufferAttribute(sz,  1));
-    geo.setAttribute('aOpacity', new THREE.BufferAttribute(op,  1));
-    geo.setAttribute('aType',    new THREE.BufferAttribute(tp,  1));
-    this._cloudGeo = geo;
+    this._cloudBases = basePositions;
+    const N = this._cloudPos.length;
 
-    const mat = new THREE.ShaderMaterial({
-      vertexShader:   CLOUD_VERT,
-      fragmentShader: CLOUD_FRAG,
-      transparent:    true,
-      depthWrite:     false,
-      uniforms: {
-        uCoverage: { value: WeatherState.cloudCoverage },
-        uTime:     { value: 0 },
-        uSkyColor: { value: new THREE.Color(0x9fc3e6) },
-      },
+    // Płaszczyzna z szerokim aspect ratio (chmury są szersze niż wyższe)
+    const geo = new THREE.PlaneGeometry(1, 0.55);
+    const mat = new THREE.MeshBasicMaterial({
+      map:          this._makeCloudTex(),
+      transparent:  true,
+      depthWrite:   false,
+      depthTest:    false,
+      side:         THREE.DoubleSide,
+      opacity:      1.0,
     });
 
-    this._cloudMesh = new THREE.Points(geo, mat);
+    this._cloudMesh   = new THREE.InstancedMesh(geo, mat, N);
     this._cloudMesh.frustumCulled = false;
     this._cloudMesh.renderOrder   = 50;
+    this._cloudDummy  = new THREE.Object3D();
     scene.add(this._cloudMesh);
   }
 
@@ -255,32 +307,47 @@ class WeatherSystem {
     this._applyFogSky(planeAlt);
   }
 
-  // ── Chmury (recykling) ────────────────────────────────────────────────────────
-  _updateClouds(dt, camPos, planeAlt) {
-    if (!this._cloudMesh) return;
-    this._cloudMesh.visible = WeatherState.cloudCoverage > 0.02;
+  // ── Chmury — billboard InstancedMesh ─────────────────────────────────────────
+  _updateClouds(dt, camPos) {
+    if (!this._cloudMesh || !this._cloudPos) return;
+
+    const cov = WeatherState.cloudCoverage;
+    this._cloudMesh.visible = cov > 0.02;
     if (!this._cloudMesh.visible) return;
 
-    this._cloudMesh.material.uniforms.uCoverage.value = WeatherState.cloudCoverage;
-    this._cloudMesh.material.uniforms.uTime.value     = this._time;
-    const sky = scene.background;
-    if (sky && sky.isColor) this._cloudMesh.material.uniforms.uSkyColor.value.copy(sky);
+    // Opacity skalowana z zachmurzeniem
+    this._cloudMesh.material.opacity = Math.min(1, cov * 1.8);
 
-    const pos = this._cloudGeo.attributes.position;
-    const RECYCLE_DSQ = 24000 * 24000;
-    let recycled = 0;
-    for (let i = 0; i < this._N_CLOUD && recycled < 10; i++) {
-      const dx = pos.getX(i) - camPos.x, dz = pos.getZ(i) - camPos.z;
-      if (dx*dx + dz*dz > RECYCLE_DSQ) {
-        const r = 4000 + Math.random() * 18000, a = Math.random() * Math.PI * 2;
-        const altY = (WeatherState.cloudAltitudeM + Math.random() * WeatherState.cloudThicknessM) * Y_SCALE;
-        pos.setX(i, camPos.x + Math.cos(a) * r);
-        pos.setY(i, altY);
-        pos.setZ(i, camPos.z + Math.sin(a) * r);
-        recycled++;
+    const dummy   = this._cloudDummy;
+    const N       = this._cloudPos.length;
+    const RECYCLE = 23000 * 23000;
+
+    // Pobierz kwaternion kamery raz (billboard = każdy plane zwrócony do kamery)
+    const camQ = camera.quaternion;
+
+    for (let i = 0; i < N; i++) {
+      const p = this._cloudPos[i];
+
+      // Recykling: za daleka chmura → losowa pozycja w pobliżu kamery
+      const dx = p.x - camPos.x, dz = p.z - camPos.z;
+      if (dx*dx + dz*dz > RECYCLE) {
+        const r = 4000 + Math.random() * 18000;
+        const a = Math.random() * Math.PI * 2;
+        p.x = camPos.x + Math.cos(a) * r;
+        p.z = camPos.z + Math.sin(a) * r;
+        p.y = (WeatherState.cloudAltitudeM +
+               Math.random() * WeatherState.cloudThicknessM) * Y_SCALE;
       }
+
+      // Ustaw macierz instancji: pozycja + billboard rotation + skala
+      dummy.position.set(p.x, p.y, p.z);
+      dummy.quaternion.copy(camQ);
+      dummy.scale.setScalar(this._cloudScale[i]);
+      dummy.updateMatrix();
+      this._cloudMesh.setMatrixAt(i, dummy.matrix);
     }
-    if (recycled > 0) pos.needsUpdate = true;
+
+    this._cloudMesh.instanceMatrix.needsUpdate = true;
   }
 
   // ── Opady 3D — fizyka względna ────────────────────────────────────────────────
@@ -412,50 +479,52 @@ class WeatherSystem {
     if (isRain) {
       const FALL = 8 + WeatherState.precipIntensity * 5;
 
-      // Aparentna prędkość deszczu względem kamery (world space)
+      // Aparentna prędkość deszczu w przestrzeni świata (world units/s)
       _rainApparent.set(
         _windVel.x - _acVel.x,
         -FALL * Y_SCALE - _acVel.y,
         _windVel.z - _acVel.z
       );
 
-      // Wektory osi kamery z kwaternionu (brak alokacji)
+      // Osie kamery z kwaternionu (bez alokacji)
       _camRight.set(1, 0, 0).applyQuaternion(camera.quaternion);
       _camUp.set(0, 1, 0).applyQuaternion(camera.quaternion);
-      _camFwd.set(0, 0, -1).applyQuaternion(camera.quaternion);
 
-      // Projekcja na płaszczyznę ekranu (dot product)
-      const scr_x =  _rainApparent.dot(_camRight);   // prawo
-      const scr_y =  _rainApparent.dot(_camUp);      // góra (świat)
-      // scr_y ujemne = deszcz idzie w dół na ekranie ✓
+      // Projekcja na płaszczyznę ekranu
+      const scr_x = _rainApparent.dot(_camRight);   // + = prawo w camera = prawo na ekranie
+      const scr_y = _rainApparent.dot(_camUp);      // + = góra w camera = góra na ekranie
 
-      // Kąt smugi od pionu + długość
-      const angle  = Math.atan2(-scr_x, scr_y);          // od pionu
-      const speed  = Math.sqrt(scr_x*scr_x + scr_y*scr_y);
-      const baseLen = 12 + WeatherState.precipIntensity * 8;
-      const len    = baseLen * Math.min(5, 1 + speed * 0.04);  // max 5× długość
+      // Kierunek na ekranie canvas (Y odwrócone względem camera):
+      //   ndx = scr_x  (prawo = prawo ✓)
+      //   ndy = -scr_y (góra camera = góra canvas, ale canvas Y rośnie w dół)
+      //          scr_y ujemny (deszcz spada) → ndy dodatni → w dół na canvas ✓
+      const speed = Math.sqrt(scr_x * scr_x + scr_y * scr_y);
+      if (speed < 0.001) return;
+
+      const ndx    = scr_x / speed;
+      const ndy    = -scr_y / speed;
+      const baseLen = 12 + WeatherState.precipIntensity * 10;
+      const len    = Math.min(baseLen * (1 + speed * 0.045), baseLen * 6);
       const alpha  = 0.15 + WeatherState.precipIntensity * 0.25;
-
-      const ca = Math.cos(angle), sa = Math.sin(angle);
+      // Szybkość ruchu kropel na ekranie (skalowana do ~1 przy normalnym deszczu)
+      const moveScale = speed * 0.05 * dt;
 
       ctx.strokeStyle = `rgba(180, 210, 240, ${alpha})`;
       ctx.lineWidth   = 1.0;
       ctx.beginPath();
 
       for (const d of this._drops2D) {
-        // Przesuwaj kroplę z prędkością aparentną (skalowaną)
-        d.x += -scr_x * d.spd * dt * 0.8;
-        d.y +=  scr_y * d.spd * dt * 0.8;   // scr_y ujemne = w dół ✓
+        d.x += ndx * d.spd * moveScale;
+        d.y += ndy * d.spd * moveScale;
 
-        // Zawijaj
         if (d.x < -10)  d.x = W + 10;
         if (d.x > W+10) d.x = -10;
         if (d.y < -10)  d.y = H + 10;
         if (d.y > H+10) d.y = -10;
 
-        // Rysuj smugę w kierunku kąta aparentnego
+        // Smuga w kierunku ruchu deszczu
         ctx.moveTo(d.x, d.y);
-        ctx.lineTo(d.x + sa * len, d.y - ca * len);
+        ctx.lineTo(d.x + ndx * len, d.y + ndy * len);
       }
       ctx.stroke();
 
@@ -466,12 +535,14 @@ class WeatherSystem {
       _rainApparent.set(_windVel.x - _acVel.x, -3*Y_SCALE - _acVel.y, _windVel.z - _acVel.z);
       const scr_x = _rainApparent.dot(_camRight);
       const scr_y = _rainApparent.dot(_camUp);
+      // Canvas: Y odwrócone
+      const sndx = scr_x, sndy = -scr_y;
 
       ctx.fillStyle = `rgba(220,230,255,${0.40 * WeatherState.precipIntensity})`;
       for (const d of this._drops2D) {
         const swing = Math.sin(this._time * 1.1 + d.spd) * 0.8;
-        d.x += (-scr_x * 0.4 + swing) * d.spd * dt;
-        d.y +=  scr_y * 0.4 * d.spd * dt;
+        d.x += (sndx * 0.4 + swing) * d.spd * dt;
+        d.y += sndy * 0.4 * d.spd * dt;
         if (d.x < -5)  d.x = W + 5;
         if (d.x > W+5) d.x = -5;
         if (d.y < -5)  d.y = H + 5;
@@ -512,17 +583,32 @@ class WeatherSystem {
   }
 
   _repositionClouds() {
-    if (!this._cloudGeo) return;
-    const pos = this._cloudGeo.attributes.position;
-    const cp  = camera.position;
-    for (let i = 0; i < this._N_CLOUD; i++) {
-      const r = 3000 + Math.random() * 20000, a = Math.random() * Math.PI * 2;
-      const altY = (WeatherState.cloudAltitudeM + Math.random() * WeatherState.cloudThicknessM) * Y_SCALE;
-      pos.setX(i, cp.x + Math.cos(a) * r);
-      pos.setY(i, altY);
-      pos.setZ(i, cp.z + Math.sin(a) * r);
+    if (!this._cloudPos) return;
+    const cp = camera.position;
+    // Grupuj po chmurze bazowej i przesuń całe klastry
+    const baseMoved = new Set();
+    for (let i = 0; i < this._cloudPos.length; i++) {
+      const bi = this._cloudBaseIdx[i];
+      if (!baseMoved.has(bi)) {
+        const r = 3000 + Math.random() * 20000;
+        const a = Math.random() * Math.PI * 2;
+        const altY = (WeatherState.cloudAltitudeM +
+                      Math.random() * WeatherState.cloudThicknessM) * Y_SCALE;
+        if (this._cloudBases[bi]) {
+          this._cloudBases[bi].x = cp.x + Math.cos(a) * r;
+          this._cloudBases[bi].y = altY;
+          this._cloudBases[bi].z = cp.z + Math.sin(a) * r;
+        }
+        baseMoved.add(bi);
+      }
+      const base = this._cloudBases[this._cloudBaseIdx[i]];
+      if (base) {
+        const spread = 300 + Math.random() * 400;
+        this._cloudPos[i].x = base.x + (Math.random()-0.5)*spread;
+        this._cloudPos[i].y = base.y + (Math.random()-0.5)*80*Y_SCALE;
+        this._cloudPos[i].z = base.z + (Math.random()-0.5)*spread;
+      }
     }
-    pos.needsUpdate = true;
   }
 
   getHUDString() {
