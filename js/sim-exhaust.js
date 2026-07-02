@@ -28,7 +28,8 @@
 
 // ── Strojenie ────────────────────────────────────────────────────────────────
 const CONTRAIL_MAX_POINTS   = 500;   // punktów smugi na silnik (limit pamięci/geo)
-const CONTRAIL_MIN_SPACING  = 30;    // [m] min. odstęp między kolejnymi punktami
+const CONTRAIL_MIN_SPACING  = 14;    // [m] min. odstęp między kolejnymi punktami (przy dużej prędkości)
+const CONTRAIL_MAX_SPAWN_S  = 0.12;  // [s] maks. czas między punktami — gwarantuje CIĄGŁOŚĆ nawet przy małej prędkości (bez tego przy wolnym locie/kołowaniu smuga "pykała" nowym segmentem co kilka sekund zamiast płynnie rosła)
 const CONTRAIL_BASE_WIDTH   = 1.2;   // [m] szerokość tuż za silnikiem
 const CONTRAIL_WIDTH_GROWTH = 0.5;   // [m/s wieku] tempo rozszerzania smugi
 const CONTRAIL_MAX_WIDTH    = 85;    // [m] górny limit szerokości (czytelność/perf)
@@ -141,7 +142,7 @@ class ContrailSystem {
     const strength = tempFactor * thrFactor;
 
     let trail = this.trails.get(key);
-    if (!trail) { trail = { points: [] }; this.trails.set(key, trail); }
+    if (!trail) { trail = { points: [], timeSinceSpawn: 0 }; this.trails.set(key, trail); }
 
     if (strength < 0.03) return; // za ciepło / silniki na jałowym — brak śladu
 
@@ -149,8 +150,11 @@ class ContrailSystem {
     const last = pts[pts.length - 1];
     if (last) {
       const dx = pos.x - last.x, dy = pos.y - last.y, dz = pos.z - last.z;
-      if (dx * dx + dy * dy + dz * dz < CONTRAIL_MIN_SPACING * CONTRAIL_MIN_SPACING) return;
+      const distOk = (dx * dx + dy * dy + dz * dz) >= CONTRAIL_MIN_SPACING * CONTRAIL_MIN_SPACING;
+      const timeOk = trail.timeSinceSpawn >= CONTRAIL_MAX_SPAWN_S;
+      if (!distOk && !timeOk) return;
     }
+    trail.timeSinceSpawn = 0;
     pts.push({ x: pos.x, y: pos.y, z: pos.z, age: 0, strength, seed: Math.random() * 1000 });
     if (pts.length > CONTRAIL_MAX_POINTS) pts.splice(0, pts.length - CONTRAIL_MAX_POINTS);
   }
@@ -174,6 +178,7 @@ class ContrailSystem {
     }
 
     for (const [key, trail] of this.trails) {
+      trail.timeSinceSpawn = (trail.timeSinceSpawn || 0) + dt;
       const pts = trail.points;
       for (let i = pts.length - 1; i >= 0; i--) {
         const p = pts[i];
