@@ -978,4 +978,6 @@ function updateSky(dt) {
   cloudUniforms.windOffset.value.y += dt * (4 + windDrift*15);
 
   updateRain(dt, camera.position);
+  // Synchronizuj kolor smug kondensacyjnych z pora dnia
+  if (exhaust) exhaust.setDayNight(dayFactor, nightFactor);
 }
