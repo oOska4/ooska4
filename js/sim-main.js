@@ -37,7 +37,13 @@ function animate(t) {
   if (fc % 3 === 0) updateHUD();
   if (fc % 2 === 0 && weather) weather.update(dt, camera.position, activeEntity ? activeEntity.altM : 0);
 
-  renderer.render(scene, camera);
+  // Niebo (Słońce/Księżyc/gwiazdy, atmosfera, chmury wolumetryczne, deszcz)
+  // aktualizowane co klatkę dla płynności animacji czasu i smug deszczu.
+  updateSky(dt);
+
+  // Cały potok renderowania (scena → mainRT z głębią → chmury z okluzją →
+  // złożenie na ekranie) — patrz sim-sky.js/renderFrame().
+  renderFrame();
 }
 
 // ── Start ────────────────────────────────────────────────────────────────────

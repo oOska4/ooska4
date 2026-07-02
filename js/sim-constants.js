@@ -12,6 +12,8 @@ const AIRPORTS = {
           spawnLat: 51.09919149901774,  spawnLon: 16.897240753263095,  heading: 296 },
   LOWI: { name: 'Innsbruck',  refLat: 47.26116, refLon: 11.34567,
           spawnLat: 47.25896522075547,  spawnLon: 11.332409847516226,  heading: 81  },
+  EDDF: { name: 'Fankfurt',  refLat: 50.03979, refLon: 8.58550,
+          spawnLat: 50.03979708121752,  spawnLon: 8.585507077468781,  heading: 249  },  
 };
 
 let currentAirport  = 'EPWR';

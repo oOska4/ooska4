@@ -43,8 +43,10 @@
 })();
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// sim-weather-ui.js  —  UI do sterowania pogodą
+// sim-weather-ui.js  —  UI do sterowania pogodą + niebem (czas/data/jakość)
 // Zależy od: sim-weather.js (WeatherState, WeatherPresets, weather)
+//            sim-sky.js     (TimeState, formatTimeHHMM, formatDayOfYear,
+//                             setSkyQuality, QualityPresets)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const weatherUI = {
@@ -54,7 +56,7 @@ const weatherUI = {
     // Definiuj setter-y raz, binduj do obu zestawów (desktop dw- i mobile w-)
     const bindings = [
       ['coverage', v => { WeatherState.cloudCoverage = v / 100; },          v => Math.round(v) + '%'],
-      ['alt',      v => { WeatherState.cloudAltitudeM = +v; weather?._repositionClouds(); }, v => v + ' m'],
+      ['alt',      v => { WeatherState.cloudAltitudeM = +v; },              v => v + ' m'],
       ['wind',     v => { WeatherState.windSpeedMs = +v; },                  v => v + ' m/s'],
       ['wdir',     v => { WeatherState.windDirectionDeg = +v; }, v => {
         const dirs = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
@@ -70,12 +72,12 @@ const weatherUI = {
       this._bind('w-'  + name, setter, fmt);  // mobile
     }
 
-    // Opady (select + intensywność)
+    // Opady (select + intensywność) — tylko "Brak"/"Deszcz" (śnieg nieobsługiwany)
     for (const id of ['w-precip', 'dw-precip']) {
       const el = document.getElementById(id);
       if (el) el.addEventListener('change', () => {
         WeatherState.precipitation = el.value !== 'none';
-        WeatherState.precipType    = el.value === 'none' ? 'rain' : el.value;
+        WeatherState.precipType    = 'rain';
       });
     }
 
@@ -104,6 +106,9 @@ const weatherUI = {
         btn.classList.add('active');
       });
     });
+
+    // ── NIEBO: czas / data / animacja / jakość chmur ──────────────────────────
+    this._bindSkyControls();
   },
 
   // Bind slider → WeatherState + label
@@ -113,9 +118,93 @@ const weatherUI = {
     if (!el) return;
     const fmt = labelFn || (v => v + (unit || ''));
     el.addEventListener('input', () => {
+      if (weather && weather._trans) weather._trans.t = 1.0;  // przerwij preset transition
       setter(el.value);
       if (lbl) lbl.textContent = fmt(el.value);
     });
+  },
+
+  // ── Sterowanie niebem (czas/data/animacja/jakość) — sim-sky.js ──────────────
+  _bindSkyControls() {
+    const timeBind = (id) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.addEventListener('input', () => {
+        TimeState.animating = false;
+        this._setAnimBtnLabel(false);
+        TimeState.minutesOfDay = parseFloat(el.value);
+        this._setTimeLabel(id, TimeState.minutesOfDay);
+      });
+    };
+    const dateBind = (id) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.addEventListener('input', () => {
+        TimeState.dayOfYear = parseInt(el.value, 10);
+        this._setDateLabel(id, TimeState.dayOfYear);
+      });
+    };
+    timeBind('dw-time'); timeBind('w-time');
+    dateBind('dw-date'); dateBind('w-date');
+
+    // Animacja czasu — przycisk toggle (desktop + mobile)
+    for (const id of ['dw-anim', 'w-anim']) {
+      document.getElementById(id)?.addEventListener('click', () => {
+        TimeState.animating = !TimeState.animating;
+        this._setAnimBtnLabel(TimeState.animating);
+      });
+    }
+    // Prędkość animacji (minuty symulacji na sekundę realnego czasu)
+    for (const id of ['dw-anim-speed', 'w-anim-speed']) {
+      const el = document.getElementById(id);
+      if (!el) continue;
+      el.addEventListener('change', () => {
+        TimeState.animMinutesPerSecond = parseFloat(el.value);
+      });
+      TimeState.animMinutesPerSecond = parseFloat(el.value);
+    }
+
+    // Jakość chmur (Niska/Średnia/Wysoka)
+    document.querySelectorAll('[data-qual]').forEach(btn => {
+      btn.addEventListener('click', () => setSkyQuality(btn.dataset.qual));
+    });
+
+    this._setTimeLabel('dw-time', TimeState.minutesOfDay);
+    this._setTimeLabel('w-time',  TimeState.minutesOfDay);
+    this._setDateLabel('dw-date', TimeState.dayOfYear);
+    this._setDateLabel('w-date',  TimeState.dayOfYear);
+  },
+
+  _setAnimBtnLabel(animating) {
+    for (const id of ['dw-anim', 'w-anim']) {
+      const el = document.getElementById(id);
+      if (!el) continue;
+      el.textContent = animating ? '⏸ Zatrzymaj' : '▶ Animuj czas';
+      el.classList.toggle('active', animating);
+    }
+  },
+
+  _setTimeLabel(id, minutes) {
+    const lbl = document.getElementById(id + '-lbl');
+    const el  = document.getElementById(id);
+    if (el)  el.value = minutes;
+    if (lbl) lbl.textContent = formatTimeHHMM(minutes);
+  },
+
+  _setDateLabel(id, doy) {
+    const lbl = document.getElementById(id + '-lbl');
+    const el  = document.getElementById(id);
+    if (el)  el.value = doy;
+    if (lbl) lbl.textContent = formatDayOfYear(doy);
+  },
+
+  // Wołane z sim-sky.js co klatkę, TYLKO gdy animacja czasu jest aktywna —
+  // aktualizuje położenie suwaków bez wywoływania ich 'input' (brak pętli).
+  syncSkyUI() {
+    this._setTimeLabel('dw-time', TimeState.minutesOfDay);
+    this._setTimeLabel('w-time',  TimeState.minutesOfDay);
+    this._setDateLabel('dw-date', TimeState.dayOfYear);
+    this._setDateLabel('w-date',  TimeState.dayOfYear);
   },
 
   // Synchronizuj UI z WeatherState (np. po zmianie presetu)
@@ -137,7 +226,7 @@ const weatherUI = {
     }
     for (const id of ['w-precip', 'dw-precip']) {
       const el = document.getElementById(id);
-      if (el) el.value = s.precipitation ? s.precipType : 'none';
+      if (el) el.value = s.precipitation ? 'rain' : 'none';
     }
   },
 

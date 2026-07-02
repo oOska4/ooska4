@@ -87,6 +87,11 @@ async function loadA321Model() {
           mat.map.encoding   = THREE.sRGBEncoding;
           mat.map.anisotropy = maxAniso;
         }
+        // Dodatkowy stały "fill" (+20,20,20 w skali 0-255) niezależny od
+        // oświetlenia sceny — samolot inaczej gubił się w cieniu własnym,
+        // gęstej mgle albo nocą, gdy sunLight/hemiLight są słabe. emissive
+        // dodaje stałą jasność niezależnie od padającego światła.
+        if (mat.emissive) mat.emissive.addScalar(20 / 255);
       }
     });
     if (child.name.startsWith(A321_GEAR_PREFIX)) gearGroup.add(child); // .add() sam usuwa z poprzedniego rodzica
@@ -110,7 +115,7 @@ const A321_PARAMS = {
   clAlpha:    5.2,
   clMax:      1.65,
   cdMin:      0.045,
-  cdAlpha:    0.90,
+  cdAlpha:    0.85,
   eOswald:    0.78,
   AR:         10.48,
   flapCl:     [0.0, 0.70, 1.20, 1.80],
