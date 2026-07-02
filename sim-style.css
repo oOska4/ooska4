@@ -391,3 +391,14 @@ body.is-touch #mob-menu-popup.open { display: flex; }
   border-radius: 6px; color: #668; font-size: 9px; font-family: inherit;
   cursor: pointer; text-align: center;
 }
+
+/* ── NIEBO: przycisk animacji czasu (mobile) + stan "active" wspólny ──── */
+.wpop-row button {
+  padding: 6px 4px; font-size: 8px;
+  background: #0e1e35; border: 1px solid #1a3a5c; border-radius: 4px;
+  color: #c8e8ff; cursor: pointer; font-family: inherit;
+}
+.wpop-row button:hover { background: #1a3050; }
+.w-row button.active,
+.wpop-row button.active,
+.w-presets button.active { background: #1a3a5c; border-color: #3a8abf; color: #fff; }
