@@ -342,6 +342,7 @@ class ExhaustSystem {
   }
 }
 
+
 // Instancja tworzona po załadowaniu modelu (activeEntity musi istnieć)
 function initExhaust() {
   if (exhaust) { scene.remove(exhaust._mesh); }
