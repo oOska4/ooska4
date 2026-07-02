@@ -1,350 +1,275 @@
 'use strict';
 
-// ════════════════════════════════════════════════════════════════════════════════
-// sim-exhaust.js  —  Realistyczne smugi kondensacyjne (contrails) A321
+// ── System smug kondensacyjnych (kontraili) ────────────────────────────────────
 //
-// Fizykachmur:
-//  - Smugi powstają tylko przy T < -40°C (ISA: ~8200 m MSL) i wilgotności
-//    wystarczającej do kondensacji — modelowane przez altitudeCF() i humidCF().
-//  - Każdy z dwóch silników emituje niezależnie z dokładnej pozycji world-space
-//    (transformowana przez macierz modelu samolotu co klatkę).
-//  - Każdy segment smugi to quad (2 trojkąty) rozciągany prostopadle do
-//    kierunku lotu — zapewnia poprawną szerokość niezależnie od kąta kamery.
-//  - Smuga żyje MAX_AGE sekund: pierwsze 2s → nabiera kryształków/opacity,
-//    potem stale rośnie w szerokość (turbulencja atmosferyczna) i zanika.
-//  - Wiatr (WeatherState) dryfuje starsze segmenty poziomo.
-//  - System używa puli (pool) segmentów → zero GC w locie, stała pamięć.
+// Zastępuje CAŁKOWICIE poprzedni system dymu z silników (cząsteczki-punkty
+// emitowane zawsze, niezależnie od wysokości). Kontrail w realnym świecie
+// powstaje tylko wtedy, gdy gorące, wilgotne spaliny silnika mieszają się
+// z wystarczająco zimnym powietrzem otoczenia, żeby para wodna natychmiast
+// skropliła się/zamarzła (uproszczone kryterium Schmidt-Appleman). W
+// atmosferze wzorcowej (ISA, lapse rate 6.5°C/1000m) odpowiada to zwykle
+// wysokościom ok. 8000–10000 m — czyli klasycznemu poziomowi przelotowemu
+// dużych odrzutowców. Poniżej tego pasma silniki nie zostawiają już żadnego
+// widocznego śladu (tak jak w rzeczywistości — brak "dymu" przy starcie/kołowaniu).
 //
-// Eksportuje: ExhaustSystem (klasa), exhaust (instancja tworzona po modelu)
-// Wymaga:    scene, camera, activeEntity, WeatherState, weather,
-//            Y_SCALE, DEM_EXAG (sim-constants.js)
-// ════════════════════════════════════════════════════════════════════════════════
+// Publiczne API zachowane 1:1 z poprzednią wersją (klasa tworzona raz w
+// sim-main.js, potem co klatkę: emit() per silnik + update(dt) raz na klatkę),
+// więc reszta kodu (sim-main.js, sim-controls.js/emitExhaust) nie musi się
+// tym przejmować — jedyna zmiana w wywołujących: emit() dostaje teraz
+// dodatkowo identyfikator silnika ('L'/'R') i wysokość samolotu w metrach,
+// żeby moduł mógł sam ocenić warunki termiczne bez zgadywania na podstawie
+// współrzędnych world-space (te są przeskalowane przez DEM_EXAG/Y_SCALE).
+//
+// Renderowanie: zamiast chmury punktów-sprite'ów, każdy silnik dostaje własną
+// "wstążkę" (ribbon) zbudowaną z pary wierzchołków na każdy zapamiętany punkt
+// trajektorii, zawsze zwróconą ku kamerze (billboard wzdłuż lokalnej stycznej
+// do smugi). Punkty starzeją się, dryfują z wiatrem, powoli rozszerzają się
+// (dyfuzja turbulentna) i zanikają — dokładnie tak, jak prawdziwy kontrail.
 
-// ── Stałe segmentu smugi ──────────────────────────────────────────────────────
-const CT_MAX_AGE        = 55.0;   // s  — czas życia segmentu smugi
-const CT_INIT_WIDTH     = 1.2;    // m  — początkowa szerokość tuż za silnikiem
-const CT_MAX_WIDTH      = 320.0;  // m  — maksymalna szerokość (turbulencja)
-const CT_EMIT_INTERVAL  = 0.055;  // s  — co ile sekund nowy segment
-const CT_POOL_SIZE      = 2200;   // segmenty × 2 silniki (pula łączna)
-const CT_FADE_IN        = 2.2;    // s  — czas narastania opacity
-const CT_FADE_OUT_START = 0.62;   // frakcja życia → zaczyna zanikać
-const CT_MAX_OPACITY    = 0.82;   // peak opacity przy dobrej wilgotności
-const CT_ALT_MIN_M      = 7800;   // m MSL — minimalna wysokość powstawania
-const CT_ALT_FULL_M     = 9500;   // m MSL — pełne warunki od tej wysokości
-const CT_TEMP_COEFF     = 0.98;   // wrażliwość na temperaturę ISA
+// ── Strojenie ────────────────────────────────────────────────────────────────
+const CONTRAIL_MAX_POINTS   = 500;   // punktów smugi na silnik (limit pamięci/geo)
+const CONTRAIL_MIN_SPACING  = 30;    // [m] min. odstęp między kolejnymi punktami
+const CONTRAIL_BASE_WIDTH   = 1.2;   // [m] szerokość tuż za silnikiem
+const CONTRAIL_WIDTH_GROWTH = 0.5;   // [m/s wieku] tempo rozszerzania smugi
+const CONTRAIL_MAX_WIDTH    = 85;    // [m] górny limit szerokości (czytelność/perf)
+const CONTRAIL_FADE_IN_S    = 0.35;  // [s] czas narastania przezroczystości przy dyszy
+// Próg formowania (uproszczone Schmidt-Appleman): pełny kontrail przy ≤ -40°C,
+// zero przy ≥ -26°C, płynne przejście pomiędzy.
+const CONTRAIL_TEMP_FULL = -40;
+const CONTRAIL_TEMP_NONE = -26;
 
-// Odsunięcie silnika od centrum modelu [m] — kalibrowane do a321.obj
-// X: boczne (±), Y: w dół od osi, Z: do tyłu (oś -Z samolotu = do przodu)
-const ENG_OFFSET_X =  9.6;
-const ENG_OFFSET_Y = -2.8;
-const ENG_OFFSET_Z = 22.0;  // do tyłu od centrum (Z+ = tył)
+// ── TYMCZASOWE dla testów wyglądu ───────────────────────────────────────────
+// Gdy true: pomija próg temperatury/wysokości, smuga formuje się zawsze
+// (przy dowolnym throttle > progu jałowego), żeby dało się ocenić wygląd
+// (szerokość, kolor, falowanie, zanikanie) bez wznoszenia się na FL250+.
+// USTAW Z POWROTEM NA false, żeby wrócić do realistycznego zachowania.
+const CONTRAIL_DEBUG_ALWAYS_ON = true;
 
-// Pomocnicze
-const _v3a = new THREE.Vector3();
-const _v3b = new THREE.Vector3();
-const _v3c = new THREE.Vector3();
-const _up  = new THREE.Vector3(0, 1, 0);
-const _quat = new THREE.Quaternion();
+function _ctClamp01(v) { return v < 0 ? 0 : v > 1 ? 1 : v; }
+function _ctLerp(a, b, t) { return a + (b - a) * t; }
 
-// ── Warunki kondensacyjne ─────────────────────────────────────────────────────
-// Zwraca 0..1 — jak sprzyjające są warunki do tworzenia smug.
-// Realistycznie: potrzeba T < -40°C (ok. 8km MSL w ISA) i wysokiej wilgotności.
-function contrailFactor(altM) {
-  // Składnik wysokości (temperatura ISA): nieliniowy próg
-  const altCF = Math.max(0, Math.min(1,
-    (altM - CT_ALT_MIN_M) / (CT_ALT_FULL_M - CT_ALT_MIN_M)
-  ));
-  if (altCF <= 0) return 0;
+// Wektory-pomocnicze, ponownie używane co klatkę (bez alokacji w pętli).
+const _ctCamPos = new THREE.Vector3();
+const _ctTan    = new THREE.Vector3();
+const _ctToCam  = new THREE.Vector3();
+const _ctRight  = new THREE.Vector3();
 
-  // Składnik wilgotności: suche powietrze (preset "clear") → krótsze smugi,
-  // wilgotne (rain/overcast) → pełne smugi. Ale przy zerowej wilgotności
-  // i tak jest minimalne 20% jeśli jesteśmy wystarczająco wysoko.
-  const precip   = WeatherState.precipitation ? 1.0 : 0.0;
-  const coverage = WeatherState.cloudCoverage;
-  const humidCF  = 0.2 + 0.5 * coverage + 0.3 * precip;
+// Bufor indeksów jest identyczny niezależnie od liczby aktywnie narysowanych
+// punktów (topologia paska trójkątów) — budujemy go raz dla maksymalnej
+// liczby punktów i tylko przycinamy zasięg rysowania (setDrawRange) co klatkę.
+function _ctBuildIndex(maxPoints) {
+  const idx = new Uint16Array((maxPoints - 1) * 6);
+  for (let i = 0; i < maxPoints - 1; i++) {
+    const o = i * 6, v = i * 2;
+    idx[o]     = v;     idx[o + 1] = v + 1; idx[o + 2] = v + 2;
+    idx[o + 3] = v + 1; idx[o + 4] = v + 3; idx[o + 5] = v + 2;
+  }
+  return idx;
+}
+const CONTRAIL_INDEX = _ctBuildIndex(CONTRAIL_MAX_POINTS);
 
-  // Turbulencja atmosferyczna rozbija smugi (wysokie WeatherState.turbulence)
-  const turbPenalty = WeatherState.turbulence * 0.5;
-
-  return Math.max(0, altCF * humidCF * CT_TEMP_COEFF - turbPenalty);
+function _ctMakeMaterial() {
+  return new THREE.ShaderMaterial({
+    transparent: true,
+    depthWrite:  false,
+    depthTest:   false,   // tak jak poprzednio: teren nie ma szans przesłonić smugi
+    side:        THREE.DoubleSide,
+    blending:    THREE.NormalBlending,
+    uniforms: {
+      uSunGlow: { value: 0.6 },  // 0 = noc, 1 = pełny dzień — steruje ogólną jasnością
+      uWarm:    { value: 0.0 },  // 0..1 — bliskość horyzontu słonecznego (wschód/zachód)
+    },
+    vertexShader: `
+      attribute float alpha;
+      attribute float edge;
+      varying float vAlpha;
+      varying float vEdge;
+      void main() {
+        vAlpha = alpha;
+        vEdge  = edge;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }`,
+    fragmentShader: `
+      uniform float uSunGlow;
+      uniform float uWarm;
+      varying float vAlpha;
+      varying float vEdge;
+      void main() {
+        // Miękka krawędź w poprzek wstążki — środek smugi gęstszy, brzegi
+        // rozmyte, tak jak rzeczywisty przekrój kontrailu.
+        float e = abs(vEdge);
+        float edgeFade = 1.0 - smoothstep(0.45, 1.0, e);
+        float a = vAlpha * edgeFade;
+        if (a < 0.008) discard;
+        vec3 base    = mix(vec3(0.50,0.53,0.58), vec3(0.95,0.96,0.98), uSunGlow);
+        vec3 warmTint = vec3(1.0, 0.78, 0.55);
+        vec3 col = mix(base, warmTint, uWarm * 0.35);
+        gl_FragColor = vec4(col, a);
+      }`,
+  });
 }
 
-// ── Shader smug ───────────────────────────────────────────────────────────────
-// Segment = quad z 4 wierzchołkami. Attribute `aAge` [0..1], `aOpacity` [0..1].
-// Kolor: biało-niebieski lód, z lekkim zabarwieniem słońca/nocy przez dayFactor.
-const CT_VERT = `
-attribute float aAge;
-attribute float aOpacity;
-varying float vAge;
-varying float vOpacity;
-
-void main() {
-  vAge     = aAge;
-  vOpacity = aOpacity;
-  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-}
-`;
-
-const CT_FRAG = `
-uniform float uDayFactor;
-uniform float uNightFactor;
-varying float vAge;
-varying float vOpacity;
-
-void main() {
-  if (vOpacity < 0.004) discard;
-
-  // Kolor lodowych kryształków: biały w dzień, bardzo lekko niebieski w nocy
-  vec3 dayColor   = vec3(0.97, 0.98, 1.00);
-  vec3 nightColor = vec3(0.72, 0.80, 0.92);
-  vec3 col = mix(dayColor, nightColor, uNightFactor * 0.6);
-
-  // Przy zachodzie/wschodzie słońca lekki ciepły odcień krawędzi
-  float duskTint = (1.0 - uDayFactor) * (1.0 - uNightFactor);
-  col = mix(col, vec3(1.00, 0.88, 0.75), duskTint * 0.18);
-
-  // Miękkie krawędzie (fadeout przez całą szerokość)
-  gl_FragColor = vec4(col, vOpacity);
-}
-`;
-
-// ── Klasa systemu smug ────────────────────────────────────────────────────────
-class ExhaustSystem {
+class ContrailSystem {
   constructor() {
-    // Pula segmentów: każdy przechowuje dane w Float32Array dla szybkości
-    // position (12 floatów = 4 wierzchołki × 3), age, opacity, alive
-    this._pool     = [];
-    this._poolHead = 0;   // indeks następnego wolnego slotu (ring buffer)
-    this._emitAcc  = [0, 0];  // akumulatory czasu dla silnika L i R
-
-    this._dayFactor   = 1.0;
-    this._nightFactor = 0.0;
-
-    // Macierz modelu samolotu (pobierana z entity.mesh)
-    this._modelMat = new THREE.Matrix4();
-
-    this._initGeometry();
+    this.trails = new Map();  // engineId -> { points: [{x,y,z,age,strength,seed}] }
+    this.meshes = new Map();  // engineId -> { geo, mesh }
+    this._sharedMaterial = _ctMakeMaterial();
   }
 
-  // ── Geometria (dynamiczna, aktualizowana co klatkę) ────────────────────────
-  _initGeometry() {
-    const N = CT_POOL_SIZE;
-    // Każdy segment = quad = 4 wierzchołki, 2 trójkąty (6 indeksów)
-    const positions = new Float32Array(N * 4 * 3);
-    const ages      = new Float32Array(N * 4);
-    const opacities = new Float32Array(N * 4);
-    const indices   = new Uint32Array(N * 6);
+  // pos: THREE.Vector3 (world space, pozycja dyszy silnika)
+  // throttle: 0..1
+  // backDir: nieużywane w nowym systemie (kontrail nie "wystrzeliwuje" cząstek,
+  //          tylko zostawia ślad w miejscu, gdzie faktycznie był silnik) —
+  //          parametr zostawiony dla zgodności wywołania z sim-controls.js.
+  // engineId: 'L' / 'R' (albo dowolny unikalny klucz) — osobna smuga per silnik.
+  // altM: wysokość samolotu w metrach (prawdziwa, nieprzeskalowana) — potrzebna
+  //       do oceny temperatury otoczenia.
+  emit(pos, throttle, backDir, engineId, altM) {
+    if (altM == null || !Number.isFinite(altM)) return;
+    const key = engineId || 'default';
 
-    for (let i = 0; i < N; i++) {
-      const vi = i * 4;
-      const ii = i * 6;
-      // Dwa trójkąty tworzące quad: 0-1-2, 2-1-3
-      indices[ii+0] = vi+0; indices[ii+1] = vi+1; indices[ii+2] = vi+2;
-      indices[ii+3] = vi+2; indices[ii+4] = vi+1; indices[ii+5] = vi+3;
+    // Prosty model ISA (identyczny jak weather.temperature w sim-weather.js,
+    // celowo powielony tutaj zamiast odwoływać się do globalnego `weather`,
+    // żeby moduł działał niezależnie od kolejności ładowania/inicjalizacji).
+    const tempC = 15.0 - Math.min(Math.max(altM, 0), 11000) * 0.0065;
+    const tempFactor = CONTRAIL_DEBUG_ALWAYS_ON
+      ? 1
+      : _ctClamp01((CONTRAIL_TEMP_NONE - tempC) / (CONTRAIL_TEMP_NONE - CONTRAIL_TEMP_FULL));
+    // Przy bardzo niskim ciągu (bieg jałowy, zniżanie) spaliny są chłodniejsze
+    // i mniej wilgotne — smuga słabnie, choć nie znika całkowicie od razu.
+    const thrFactor = _ctClamp01((throttle - 0.05) / 0.25);
+    const strength = tempFactor * thrFactor;
+
+    let trail = this.trails.get(key);
+    if (!trail) { trail = { points: [] }; this.trails.set(key, trail); }
+
+    if (strength < 0.03) return; // za ciepło / silniki na jałowym — brak śladu
+
+    const pts = trail.points;
+    const last = pts[pts.length - 1];
+    if (last) {
+      const dx = pos.x - last.x, dy = pos.y - last.y, dz = pos.z - last.z;
+      if (dx * dx + dy * dy + dz * dz < CONTRAIL_MIN_SPACING * CONTRAIL_MIN_SPACING) return;
     }
-
-    this._geo = new THREE.BufferGeometry();
-    this._geo.setIndex(new THREE.BufferAttribute(indices, 1));
-    this._posAttr = new THREE.BufferAttribute(positions, 3);
-    this._posAttr.setUsage(THREE.DynamicDrawUsage);
-    this._ageAttr = new THREE.BufferAttribute(ages, 1);
-    this._ageAttr.setUsage(THREE.DynamicDrawUsage);
-    this._opAttr  = new THREE.BufferAttribute(opacities, 1);
-    this._opAttr.setUsage(THREE.DynamicDrawUsage);
-    this._geo.setAttribute('position', this._posAttr);
-    this._geo.setAttribute('aAge',     this._ageAttr);
-    this._geo.setAttribute('aOpacity', this._opAttr);
-    this._geo.setDrawRange(0, 0);  // nic nie renderuj dopóki nie ma segmentów
-
-    this._mat = new THREE.ShaderMaterial({
-      vertexShader:   CT_VERT,
-      fragmentShader: CT_FRAG,
-      uniforms: {
-        uDayFactor:   { value: 1.0 },
-        uNightFactor: { value: 0.0 },
-      },
-      transparent:  true,
-      depthWrite:   false,
-      side:         THREE.DoubleSide,
-      blending:     THREE.NormalBlending,
-    });
-
-    this._mesh = new THREE.Mesh(this._geo, this._mat);
-    this._mesh.frustumCulled = false;
-    this._mesh.renderOrder   = 5;  // po terenie, przed HUD
-    scene.add(this._mesh);
-
-    // Pula danych segmentów (CPU-side)
-    for (let i = 0; i < N; i++) {
-      this._pool.push({
-        alive:     false,
-        age:       0,
-        maxAge:    CT_MAX_AGE,
-        cf:        0,      // contrail factor 0..1 w chwili emisji
-        // Pozycja środkowego punktu segmentu (world-space)
-        cx:        0, cy: 0, cz: 0,
-        // Wektor prostopadły (right) w momencie emisji
-        rx:        0, ry: 0, rz: 0,
-        // Dryf wiatru
-        windX:     0, windZ: 0,
-      });
-    }
+    pts.push({ x: pos.x, y: pos.y, z: pos.z, age: 0, strength, seed: Math.random() * 1000 });
+    if (pts.length > CONTRAIL_MAX_POINTS) pts.splice(0, pts.length - CONTRAIL_MAX_POINTS);
   }
 
-  // ── Aktualizuj dzień/noc (przekazywane z sim-sky.js) ──────────────────────
-  setDayNight(dayFactor, nightFactor) {
-    this._dayFactor   = dayFactor;
-    this._nightFactor = nightFactor;
-    this._mat.uniforms.uDayFactor.value   = dayFactor;
-    this._mat.uniforms.uNightFactor.value = nightFactor;
-  }
-
-  // ── Oblicz pozycję silnika w world-space ─────────────────────────────────
-  _engineWorldPos(sideSign, out) {
-    // Offset w lokalnej przestrzeni modelu
-    _v3a.set(ENG_OFFSET_X * sideSign, ENG_OFFSET_Y, ENG_OFFSET_Z);
-    // Transformuj przez macierz modelu samolotu
-    out.copy(_v3a).applyMatrix4(this._modelMat);
-  }
-
-  // ── Emituj nowy segment ───────────────────────────────────────────────────
-  _emit(cx, cy, cz, velX, velY, velZ, cf) {
-    const idx  = this._poolHead % CT_POOL_SIZE;
-    this._poolHead++;
-    const seg  = this._pool[idx];
-
-    // Wektor "right" prostopadły do kierunku lotu i osi Y
-    _v3b.set(velX, velY, velZ).normalize();
-    _v3c.crossVectors(_v3b, _up).normalize();
-    if (_v3c.lengthSq() < 0.01) _v3c.set(1, 0, 0);
-
-    const ww = weather ? weather.windWorld : { x: 0, z: 0 };
-
-    seg.alive  = true;
-    seg.age    = 0;
-    seg.maxAge = CT_MAX_AGE * (0.7 + cf * 0.3);
-    seg.cf     = cf;
-    seg.cx     = cx; seg.cy = cy; seg.cz = cz;
-    seg.rx     = _v3c.x; seg.ry = _v3c.y; seg.rz = _v3c.z;
-    seg.windX  = ww.x;
-    seg.windZ  = ww.z;
-  }
-
-  // ── Główna pętla ──────────────────────────────────────────────────────────
   update(dt) {
-    const ent = activeEntity;
-    if (!ent || !ent.mesh) {
-      this._mesh.visible = false;
-      return;
+    const windWorld = (typeof weather !== 'undefined' && weather) ? weather.windWorld : { x: 0, z: 0 };
+    const cloudCov  = (typeof WeatherState !== 'undefined') ? WeatherState.cloudCoverage : 0.3;
+    const turb      = (typeof WeatherState !== 'undefined') ? WeatherState.turbulence   : 0.1;
+    // Wilgotniejsze/bardziej zachmurzone powietrze -> smuga żyje dłużej, zanim
+    // rozproszy się na tyle, że staje się niewidoczna (persistent contrail).
+    // Suche, czyste powietrze -> krótkotrwały ślad, znika szybko.
+    const lifetime = _ctLerp(20, 110, _ctClamp01(cloudCov));
+
+    // Ogólna jasność/odcień zależny od pozycji słońca — kontrail w nocy jest
+    // ledwo widoczny, o świcie/zmierzchu łapie ciepłą poświatę.
+    let sunGlow = 0.55, warm = 0;
+    if (typeof sunWorldDir !== 'undefined') {
+      const sunAlt = sunWorldDir.y;
+      sunGlow = _ctClamp01((sunAlt + 0.15) / 0.5);
+      warm    = _ctClamp01(1 - Math.abs(sunAlt) / 0.25);
     }
 
-    // Pobierz macierz modelu i wysokość
-    this._modelMat.copy(ent.mesh.matrixWorld);
-    const altM = ent.altM || 0;
-    const cf   = contrailFactor(altM);
+    for (const [key, trail] of this.trails) {
+      const pts = trail.points;
+      for (let i = pts.length - 1; i >= 0; i--) {
+        const p = pts[i];
+        p.age += dt;
+        if (p.age > lifetime) { pts.splice(i, 1); continue; }
 
-    // Prędkość w world-space (m/s → jednostki sceny / s)
-    const velX = ent.vel ? ent.vel.x : 0;
-    const velY = ent.vel ? ent.vel.y * Y_SCALE : 0;
-    const velZ = ent.vel ? ent.vel.z : 0;
-    const spd  = Math.sqrt(velX*velX + velY*velY + velZ*velZ);
+        // Adwekcja wiatrem (world X/Z ≈ metry, tak samo jak w rainWorld/sim-sky.js).
+        p.x += windWorld.x * dt;
+        p.z += windWorld.z * dt;
 
-    // Emituj tylko gdy lecisz (prędkość > ~60 kt w m/s ≈ 30 m/s world units)
-    const flying = spd > 15 && altM > CT_ALT_MIN_M * 0.6;
+        // Powolne opadanie w pierwszych ~18s (wir za skrzydłem ciągnie ślad
+        // w dół), potem zanika — realny kontrail robi to samo, zanim się wypłaszcza.
+        const settle = Math.max(0, 1 - p.age / 18);
+        p.y -= 0.06 * settle * dt;
 
-    if (flying && cf > 0.02) {
-      // Silnik L i R
-      for (let side = 0; side < 2; side++) {
-        this._emitAcc[side] += dt;
-        if (this._emitAcc[side] >= CT_EMIT_INTERVAL) {
-          this._emitAcc[side] -= CT_EMIT_INTERVAL;
-          const sideSign = side === 0 ? -1 : 1;
-          this._engineWorldPos(sideSign, _v3a);
-          this._emit(_v3a.x, _v3a.y, _v3a.z, velX, velY, velZ, cf);
-        }
+        // Turbulentne falowanie, narastające z wiekiem (dyfuzja) i z
+        // aktualną turbulencją atmosfery.
+        const jitter = (0.4 + p.age * 0.05) * (0.25 + turb);
+        p.x += Math.sin(p.age * 0.7 + p.seed) * jitter * dt;
+        p.z += Math.cos(p.age * 0.5 + p.seed * 1.3) * jitter * dt;
       }
-    } else {
-      this._emitAcc[0] = this._emitAcc[1] = 0;
+      if (pts.length > CONTRAIL_MAX_POINTS) pts.splice(0, pts.length - CONTRAIL_MAX_POINTS);
+
+      this._rebuildMesh(key, trail, lifetime, sunGlow, warm);
     }
-
-    // Aktualizuj wszystkie segmenty i przepisuj do GPU bufora
-    const posArr = this._posAttr.array;
-    const ageArr = this._ageAttr.array;
-    const opArr  = this._opAttr.array;
-    let   drawVerts = 0;
-
-    const ww = weather ? weather.windWorld : { x: 0, z: 0 };
-
-    for (let i = 0; i < CT_POOL_SIZE; i++) {
-      const seg = this._pool[i];
-      const vi  = i * 4 * 3;
-      const ai  = i * 4;
-
-      if (!seg.alive) {
-        // Wyzeruj opacity — indeksy wciąż istnieją w buforze, ale są niewidoczne
-        opArr[ai] = opArr[ai+1] = opArr[ai+2] = opArr[ai+3] = 0;
-        continue;
-      }
-
-      seg.age += dt;
-      if (seg.age > seg.maxAge) { seg.alive = false; opArr[ai]=opArr[ai+1]=opArr[ai+2]=opArr[ai+3]=0; continue; }
-
-      // Dryf wiatrem (wiatr zmienia się, używamy chwilowego)
-      seg.cx += ww.x * dt;
-      seg.cz += ww.z * dt;
-      // Lekkie opadanie (kryształki opadają ~0.2 m/s)
-      seg.cy -= 0.08 * Y_SCALE * dt;
-
-      const t       = seg.age / seg.maxAge;
-      const cf_s    = seg.cf;
-
-      // Szerokość: rośnie z czasem (dyfuzja atmosferyczna), wolniej przy niskiej wilgotności
-      // Model: w(t) = init + (max - init) * smoothstep(0, 0.9, t)^0.6
-      const growT   = Math.min(t / 0.9, 1.0);
-      const grow    = growT * growT * (3 - 2 * growT);  // smoothstep
-      const halfW   = (CT_INIT_WIDTH + (CT_MAX_WIDTH - CT_INIT_WIDTH) * Math.pow(grow, 0.55) * cf_s) * 0.5;
-
-      // Opacity: fade-in → plateau → fade-out
-      let op;
-      if (t < CT_FADE_IN / seg.maxAge) {
-        op = (t / (CT_FADE_IN / seg.maxAge));
-      } else if (t < CT_FADE_OUT_START) {
-        op = 1.0;
-      } else {
-        op = 1.0 - (t - CT_FADE_OUT_START) / (1.0 - CT_FADE_OUT_START);
-      }
-      op = Math.max(0, op) * CT_MAX_OPACITY * cf_s;
-
-      // 4 wierzchołki quada
-      const rx = seg.rx * halfW, ry = seg.ry * halfW, rz = seg.rz * halfW;
-      // Lewa górna
-      posArr[vi+0]  = seg.cx - rx; posArr[vi+1]  = seg.cy - ry + halfW * 0.12; posArr[vi+2]  = seg.cz - rz;
-      // Prawa górna
-      posArr[vi+3]  = seg.cx + rx; posArr[vi+4]  = seg.cy + ry + halfW * 0.12; posArr[vi+5]  = seg.cz + rz;
-      // Lewa dolna
-      posArr[vi+6]  = seg.cx - rx; posArr[vi+7]  = seg.cy - ry - halfW * 0.12; posArr[vi+8]  = seg.cz - rz;
-      // Prawa dolna
-      posArr[vi+9]  = seg.cx + rx; posArr[vi+10] = seg.cy + ry - halfW * 0.12; posArr[vi+11] = seg.cz + rz;
-
-      // Wiek 0..1 dla shadera
-      const normAge = t;
-      ageArr[ai] = ageArr[ai+1] = ageArr[ai+2] = ageArr[ai+3] = normAge;
-      opArr[ai]  = opArr[ai+1] = opArr[ai+2] = opArr[ai+3] = op;
-
-      drawVerts = (i + 1) * 4;
-    }
-
-    this._posAttr.needsUpdate = true;
-    this._ageAttr.needsUpdate = true;
-    this._opAttr.needsUpdate  = true;
-    this._geo.setDrawRange(0, drawVerts / 4 * 6);
-    this._mesh.visible = true;
   }
-}
 
+  _createMeshRecord() {
+    const geo = new THREE.BufferGeometry();
+    const posArr   = new Float32Array(CONTRAIL_MAX_POINTS * 3 * 2);
+    const alphaArr = new Float32Array(CONTRAIL_MAX_POINTS * 2);
+    const edgeArr  = new Float32Array(CONTRAIL_MAX_POINTS * 2);
+    geo.setAttribute('position', new THREE.BufferAttribute(posArr, 3).setUsage(THREE.DynamicDrawUsage));
+    geo.setAttribute('alpha',    new THREE.BufferAttribute(alphaArr, 1).setUsage(THREE.DynamicDrawUsage));
+    geo.setAttribute('edge',     new THREE.BufferAttribute(edgeArr, 1).setUsage(THREE.DynamicDrawUsage));
+    geo.setIndex(new THREE.BufferAttribute(CONTRAIL_INDEX, 1));
+    geo.setDrawRange(0, 0);
 
-// Instancja tworzona po załadowaniu modelu (activeEntity musi istnieć)
-function initExhaust() {
-  if (exhaust) { scene.remove(exhaust._mesh); }
-  exhaust = new ExhaustSystem();
+    const mesh = new THREE.Mesh(geo, this._sharedMaterial);
+    mesh.frustumCulled = false;
+    mesh.renderOrder    = 950;
+    scene.add(mesh);
+    return { geo, mesh };
+  }
+
+  _rebuildMesh(key, trail, lifetime, sunGlow, warm) {
+    let rec = this.meshes.get(key);
+    if (!rec) { rec = this._createMeshRecord(); this.meshes.set(key, rec); }
+
+    this._sharedMaterial.uniforms.uSunGlow.value = sunGlow;
+    this._sharedMaterial.uniforms.uWarm.value    = warm;
+
+    const pts = trail.points;
+    const n = pts.length;
+    if (n < 2) { rec.geo.setDrawRange(0, 0); return; }
+
+    const posAttr   = rec.geo.attributes.position;
+    const alphaAttr = rec.geo.attributes.alpha;
+    const edgeAttr  = rec.geo.attributes.edge;
+    const posArr = posAttr.array, alphaArr = alphaAttr.array, edgeArr = edgeAttr.array;
+
+    _ctCamPos.copy(camera.position);
+
+    for (let i = 0; i < n; i++) {
+      const p = pts[i];
+
+      // Styczna do trajektorii smugi (kierunek "wzdłuż") — z sąsiednich punktów.
+      if (i === 0)          _ctTan.set(pts[1].x - p.x, pts[1].y - p.y, pts[1].z - p.z);
+      else if (i === n - 1) _ctTan.set(p.x - pts[i-1].x, p.y - pts[i-1].y, p.z - pts[i-1].z);
+      else                  _ctTan.set(pts[i+1].x - pts[i-1].x, pts[i+1].y - pts[i-1].y, pts[i+1].z - pts[i-1].z);
+      if (_ctTan.lengthSq() < 1e-6) _ctTan.set(0, 0, 1); else _ctTan.normalize();
+
+      // Wektor "w bok" prostopadły do stycznej I do kierunku na kamerę —
+      // dzięki temu wstążka zawsze zwrócona jest możliwie płasko ku widzowi
+      // (billboard trail), zamiast być cienką kreską pod pewnymi kątami.
+      _ctToCam.set(_ctCamPos.x - p.x, _ctCamPos.y - p.y, _ctCamPos.z - p.z).normalize();
+      _ctRight.crossVectors(_ctTan, _ctToCam);
+      if (_ctRight.lengthSq() < 1e-6) _ctRight.set(1, 0, 0); else _ctRight.normalize();
+
+      const width = Math.min(CONTRAIL_MAX_WIDTH, CONTRAIL_BASE_WIDTH + p.age * CONTRAIL_WIDTH_GROWTH);
+      const half  = width * 0.5;
+
+      const fadeIn  = Math.min(1, p.age / CONTRAIL_FADE_IN_S);
+      const fadeOut = Math.pow(Math.max(0, 1 - p.age / lifetime), 1.4);
+      const alpha   = _ctClamp01(p.strength * fadeIn * fadeOut * 0.85);
+
+      const i6 = i * 6, i2 = i * 2;
+      posArr[i6+0] = p.x - _ctRight.x*half; posArr[i6+1] = p.y - _ctRight.y*half; posArr[i6+2] = p.z - _ctRight.z*half;
+      posArr[i6+3] = p.x + _ctRight.x*half; posArr[i6+4] = p.y + _ctRight.y*half; posArr[i6+5] = p.z + _ctRight.z*half;
+      alphaArr[i2] = alpha; alphaArr[i2+1] = alpha;
+      edgeArr[i2]  = -1;    edgeArr[i2+1]  = 1;
+    }
+
+    posAttr.needsUpdate   = true;
+    alphaAttr.needsUpdate = true;
+    edgeAttr.needsUpdate  = true;
+    rec.geo.setDrawRange(0, (n - 1) * 6);
+  }
 }

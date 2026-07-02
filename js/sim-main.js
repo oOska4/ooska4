@@ -1,6 +1,8 @@
 'use strict';
 
 // ── Pętla renderowania ─────────────────────────────────────────────────────────
+
+const exhaust = new ContrailSystem();
 let fc = 0, lastRenderT = performance.now();
 
 function animate(t) {
@@ -29,7 +31,9 @@ function animate(t) {
     e.renderUpdate(dt);
   }
 
-  if (exhaust) exhaust.update(dt);
+  if (activeEntity) emitExhaust(activeEntity, exhaust);
+  exhaust.update(dt);
+
   if (fc % 3 === 0) updateHUD();
   if (fc % 2 === 0 && weather) weather.update(dt, camera.position, activeEntity ? activeEntity.altM : 0);
 
@@ -101,8 +105,6 @@ const loadInterval = setInterval(() => {
     weather = new WeatherSystem();
     weatherUI.init();
     weatherUI.syncUI();
-
-    initExhaust();
 
     lastRenderT = performance.now();
     animate(lastRenderT);

@@ -418,6 +418,6 @@ function emitExhaust(plane, exhaust) {
     );
   }
 
-  exhaust.emit(_eR, plane.throttle, _eBk);
-  exhaust.emit(_eL, plane.throttle, _eBk);
+  exhaust.emit(_eR, plane.throttle, _eBk, 'R', plane.altM);
+  exhaust.emit(_eL, plane.throttle, _eBk, 'L', plane.altM);
 }
