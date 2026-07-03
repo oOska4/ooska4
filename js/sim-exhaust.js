@@ -11,36 +11,47 @@
 // dużych odrzutowców. Poniżej tego pasma silniki nie zostawiają widocznego
 // śladu (tak jak w rzeczywistości).
 //
-// GEOMETRIA: pierwsza wersja renderowała smugę jako płaską wstążkę zawsze
-// zwróconą "na styk" ku kamerze (billboard trail). To wygląda dobrze z boku,
-// ale WIDZIANE MNIEJ WIĘCEJ WZDŁUŻ SMUGI (a to dokładnie kąt kamery za
-// samolotem, patrzącej w kierunku lotu) taka wstążka zapada się optycznie do
-// cienkiej kreski — bo płaszczyzna wstążki jest wtedy prawie równoległa do
-// kierunku patrzenia. Dlatego teraz smuga to prawdziwa RURA (tube) — pierścień
-// wierzchołków wokół osi smugi w KAŻDYM punkcie, o orientacji ustalonej w
-// przestrzeni świata (transport równoległy wzdłuż stycznej), a nie zależnej
-// od kamery. Dzięki temu ma faktyczną objętość i wygląda poprawnie z każdego
-// kąta, łącznie z widokiem "od tyłu". Dodatkowo przekrój nie jest idealnym
-// kołem (lekko "pomarszczony" per-bok) i lekko "oddycha" wzdłuż długości —
-// żeby nie wyglądało jak gładka plastikowa rurka, tylko jak puszysta chmura.
-// Proste cieniowanie (Lambert względem Słońca) daje jej czytelną krągłość.
+// GEOMETRIA: smuga to prawdziwa RURA 3D (pierścień wierzchołków wokół osi w
+// każdym punkcie), o orientacji ustalonej w przestrzeni świata (transport
+// równoległy wzdłuż stycznej) — NIE billboard zwrócony do kamery, bo taki
+// zapada się optycznie do kreski widziany "wzdłuż" (typowy kąt kamery za
+// samolotem). Rura ma realną objętość z każdego kąta.
+//
+// SHADER (wersja "maksymalna jakość"):
+//  • proceduralny szum 3D (value noise + fbm, 4 oktawy) przesuwa wierzchołki
+//    wzdłuż normalnej — organiczne, kłębiaste wybrzuszenia zamiast gładkiej
+//    rurki, narastające z wiekiem punktu (świeży ślad przy dyszy jest ciasny
+//    i gładki, stary — rozedrgany i puchaty, tak jak dyfundujący realny lód);
+//  • drugi, drobniejszy szum w fragment shaderze targa krawędzią sylwetki
+//    (postrzępione, "wystrzępione" brzegi zamiast twardej linii geometrii);
+//  • rozpraszanie światła słonecznego w przód (przybliżenie funkcji fazowej
+//    Henyeya-Greensteina) — smuga wyraźnie jaśnieje/"świeci", gdy patrzy się
+//    przez nią w stronę Słońca, dokładnie jak prawdziwe kryształki lodu;
+//  • fresnel na sylwetce (miękka, rozmyta poświata na krawędzi) — tani, ale
+//    skuteczny trik na wrażenie objętości bez prawdziwego raymarchingu.
 //
 // Publiczne API zachowane 1:1 (sim-main.js: new ContrailSystem(), potem co
 // klatkę emit() per silnik + update(dt) raz na klatkę).
 
-// ── Strojenie ────────────────────────────────────────────────────────────────
-const CONTRAIL_MAX_POINTS   = 420;   // punktów smugi na silnik (limit pamięci/geo)
-const CONTRAIL_SIDES        = 8;     // boków przekroju rury (im więcej, tym okrąglejsza)
-const CONTRAIL_MIN_SPACING  = 14;    // [m] min. odstęp między kolejnymi punktami (przy dużej prędkości)
-const CONTRAIL_MAX_SPAWN_S  = 0.12;  // [s] maks. czas między punktami — gwarantuje ciągłość nawet przy małej prędkości
+// ── Strojenie: kształt i fizyka ─────────────────────────────────────────────
+const CONTRAIL_MAX_POINTS   = 600;   // punktów smugi na silnik (jakość > wydajność)
+const CONTRAIL_SIDES        = 10;    // boków przekroju rury
+const CONTRAIL_MIN_SPACING  = 12;    // [m] min. odstęp między kolejnymi punktami
+const CONTRAIL_MAX_SPAWN_S  = 0.1;   // [s] maks. czas między punktami — gwarancja ciągłości przy małej prędkości
 const CONTRAIL_BASE_RADIUS  = 0.9;   // [m] promień tuż za silnikiem
 const CONTRAIL_RADIUS_GROWTH= 0.28;  // [m/s wieku] tempo rozszerzania smugi
-const CONTRAIL_MAX_RADIUS   = 45;    // [m] górny limit promienia (czytelność/perf)
-const CONTRAIL_FADE_IN_S    = 0.35;  // [s] czas narastania przezroczystości przy dyszy
+const CONTRAIL_MAX_RADIUS   = 48;    // [m] górny limit promienia
+const CONTRAIL_FADE_IN_S    = 0.3;   // [s] czas narastania przezroczystości przy dyszy
 // Próg formowania (uproszczone Schmidt-Appleman): pełny kontrail przy ≤ -40°C,
 // zero przy ≥ -26°C, płynne przejście pomiędzy.
 const CONTRAIL_TEMP_FULL = -40;
 const CONTRAIL_TEMP_NONE = -26;
+
+// ── Strojenie: jakość wizualna / shader ─────────────────────────────────────
+const CONTRAIL_DISP_MAX_YOUNG = 0.12;  // [m] przemieszczenie szumem tuż przy dyszy (prawie zerowe — świeży ślad gładki)
+const CONTRAIL_DISP_MAX_OLD   = 2.4;   // [m] przemieszczenie szumem po ~40s wieku (rozedrgane, puchate)
+const CONTRAIL_DISP_AGE_S     = 40.0;  // [s] po ilu sekundach przemieszczenie osiąga maksimum
+const CONTRAIL_HG_G           = 0.86;  // anizotropia rozpraszania Henyeya-Greensteina (0..1, bliżej 1 = ostrzejsza poświata w stronę słońca)
 
 // ── TYMCZASOWE dla testów wyglądu ───────────────────────────────────────────
 // Gdy true: pomija próg temperatury/wysokości, smuga formuje się zawsze.
@@ -50,9 +61,8 @@ const CONTRAIL_DEBUG_ALWAYS_ON = true;
 function _ctClamp01(v) { return v < 0 ? 0 : v > 1 ? 1 : v; }
 function _ctLerp(a, b, t) { return a + (b - a) * t; }
 
-// Lekko "pomarszczony" przekrój — nie idealne koło, żeby wyglądało bardziej
-// organicznie/chmurzasto niż gładka rurka.
-const CONTRAIL_PUFF = [1.00, 0.84, 1.08, 0.90, 1.12, 0.86, 1.04, 0.92];
+// Lekko "pomarszczony" przekrój — nie idealne koło.
+const CONTRAIL_PUFF = [1.00, 0.85, 1.08, 0.90, 1.12, 0.86, 1.05, 0.92, 1.10, 0.88];
 
 function _ctBuildRing(sides) {
   const cos = new Float32Array(sides), sin = new Float32Array(sides);
@@ -87,13 +97,49 @@ function _ctBuildTubeIndex(maxPoints, sides) {
 const CONTRAIL_INDEX = _ctBuildTubeIndex(CONTRAIL_MAX_POINTS, CONTRAIL_SIDES);
 
 // Wektory-pomocnicze, ponownie używane co klatkę (bez alokacji w pętli).
-const _ctCamPos  = new THREE.Vector3();
 const _ctTan     = new THREE.Vector3();
 const _ctRight   = new THREE.Vector3();
 const _ctUp      = new THREE.Vector3();
 const _ctWorldUp = new THREE.Vector3(0, 1, 0);
 const _ctFallbackAxis = new THREE.Vector3(1, 0, 0);
 const _ctSunDir  = new THREE.Vector3(0.3, 0.6, 0.3).normalize();
+
+// Wspólny fragment GLSL (hash + value-noise 3D + fbm), wklejany do obu
+// shaderów — bez tego rura wygląda jak gładki plastik zamiast kłębiastej
+// chmury lodowej.
+const CONTRAIL_NOISE_GLSL = `
+  float ctHash(vec3 p) {
+    p = fract(p * 0.3183099 + vec3(0.1, 0.2, 0.3));
+    p *= 17.0;
+    return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
+  }
+  float ctNoise(vec3 p) {
+    vec3 i = floor(p), f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    float n000 = ctHash(i + vec3(0.0,0.0,0.0));
+    float n100 = ctHash(i + vec3(1.0,0.0,0.0));
+    float n010 = ctHash(i + vec3(0.0,1.0,0.0));
+    float n110 = ctHash(i + vec3(1.0,1.0,0.0));
+    float n001 = ctHash(i + vec3(0.0,0.0,1.0));
+    float n101 = ctHash(i + vec3(1.0,0.0,1.0));
+    float n011 = ctHash(i + vec3(0.0,1.0,1.0));
+    float n111 = ctHash(i + vec3(1.0,1.0,1.0));
+    float nx00 = mix(n000, n100, f.x), nx10 = mix(n010, n110, f.x);
+    float nx01 = mix(n001, n101, f.x), nx11 = mix(n011, n111, f.x);
+    float nxy0 = mix(nx00, nx10, f.y), nxy1 = mix(nx01, nx11, f.y);
+    return mix(nxy0, nxy1, f.z);
+  }
+  float ctFbm(vec3 p, int octaves) {
+    float v = 0.0, a = 0.5;
+    for (int i = 0; i < 5; i++) {
+      if (i >= octaves) break;
+      v += a * ctNoise(p);
+      p = p * 2.03 + vec3(11.1, 7.7, 19.3);
+      a *= 0.5;
+    }
+    return v;
+  }
+`;
 
 function _ctMakeMaterial() {
   return new THREE.ShaderMaterial({
@@ -106,35 +152,89 @@ function _ctMakeMaterial() {
       uSunGlow: { value: 0.6 },                    // 0 = noc, 1 = pełny dzień
       uWarm:    { value: 0.0 },                     // bliskość horyzontu słonecznego
       uSunDir:  { value: _ctSunDir.clone() },       // kierunek do Słońca (world space)
+      uCamPos:  { value: new THREE.Vector3() },     // pozycja kamery (world space)
+      uTime:    { value: 0 },                       // powolny zegar do animacji szumu
     },
     vertexShader: `
+      uniform float uTime;
       attribute float alpha;
+      attribute float aAge;
       attribute vec3 aNormal;
       varying float vAlpha;
+      varying float vAge;
       varying vec3 vNormal;
+      varying vec3 vWorldPos;
+
+      ${CONTRAIL_NOISE_GLSL}
+
       void main() {
-        vAlpha  = alpha;
+        vAlpha = alpha;
+        vAge   = aAge;
         vNormal = aNormal;
-        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+
+        // Proceduralne, organiczne wybrzuszenia — ciasne i gładkie tuż przy
+        // dyszy, coraz bardziej rozedrgane i puchate z wiekiem punktu (dokładnie
+        // jak realna dyfuzja turbulentna kryształków lodu w ślad za silnikiem).
+        float ageT = clamp(aAge / ${CONTRAIL_DISP_AGE_S.toFixed(1)}, 0.0, 1.0);
+        float dispAmt = mix(${CONTRAIL_DISP_MAX_YOUNG.toFixed(3)}, ${CONTRAIL_DISP_MAX_OLD.toFixed(3)}, ageT);
+        vec3 noiseCoord = position * 0.045 + vec3(uTime * 0.025, uTime * 0.017, uTime * 0.021);
+        float disp = ctFbm(noiseCoord, 4) - 0.5;
+        vec3 displaced = position + aNormal * disp * dispAmt;
+
+        vWorldPos = displaced;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(displaced, 1.0);
       }`,
     fragmentShader: `
       uniform float uSunGlow;
       uniform float uWarm;
       uniform vec3 uSunDir;
+      uniform vec3 uCamPos;
+      uniform float uTime;
       varying float vAlpha;
+      varying float vAge;
       varying vec3 vNormal;
+      varying vec3 vWorldPos;
+
+      ${CONTRAIL_NOISE_GLSL}
+
       void main() {
-        if (vAlpha < 0.008) discard;
-        // Proste cieniowanie Lambertowskie względem Słońca + wysoka podłoga
-        // ambientu (to półprzezroczysta chmura lodowa, nie lite ciało) —
-        // dzięki temu rura wyraźnie "okrągła" z każdego kąta patrzenia,
-        // zamiast płaskiego jednolitego koloru.
-        float diff  = max(dot(normalize(vNormal), uSunDir), 0.0);
-        float shade = 0.55 + 0.45 * diff;
-        vec3 base    = mix(vec3(0.40,0.43,0.48), vec3(0.97,0.98,1.0), uSunGlow) * shade;
-        vec3 warmTint = vec3(1.0, 0.80, 0.58) * shade;
+        vec3 N = normalize(vNormal);
+        vec3 viewDir = normalize(uCamPos - vWorldPos);
+
+        // Drobny szum powierzchni — postrzępione, "wystrzępione" krawędzie
+        // zamiast twardej linii geometrii; świeży ślad gładszy, stary bardziej targany.
+        float surfN = ctFbm(vWorldPos * 0.09 + vec3(uTime * 0.05, uTime * 0.03, uTime * 0.04), 3);
+        float tatterAmt = clamp(vAge / 10.0, 0.0, 1.0) * 0.8;
+        float edgeNoise = mix(1.0, surfN * 1.4, tatterAmt);
+
+        float a = vAlpha * clamp(edgeNoise, 0.0, 1.3);
+
+        // Fresnel na sylwetce — miękka poświata na krawędzi, tani zamiennik
+        // prawdziwej objętości/raymarchingu.
+        float rim = pow(1.0 - clamp(abs(dot(viewDir, N)), 0.0, 1.0), 2.2);
+        a = clamp(a + rim * vAlpha * 0.28, 0.0, 1.0);
+        if (a < 0.01) discard;
+
+        // Rozpraszanie światła słonecznego w przód (Henyey-Greenstein) —
+        // smuga wyraźnie jaśnieje, gdy patrzysz przez nią w stronę Słońca.
+        float cosTheta = dot(viewDir, uSunDir);
+        float g = ${CONTRAIL_HG_G.toFixed(2)};
+        float g2 = g * g;
+        float hg = (1.0 - g2) / pow(max(1.0 + g2 - 2.0 * g * cosTheta, 0.0001), 1.5);
+        hg *= 0.032;
+        float glare = pow(max(cosTheta, 0.0), 55.0) * 1.1;
+
+        float diff  = max(dot(N, uSunDir), 0.0);
+        float shade = 0.5 + 0.5 * diff;
+
+        vec3 base     = mix(vec3(0.42,0.45,0.50), vec3(0.97,0.98,1.0), uSunGlow) * shade;
+        vec3 warmTint = vec3(1.0, 0.82, 0.60) * shade;
         vec3 col = mix(base, warmTint, uWarm * 0.35);
-        gl_FragColor = vec4(col, vAlpha);
+
+        vec3 sunColor = mix(vec3(1.0,0.95,0.85), vec3(1.0,0.65,0.42), uWarm);
+        col += sunColor * (hg + glare) * mix(0.35, 1.0, uSunGlow);
+
+        gl_FragColor = vec4(col, a);
       }`,
   });
 }
@@ -144,6 +244,7 @@ class ContrailSystem {
     this.trails = new Map();  // engineId -> { points:[{x,y,z,age,strength,seed,rx,ry,rz}], timeSinceSpawn }
     this.meshes = new Map();  // engineId -> { geo, mesh }
     this._sharedMaterial = _ctMakeMaterial();
+    this._clock = 0;
   }
 
   // pos: THREE.Vector3 (world space, pozycja dyszy silnika)
@@ -188,7 +289,7 @@ class ContrailSystem {
 
     // Lokalna ramka (right) prostopadła do stycznej — TRANSPORTOWANA
     // RÓWNOLEGLE z poprzedniego punktu (stabilna w przestrzeni świata, bez
-    // migotania i bez zależności od kamery — to jest sedno naprawy).
+    // migotania i bez zależności od kamery — to jest sedno naprawy z wcześniej).
     if (prev) {
       _ctRight.set(prev.rx, prev.ry, prev.rz);
       _ctRight.addScaledVector(_ctTan, -_ctRight.dot(_ctTan));
@@ -207,12 +308,16 @@ class ContrailSystem {
   }
 
   update(dt) {
+    this._clock += dt;
+    this._sharedMaterial.uniforms.uTime.value = this._clock;
+    if (typeof camera !== 'undefined') this._sharedMaterial.uniforms.uCamPos.value.copy(camera.position);
+
     const windWorld = (typeof weather !== 'undefined' && weather) ? weather.windWorld : { x: 0, z: 0 };
     const cloudCov  = (typeof WeatherState !== 'undefined') ? WeatherState.cloudCoverage : 0.3;
     const turb      = (typeof WeatherState !== 'undefined') ? WeatherState.turbulence   : 0.1;
     // Wilgotniejsze/bardziej zachmurzone powietrze -> smuga żyje dłużej, zanim
     // się rozproszy (persistent contrail). Suche powietrze -> znika szybko.
-    const lifetime = _ctLerp(20, 110, _ctClamp01(cloudCov));
+    const lifetime = _ctLerp(20, 130, _ctClamp01(cloudCov));
 
     let sunGlow = 0.55, warm = 0;
     if (typeof sunWorldDir !== 'undefined') {
@@ -221,6 +326,9 @@ class ContrailSystem {
       warm    = _ctClamp01(1 - Math.abs(sunAlt) / 0.25);
       _ctSunDir.copy(sunWorldDir);
     }
+    this._sharedMaterial.uniforms.uSunGlow.value = sunGlow;
+    this._sharedMaterial.uniforms.uWarm.value    = warm;
+    this._sharedMaterial.uniforms.uSunDir.value.copy(_ctSunDir);
 
     for (const [key, trail] of this.trails) {
       trail.timeSinceSpawn = (trail.timeSinceSpawn || 0) + dt;
@@ -245,19 +353,21 @@ class ContrailSystem {
       }
       if (pts.length > CONTRAIL_MAX_POINTS) pts.splice(0, pts.length - CONTRAIL_MAX_POINTS);
 
-      this._rebuildMesh(key, trail, lifetime, sunGlow, warm);
+      this._rebuildMesh(key, trail, lifetime);
     }
   }
 
   _createMeshRecord() {
     const geo = new THREE.BufferGeometry();
     const vcount = CONTRAIL_MAX_POINTS * CONTRAIL_SIDES;
-    const posArr    = new Float32Array(vcount * 3);
-    const normArr   = new Float32Array(vcount * 3);
-    const alphaArr  = new Float32Array(vcount);
+    const posArr   = new Float32Array(vcount * 3);
+    const normArr  = new Float32Array(vcount * 3);
+    const alphaArr = new Float32Array(vcount);
+    const ageArr   = new Float32Array(vcount);
     geo.setAttribute('position', new THREE.BufferAttribute(posArr, 3).setUsage(THREE.DynamicDrawUsage));
     geo.setAttribute('aNormal',  new THREE.BufferAttribute(normArr, 3).setUsage(THREE.DynamicDrawUsage));
     geo.setAttribute('alpha',    new THREE.BufferAttribute(alphaArr, 1).setUsage(THREE.DynamicDrawUsage));
+    geo.setAttribute('aAge',     new THREE.BufferAttribute(ageArr, 1).setUsage(THREE.DynamicDrawUsage));
     geo.setIndex(new THREE.BufferAttribute(CONTRAIL_INDEX, 1));
     geo.setDrawRange(0, 0);
 
@@ -268,13 +378,9 @@ class ContrailSystem {
     return { geo, mesh };
   }
 
-  _rebuildMesh(key, trail, lifetime, sunGlow, warm) {
+  _rebuildMesh(key, trail, lifetime) {
     let rec = this.meshes.get(key);
     if (!rec) { rec = this._createMeshRecord(); this.meshes.set(key, rec); }
-
-    this._sharedMaterial.uniforms.uSunGlow.value = sunGlow;
-    this._sharedMaterial.uniforms.uWarm.value    = warm;
-    this._sharedMaterial.uniforms.uSunDir.value.copy(_ctSunDir);
 
     const pts = trail.points;
     const n = pts.length;
@@ -283,7 +389,8 @@ class ContrailSystem {
     const posAttr   = rec.geo.attributes.position;
     const normAttr  = rec.geo.attributes.aNormal;
     const alphaAttr = rec.geo.attributes.alpha;
-    const posArr = posAttr.array, normArr = normAttr.array, alphaArr = alphaAttr.array;
+    const ageAttr   = rec.geo.attributes.aAge;
+    const posArr = posAttr.array, normArr = normAttr.array, alphaArr = alphaAttr.array, ageArr = ageAttr.array;
     const ringCos = CONTRAIL_RING.cos, ringSin = CONTRAIL_RING.sin;
     const sides = CONTRAIL_SIDES;
 
@@ -333,12 +440,14 @@ class ContrailSystem {
         normArr[o3+1] = ny;
         normArr[o3+2] = nz;
         alphaArr[vi]  = alpha;
+        ageArr[vi]    = p.age;
       }
     }
 
     posAttr.needsUpdate   = true;
     normAttr.needsUpdate  = true;
     alphaAttr.needsUpdate = true;
+    ageAttr.needsUpdate   = true;
     rec.geo.setDrawRange(0, (n - 1) * sides * 6);
   }
 }
