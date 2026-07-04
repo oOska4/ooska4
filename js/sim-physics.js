@@ -193,7 +193,7 @@ class A321Entity extends Entity {
     this.airspeed = 0;
     this.vs = 0;
     this._alpha = 0; this._cl = 0; this._isStalling = false;
-    this.terrainZoom = 13;
+    this.terrainZoom = 15; // maks. dostępna dokładność danych wysokościowych (~3 m/px) — tyle samo, co dla renderowanego terenu (patrz sim-terrain.js: buildMeshWithNeighbors ogranicza DEM do z15)
 
     const grp = new THREE.Group();
     this.mesh = grp;

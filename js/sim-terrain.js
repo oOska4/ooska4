@@ -73,35 +73,57 @@ function _sampleDem(src, lat, lon, zoom) {
   const xf = (lon + 180) / 360 * n;
   const yf = (1 - Math.log(Math.tan(lr) + 1 / Math.cos(lr)) / Math.PI) / 2 * n;
   const tx = Math.floor(xf), ty = Math.floor(yf);
-  const px = Math.max(0, Math.min(255, Math.floor((xf - tx) * 255)));
-  const py = Math.max(0, Math.min(255, Math.floor((yf - ty) * 255)));
-  return { tx, ty, px, py };
+  // Współrzędne piksela z częścią ułamkową (0..256) — do interpolacji
+  // dwuliniowej w _bilinearDem(), żeby wysokość terenu zmieniała się płynnie
+  // między próbkami DEM (tak jak na renderowanej siatce), zamiast skokowo
+  // "przeskakiwać" na najbliższy zmierzony punkt.
+  const pxf = Math.max(0, Math.min(255.999, (xf - tx) * 256));
+  const pyf = Math.max(0, Math.min(255.999, (yf - ty) * 256));
+  return { tx, ty, px: pxf | 0, py: pyf | 0, pxf, pyf };
+}
+
+// Interpolacja dwuliniowa między 4 sąsiednimi pikselami siatki wysokości — bez
+// tego wysokość terenu "skakała" na najbliższy zmierzony punkt, przez co
+// pochyły teren między dwoma punktami wysokości wyglądał dla fizyki jak schodek
+// zamiast równej pochyłości (a koło zawsze "wybierało" jeden z dwóch punktów).
+// Działa w obrębie jednego kafelka 256×256 — przy samej krawędzi kafelka drugi
+// róg jest przycinany do tego samego kafelka (błąd rzędu ułamka metra, bez
+// znaczenia dla koła samolotu, a oszczędza dociąganie sąsiednich kafelków DEM).
+function _bilinearDem(dem, pxf, pyf) {
+  const x0 = pxf | 0, y0 = pyf | 0;
+  const x1 = Math.min(255, x0 + 1), y1 = Math.min(255, y0 + 1);
+  const fx = pxf - x0, fy = pyf - y0;
+  const h00 = dem[y0 * 256 + x0], h10 = dem[y0 * 256 + x1];
+  const h01 = dem[y1 * 256 + x0], h11 = dem[y1 * 256 + x1];
+  const hx0 = h00 + (h10 - h00) * fx;
+  const hx1 = h01 + (h11 - h01) * fx;
+  return hx0 + (hx1 - hx0) * fy;
 }
 
 // ── Próbkowanie wysokości terenu ──────────────────────────────────────────────
 
 function terrainHeightM(lat, lon, zoom = 12) {
   const z = Math.min(zoom, 15);   // terrarium max zoom = 15
-  const { tx, ty, px, py } = _sampleDem(null, lat, lon, z);
+  const { tx, ty, pxf, pyf } = _sampleDem(null, lat, lon, z);
   const dem = demDataCache.get(`${z}_${tx}_${ty}`);
   if (!dem) return 0;
-  return Math.max(0, dem[py * 256 + px]);
+  return Math.max(0, _bilinearDem(dem, pxf, pyf));
 }
 
-function terrainHeightBest(lat, lon, zooms = [14, 13, 12, 11, 10, 9, 8, 7]) {
+function terrainHeightBest(lat, lon, zooms = [15, 14, 13, 12, 11, 10, 9, 8, 7]) {
   for (const z of zooms) {
-    const { tx, ty, px, py } = _sampleDem(null, lat, lon, z);
+    const { tx, ty, pxf, pyf } = _sampleDem(null, lat, lon, z);
     const dem = demDataCache.get(`${z}_${tx}_${ty}`);
-    if (dem) return Math.max(0, dem[py * 256 + px]);
+    if (dem) return Math.max(0, _bilinearDem(dem, pxf, pyf));
   }
   return 0;
 }
 
 async function terrainHeightMAsync(lat, lon, zoom = 12, signal = null) {
-  const { tx, ty, px, py } = _sampleDem(null, lat, lon, zoom);
+  const { tx, ty, pxf, pyf } = _sampleDem(null, lat, lon, zoom);
   const dem = await loadDemData(zoom, tx, ty, signal);
   if (!dem) return 0;
-  return Math.max(0, dem[py * 256 + px]);
+  return Math.max(0, _bilinearDem(dem, pxf, pyf));
 }
 
 function terrainHeightScene(lat, lon, zoom = 12) {
