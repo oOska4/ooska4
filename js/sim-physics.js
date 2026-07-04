@@ -127,6 +127,31 @@ const A321_PARAMS = {
   V1: 69.4, VR: 74.7, V2: 79.8, Vstall: 62, VMO: 189,
 };
 
+// ── Geometria i zawieszenie podwozia ───────────────────────────────────────────
+//
+// Współrzędne 3 punktów styczności kół z ziemią w LOKALNYM układzie samolotu
+// (ten sam, co w sim-controls.js przy emitExhaust: +X = prawe skrzydło,
+// +Y = góra, +Z = dziób), w metrach względem "origin" encji (this.altM/lat/lon).
+// Wyznaczone bezpośrednio z geometrii a321.obj (dolne punkty opon), a nie
+// zgadnięte — dzięki temu naturalny kąt spoczynkowy samolotu na 3 kołach
+// wynika z samego modelu, a nie ze stałej "gearOffset" jak wcześniej.
+const GEAR_NOSE  = { x: -0.17, y: -3.53, z: 15.34 };
+const GEAR_LEFT  = { x: -3.96, y: -3.75, z: -1.20 };
+const GEAR_RIGHT = { x:  3.62, y: -3.75, z: -1.20 };
+// Przybliżona wysokość "spoczynkowa" origin encji nad terenem, gdy podwozie
+// stoi na płaskiej ziemi — używana tylko jako sensowna wysokość startowa w
+// reset() (dokładny kąt/wysokość i tak dociąga się w pierwszej klatce fizyki).
+const GEAR_MAIN_REST_OFFSET = -GEAR_LEFT.y;
+
+// Zawieszenie (amortyzacja goleni) — na razie WYŁĄCZNIE fizyczne (wpływa na
+// wysokość kadłuba), bez animacji ugięcia samej goleni/opony (to osobny,
+// wizualny krok na później). Każda goleń ma własny, niezależny stan "wgniecenia".
+const GEAR_SUSPENSION_TRAVEL   = 0.22; // maks. całkowite wgniecenie w ziemię (m)
+const GEAR_STATIC_SAG          = 0.04; // ugięcie w spoczynku pod ciężarem samolotu (m)
+const GEAR_IMPACT_SINK_PER_MS  = 0.05; // dodatkowe wgniecenie na 1 m/s prędkości pionowej przy dotknięciu
+const GEAR_SINK_SETTLE_TAU     = 0.12; // stała czasowa powrotu wgniecenia do wartości spoczynkowej (s)
+const GEAR_ATTITUDE_SETTLE_TAU = 0.18; // stała czasowa "osiadania" pitch/roll na podwoziu (s)
+
 function groundEffectFactor(agl_m, span) {
   const h_b = Math.max(0, agl_m) / (span * 0.5);
   if (h_b >= 1.0) return 1.0;
@@ -160,6 +185,10 @@ class A321Entity extends Entity {
     this.gearDown = true;
     this.spoilers = false;
     this.onGround = true;
+    // Niezależny stan "wgniecenia" zawieszenia każdej goleni (m) + flaga, czy
+    // dana goleń aktualnie dotyka ziemi (do wykrywania chwili uderzenia) — patrz sampleGear()/settleOnGear().
+    this.gearSink = { nose: 0, left: 0, right: 0 };
+    this._gearTouch = { nose: false, left: false, right: false };
     this.autoRotateArmed = false;
     this.airspeed = 0;
     this.vs = 0;
@@ -216,7 +245,7 @@ class A321Entity extends Entity {
     this.lat = opts.lat ?? SPAWN_LAT;
     this.lon = opts.lon ?? SPAWN_LON;
     const groundH = this.groundHeight();
-    this.altM = opts.altM ?? (groundH + 0.5);
+    this.altM = opts.altM ?? (groundH + GEAR_MAIN_REST_OFFSET);
     this.yawRad = opts.yawRad ?? Units.degToRad((180 - SPAWN_HEADING_DEG + 360) % 360);
     this.pitchRad = opts.pitchRad ?? 0;
     this.rollRad = 0;
@@ -227,6 +256,8 @@ class A321Entity extends Entity {
     this.gearDown = opts.gearDown ?? true;
     this.spoilers = false;
     this.onGround = opts.onGround ?? true;
+    this.gearSink = { nose: 0, left: 0, right: 0 };
+    this._gearTouch = { nose: false, left: false, right: false };
     this.autoRotateArmed = false;
     this.heading = this.headingDeg;
     this.pitch = this.pitchRad * 180 / Math.PI;
@@ -237,6 +268,71 @@ class A321Entity extends Entity {
   updateGearVisibility() {
     const gearGrp = this.mesh.getObjectByName('gearGroup');
     if (gearGrp) gearGrp.visible = this.gearDown;
+  }
+
+  // Próbkuje teren NIEZALEŻNIE pod każdym z 3 punktów podwozia (przednie koło,
+  // lewe i prawe główne), z uwzględnieniem aktualnego pitch/roll/yaw. noseDir/
+  // wingRight/acUp to jednostkowe wektory lokalnych osi samolotu (odpowiednio
+  // +Z/+X/+Y) już przeliczone na przestrzeń świata — liczone wcześniej w
+  // physicsUpdate(). Zwraca dla każdej goleni: przesunięcie względem origin
+  // encji, wysokość n.p.m. tej goleni, wysokość terenu pod nią i penetrację
+  // (dodatnia = koło już w/pod ziemią).
+  sampleGear(noseDir, wingRight, acUp) {
+    const sampleOne = (local) => {
+      const off = wingRight.clone().multiplyScalar(local.x)
+        .addScaledVector(acUp, local.y)
+        .addScaledVector(noseDir, local.z);
+      const worldAlt = this.altM + off.y;
+      const { lat: glat, lon: glon } = offsetGeo(this.lat, this.lon, off.x, -off.z);
+      let gH = terrainHeightM(glat, glon, this.terrainZoom);
+      if (gH <= 0) gH = terrainHeightBest(glat, glon);
+      return { offset: off, worldAlt, groundH: gH, pen: gH - worldAlt };
+    };
+    return { nose: sampleOne(GEAR_NOSE), left: sampleOne(GEAR_LEFT), right: sampleOne(GEAR_RIGHT) };
+  }
+
+  // Osadza samolot na podwoziu na podstawie próbki z sampleGear(): aktualizuje
+  // "wgniecenie" zawieszenia każdej goleni (mocniejsze przy twardszym dotknięciu,
+  // potem wraca do niewielkiego ugięcia spoczynkowego — na razie czysto
+  // fizycznie, bez animacji samej goleni, to osobny krok na później), dociąga
+  // pitch/roll do kąta wynikającego z RZECZYWISTEGO terenu pod kołami (samolot
+  // nie może np. stać z uniesionym przednim kołem w powietrzu — musi ono opaść),
+  // i ustawia altM tak, by koło główne stało dokładnie na (obniżonym o wgniecenie) terenie.
+  settleOnGear(gear, dtCap, isRotating) {
+    const impactVy = Math.max(0, -this.vel.y); // prędkość opadania w chwili tej klatki
+    for (const k of ['nose', 'left', 'right']) {
+      const touching = gear[k].pen >= 0;
+      if (touching && !this._gearTouch[k]) {
+        // świeże dotknięcie tej goleni — "wbij" amortyzator proporcjonalnie do prędkości uderzenia
+        const impact = Math.min(GEAR_SUSPENSION_TRAVEL - GEAR_STATIC_SAG, impactVy * GEAR_IMPACT_SINK_PER_MS);
+        this.gearSink[k] = Math.min(GEAR_SUSPENSION_TRAVEL, this.gearSink[k] + GEAR_STATIC_SAG + impact);
+      }
+      this._gearTouch[k] = touching;
+      const target = touching ? GEAR_STATIC_SAG : 0;
+      const blend  = 1 - Math.exp(-dtCap / GEAR_SINK_SETTLE_TAU);
+      this.gearSink[k] += (target - this.gearSink[k]) * blend;
+    }
+
+    const gN = gear.nose.groundH  - this.gearSink.nose;
+    const gL = gear.left.groundH  - this.gearSink.left;
+    const gR = gear.right.groundH - this.gearSink.right;
+    const gMainAvg = (gL + gR) * 0.5;
+
+    // Przechył: samolot zawsze "ślizga się" do kąta wynikającego z terenu pod
+    // lewym/prawym kołem głównym — na kołach nie da się utrzymać banku samemu.
+    const rollTarget  = (gL - gR) / (GEAR_RIGHT.x - GEAR_LEFT.x);
+    // Pochylenie: kąt, przy którym i przednie, i główne koło dotykają swojego
+    // (już obniżonego o wgniecenie) terenu jednocześnie.
+    const pitchTarget = (gN - gMainAvg - (GEAR_NOSE.y - GEAR_LEFT.y)) / (GEAR_NOSE.z - GEAR_LEFT.z);
+
+    const attBlend = 1 - Math.exp(-dtCap / GEAR_ATTITUDE_SETTLE_TAU);
+    this.rollRad += (rollTarget - this.rollRad) * attBlend;
+    // Podczas rotacji na starcie pitchem steruje istniejąca logika autoRotate —
+    // tu go nie dotykamy, żeby nie "ściągać" dziobu z powrotem w trakcie odrywania koła.
+    if (!isRotating) this.pitchRad += (pitchTarget - this.pitchRad) * attBlend;
+
+    // Koło główne zawsze "przyklejone" do terenu pod nim, przy aktualnym pochyleniu.
+    this.altM = gMainAvg - (GEAR_LEFT.y + GEAR_LEFT.z * this.pitchRad);
   }
 
   integrate(dt) {}
@@ -332,13 +428,17 @@ class A321Entity extends Entity {
     const dragVec   = airspeed > 0.1 ? this.vel.clone().normalize().multiplyScalar(-dragMag) : new THREE.Vector3();
     const liftVec   = acUp.clone().multiplyScalar(liftMag);
 
-    let distGround = this.altM - (groundH + gearOffset);
-    let gearContact = false;
-    if (this.gearDown && distGround < 0) {
-      this.altM = groundH + gearOffset;
-      distGround = 0;
-      gearContact = true;
+    // ── Kontakt z ziemią: 3 niezależne punkty (przednie koło + lewe/prawe
+    //    główne koło), każdy z własnym pomiarem terenu pod sobą — patrz
+    //    sampleGear(). Podwozie próbkowane jest już od 15 m AGL, więc ten próg
+    //    zawsze "widzi" zbliżanie się do ziemi z dużym zapasem przed faktycznym
+    //    dotknięciem. Dla schowanego podwozia (lądowanie na kadłubie) zostaje
+    //    stary, jednopunktowy model (gearOffset) — patrz gałąź powietrzna niżej.
+    let gear = null;
+    if (this.gearDown && (this.onGround || agl_now < 15)) {
+      gear = this.sampleGear(noseDir, wingRight, acUp);
     }
+    const gearContact = !!gear && Math.max(gear.nose.pen, gear.left.pen, gear.right.pen) >= 0;
 
     if (this.onGround || gearContact) {
       if (gearContact) this.onGround = true;
@@ -364,7 +464,11 @@ class A321Entity extends Entity {
           }
         }
         this.vel.y = 0;
-        if (this.gearDown) this.altM = groundH + gearOffset;
+        if (this.gearDown && gear) {
+          this.settleOnGear(gear, dtCap, autoRotate > 0);
+        } else {
+          this.altM = groundH + gearOffset; // lądowanie na kadłubie (gear w górze) — bez zmian
+        }
       }
     } else {
       const ax = (thrustVec.x + dragVec.x + liftVec.x) / A321_PARAMS.mass;
@@ -387,7 +491,9 @@ class A321Entity extends Entity {
         }
       }
 
-      if (distGround <= 0) {
+      // Fallback wyłącznie dla schowanego podwozia (kadłub) — gear w dole
+      // zawsze przechodzi przez gałąź wyżej dzięki wcześniejszemu wykryciu (gearContact).
+      if (!this.gearDown && (this.altM - (groundH + gearOffset)) <= 0) {
         this.vel.y = this.vel.y < -3 ? this.vel.y * -0.1 : 0;
         this.altM = groundH + gearOffset;
         this.onGround = true;
@@ -405,7 +511,9 @@ class A321Entity extends Entity {
 
     this.airspeed = this.vel.length();
     this.terrainM = groundH;
-    this.agl = Math.max(0, this.altM - groundH - gearOffset);
+    this.agl = gear
+      ? Math.max(0, -Math.max(gear.nose.pen, gear.left.pen, gear.right.pen))
+      : Math.max(0, this.altM - groundH - gearOffset);
     this.vs = this.vel.y;
     this._alpha = alpha; this._cl = cl; this._isStalling = isStalling;
     this.heading = this.headingDeg;

@@ -13,22 +13,26 @@
 //
 // GEOMETRIA: smuga to prawdziwa RURA 3D (pierścień wierzchołków wokół osi w
 // każdym punkcie), o orientacji ustalonej w przestrzeni świata (transport
-// równoległy wzdłuż stycznej) — NIE billboard zwrócony do kamery, bo taki
-// zapada się optycznie do kreski widziany "wzdłuż" (typowy kąt kamery za
-// samolotem). Rura ma realną objętość z każdego kąta.
+// równoległy wzdłuż stycznej) — NIE billboard zwrócony do kamery.
 //
-// SHADER (wersja "maksymalna jakość"):
-//  • proceduralny szum 3D (value noise + fbm, 4 oktawy) przesuwa wierzchołki
-//    wzdłuż normalnej — organiczne, kłębiaste wybrzuszenia zamiast gładkiej
-//    rurki, narastające z wiekiem punktu (świeży ślad przy dyszy jest ciasny
-//    i gładki, stary — rozedrgany i puchaty, tak jak dyfundujący realny lód);
-//  • drugi, drobniejszy szum w fragment shaderze targa krawędzią sylwetki
-//    (postrzępione, "wystrzępione" brzegi zamiast twardej linii geometrii);
-//  • rozpraszanie światła słonecznego w przód (przybliżenie funkcji fazowej
-//    Henyeya-Greensteina) — smuga wyraźnie jaśnieje/"świeci", gdy patrzy się
-//    przez nią w stronę Słońca, dokładnie jak prawdziwe kryształki lodu;
-//  • fresnel na sylwetce (miękka, rozmyta poświata na krawędzi) — tani, ale
-//    skuteczny trik na wrażenie objętości bez prawdziwego raymarchingu.
+// WYGLĄD (dostrojony pod referencyjne zdjęcie prawdziwego kontrailu):
+// prawdziwe smugi są niemal NIEPRZEZROCZYSTE — czyste, jasnobiałe "sznury"
+// z bryłowatą, kalafiorowatą fakturą, które utrzymują spójność przez
+// WIĘKSZOŚĆ swojej długości i strzępią się dopiero na samym końcu (najstarsza
+// część). To zupełnie inny model niż półprzezroczysta, wcześnie rozmywająca
+// się mgiełka — dlatego:
+//  • przemieszczenie szumem jest teraz DWUWARSTWOWE: gruby, niskoczęstotli-
+//    wościowy szum daje duże, zlewające się ze sobą bryły (kalafior), drobny
+//    wysokoczęstotliwościowy dokłada fakturę powierzchni;
+//  • krycie (alpha) zostaje blisko maksimum przez większość życia punktu i
+//    dopiero w ostatniej ~1/3 czasu życia gładko opada do zera — zamiast
+//    ciągłego, powolnego zanikania od samego początku;
+//  • szum w fragment shaderze dziurawi/targa smugę (efekt "strzępienia") TYLKO
+//    tam, gdzie i tak jest już blisko końca życia — w pozostałych miejscach
+//    moduluje wyłącznie jasność (cienie w fałdach), nie przezroczystość —
+//    dzięki temu środek smugi wygląda jak lita, jasna chmura, a nie sito;
+//  • rozpraszanie światła słonecznego jest teraz subtelnym dodatkiem, nie
+//    dominującą poświatą — materiał ma być przede wszystkim jasnobiały i gęsty.
 //
 // Publiczne API zachowane 1:1 (sim-main.js: new ContrailSystem(), potem co
 // klatkę emit() per silnik + update(dt) raz na klatkę).
@@ -38,20 +42,20 @@ const CONTRAIL_MAX_POINTS   = 600;   // punktów smugi na silnik (jakość > wyd
 const CONTRAIL_SIDES        = 10;    // boków przekroju rury
 const CONTRAIL_MIN_SPACING  = 12;    // [m] min. odstęp między kolejnymi punktami
 const CONTRAIL_MAX_SPAWN_S  = 0.1;   // [s] maks. czas między punktami — gwarancja ciągłości przy małej prędkości
-const CONTRAIL_BASE_RADIUS  = 0.9;   // [m] promień tuż za silnikiem
-const CONTRAIL_RADIUS_GROWTH= 0.28;  // [m/s wieku] tempo rozszerzania smugi
-const CONTRAIL_MAX_RADIUS   = 48;    // [m] górny limit promienia
-const CONTRAIL_FADE_IN_S    = 0.3;   // [s] czas narastania przezroczystości przy dyszy
+const CONTRAIL_BASE_RADIUS  = 1.1;   // [m] promień tuż za silnikiem
+const CONTRAIL_RADIUS_GROWTH= 0.12;  // [m/s wieku] tempo rozszerzania smugi — WOLNE: smuga ma być spójnym "sznurem", nie balonem
+const CONTRAIL_MAX_RADIUS   = 40;    // [m] górny limit promienia
+const CONTRAIL_FADE_IN_S    = 0.15;  // [s] czas narastania przezroczystości przy dyszy — niemal natychmiastowe pojawienie się
 // Próg formowania (uproszczone Schmidt-Appleman): pełny kontrail przy ≤ -40°C,
 // zero przy ≥ -26°C, płynne przejście pomiędzy.
 const CONTRAIL_TEMP_FULL = -40;
 const CONTRAIL_TEMP_NONE = -26;
 
 // ── Strojenie: jakość wizualna / shader ─────────────────────────────────────
-const CONTRAIL_DISP_MAX_YOUNG = 0.12;  // [m] przemieszczenie szumem tuż przy dyszy (prawie zerowe — świeży ślad gładki)
-const CONTRAIL_DISP_MAX_OLD   = 2.4;   // [m] przemieszczenie szumem po ~40s wieku (rozedrgane, puchate)
-const CONTRAIL_DISP_AGE_S     = 40.0;  // [s] po ilu sekundach przemieszczenie osiąga maksimum
-const CONTRAIL_HG_G           = 0.86;  // anizotropia rozpraszania Henyeya-Greensteina (0..1, bliżej 1 = ostrzejsza poświata w stronę słońca)
+const CONTRAIL_ALPHA_CAP      = 0.97;  // maks. krycie — smuga ma być niemal nieprzezroczysta, jak na zdjęciu referencyjnym
+const CONTRAIL_FADE_HOLD_FRAC = 0.55;  // przez ile % czasu życia krycie zostaje na maksimum, zanim zacznie opadać
+const CONTRAIL_DISP_AGE_S     = 45.0;  // [s] po ilu sekundach przemieszczenie/bryłowatość osiągają maksimum
+const CONTRAIL_HG_G           = 0.82;  // anizotropia rozpraszania Henyeya-Greensteina
 
 // ── TYMCZASOWE dla testów wyglądu ───────────────────────────────────────────
 // Gdy true: pomija próg temperatury/wysokości, smuga formuje się zawsze.
@@ -60,6 +64,7 @@ const CONTRAIL_DEBUG_ALWAYS_ON = true;
 
 function _ctClamp01(v) { return v < 0 ? 0 : v > 1 ? 1 : v; }
 function _ctLerp(a, b, t) { return a + (b - a) * t; }
+function _ctSmooth(t) { t = _ctClamp01(t); return t * t * (3 - 2 * t); }
 
 // Lekko "pomarszczony" przekrój — nie idealne koło.
 const CONTRAIL_PUFF = [1.00, 0.85, 1.08, 0.90, 1.12, 0.86, 1.05, 0.92, 1.10, 0.88];
@@ -105,8 +110,7 @@ const _ctFallbackAxis = new THREE.Vector3(1, 0, 0);
 const _ctSunDir  = new THREE.Vector3(0.3, 0.6, 0.3).normalize();
 
 // Wspólny fragment GLSL (hash + value-noise 3D + fbm), wklejany do obu
-// shaderów — bez tego rura wygląda jak gładki plastik zamiast kłębiastej
-// chmury lodowej.
+// shaderów.
 const CONTRAIL_NOISE_GLSL = `
   float ctHash(vec3 p) {
     p = fract(p * 0.3183099 + vec3(0.1, 0.2, 0.3));
@@ -149,11 +153,11 @@ function _ctMakeMaterial() {
     side:        THREE.DoubleSide,
     blending:    THREE.NormalBlending,
     uniforms: {
-      uSunGlow: { value: 0.6 },                    // 0 = noc, 1 = pełny dzień
-      uWarm:    { value: 0.0 },                     // bliskość horyzontu słonecznego
-      uSunDir:  { value: _ctSunDir.clone() },       // kierunek do Słońca (world space)
-      uCamPos:  { value: new THREE.Vector3() },     // pozycja kamery (world space)
-      uTime:    { value: 0 },                       // powolny zegar do animacji szumu
+      uSunGlow: { value: 0.6 },
+      uWarm:    { value: 0.0 },
+      uSunDir:  { value: _ctSunDir.clone() },
+      uCamPos:  { value: new THREE.Vector3() },
+      uTime:    { value: 0 },
     },
     vertexShader: `
       uniform float uTime;
@@ -172,15 +176,21 @@ function _ctMakeMaterial() {
         vAge   = aAge;
         vNormal = aNormal;
 
-        // Proceduralne, organiczne wybrzuszenia — ciasne i gładkie tuż przy
-        // dyszy, coraz bardziej rozedrgane i puchate z wiekiem punktu (dokładnie
-        // jak realna dyfuzja turbulentna kryształków lodu w ślad za silnikiem).
+        // DWIE WARSTWY SZUMU: gruby (niska częstotliwość, duża amplituda) daje
+        // zlewające się ze sobą bryły — "kalafior" jak na prawdziwych zdjęciach
+        // kontraili — a drobny dokłada fakturę powierzchni. Blisko dyszy prawie
+        // zerowe (czysty, ciasny sznur), narasta z wiekiem punktu.
         float ageT = clamp(aAge / ${CONTRAIL_DISP_AGE_S.toFixed(1)}, 0.0, 1.0);
-        float dispAmt = mix(${CONTRAIL_DISP_MAX_YOUNG.toFixed(3)}, ${CONTRAIL_DISP_MAX_OLD.toFixed(3)}, ageT);
-        vec3 noiseCoord = position * 0.045 + vec3(uTime * 0.025, uTime * 0.017, uTime * 0.021);
-        float disp = ctFbm(noiseCoord, 4) - 0.5;
-        vec3 displaced = position + aNormal * disp * dispAmt;
+        float coarseAmt = mix(0.06, 3.4, ageT);
+        float fineAmt   = mix(0.10, 1.1, ageT);
 
+        vec3 coarseCoord = position * 0.02 + vec3(uTime*0.020, uTime*0.012, uTime*0.015);
+        vec3 fineCoord   = position * 0.11 + vec3(uTime*0.05,  uTime*0.03,  uTime*0.04);
+        float coarseN = ctFbm(coarseCoord, 3) - 0.5;
+        float fineN   = ctFbm(fineCoord, 3) - 0.5;
+        float disp = coarseN * coarseAmt + fineN * fineAmt;
+
+        vec3 displaced = position + aNormal * disp;
         vWorldPos = displaced;
         gl_Position = projectionMatrix * modelViewMatrix * vec4(displaced, 1.0);
       }`,
@@ -201,40 +211,46 @@ function _ctMakeMaterial() {
         vec3 N = normalize(vNormal);
         vec3 viewDir = normalize(uCamPos - vWorldPos);
 
-        // Drobny szum powierzchni — postrzępione, "wystrzępione" krawędzie
-        // zamiast twardej linii geometrii; świeży ślad gładszy, stary bardziej targany.
-        float surfN = ctFbm(vWorldPos * 0.09 + vec3(uTime * 0.05, uTime * 0.03, uTime * 0.04), 3);
-        float tatterAmt = clamp(vAge / 10.0, 0.0, 1.0) * 0.8;
-        float edgeNoise = mix(1.0, surfN * 1.4, tatterAmt);
+        float surfN = ctFbm(vWorldPos * 0.06 + vec3(uTime*0.03, uTime*0.02, uTime*0.025), 3);
 
-        float a = vAlpha * clamp(edgeNoise, 0.0, 1.3);
+        // Szum ZAWSZE deleguje trochę do cieniowania (fałdy "kalafiora" —
+        // ciemniejsze wgłębienia, jaśniejsze wypukłości), tak jak lita,
+        // oświetlona chmura — NIE robi dziur w kryciu.
+        float aoShade = mix(0.72, 1.10, surfN);
 
-        // Fresnel na sylwetce — miękka poświata na krawędzi, tani zamiennik
-        // prawdziwej objętości/raymarchingu.
-        float rim = pow(1.0 - clamp(abs(dot(viewDir, N)), 0.0, 1.0), 2.2);
-        a = clamp(a + rim * vAlpha * 0.28, 0.0, 1.0);
+        // Targanie/strzępienie (utrata krycia) włącza się TYLKO tam, gdzie
+        // smuga i tak jest już blisko końca życia (vAlpha już nisko) — środek
+        // i większość długości pozostaje lita, jak na referencyjnym zdjęciu.
+        float tearGate = 1.0 - smoothstep(0.12, 0.5, vAlpha);
+        float tornAlpha = mix(1.0, clamp(surfN * 1.7, 0.0, 1.3), tearGate * 0.9);
+
+        float a = clamp(vAlpha * tornAlpha, 0.0, 1.0);
+
+        // Delikatny fresnel na sylwetce — miękka poświata krawędzi.
+        float rim = pow(1.0 - clamp(abs(dot(viewDir, N)), 0.0, 1.0), 2.4);
+        a = clamp(a + rim * vAlpha * 0.14, 0.0, 1.0);
         if (a < 0.01) discard;
 
-        // Rozpraszanie światła słonecznego w przód (Henyey-Greenstein) —
-        // smuga wyraźnie jaśnieje, gdy patrzysz przez nią w stronę Słońca.
+        // Subtelne rozpraszanie światła słonecznego w przód — dodatek, nie
+        // dominanta; materiał ma być przede wszystkim jasnobiały i gęsty.
         float cosTheta = dot(viewDir, uSunDir);
         float g = ${CONTRAIL_HG_G.toFixed(2)};
         float g2 = g * g;
         float hg = (1.0 - g2) / pow(max(1.0 + g2 - 2.0 * g * cosTheta, 0.0001), 1.5);
-        hg *= 0.032;
-        float glare = pow(max(cosTheta, 0.0), 55.0) * 1.1;
+        hg *= 0.014;
+        float glare = pow(max(cosTheta, 0.0), 60.0) * 0.5;
 
         float diff  = max(dot(N, uSunDir), 0.0);
-        float shade = 0.5 + 0.5 * diff;
+        float shade = (0.72 + 0.28 * diff) * aoShade;
 
-        vec3 base     = mix(vec3(0.42,0.45,0.50), vec3(0.97,0.98,1.0), uSunGlow) * shade;
-        vec3 warmTint = vec3(1.0, 0.82, 0.60) * shade;
-        vec3 col = mix(base, warmTint, uWarm * 0.35);
+        vec3 base     = mix(vec3(0.62,0.65,0.70), vec3(0.99,0.995,1.0), uSunGlow) * shade;
+        vec3 warmTint = vec3(1.0, 0.85, 0.65) * shade;
+        vec3 col = mix(base, warmTint, uWarm * 0.28);
 
-        vec3 sunColor = mix(vec3(1.0,0.95,0.85), vec3(1.0,0.65,0.42), uWarm);
-        col += sunColor * (hg + glare) * mix(0.35, 1.0, uSunGlow);
+        vec3 sunColor = mix(vec3(1.0,0.97,0.92), vec3(1.0,0.72,0.50), uWarm);
+        col += sunColor * (hg + glare) * mix(0.3, 1.0, uSunGlow);
 
-        gl_FragColor = vec4(col, a);
+        gl_FragColor = vec4(col, a * ${CONTRAIL_ALPHA_CAP.toFixed(2)});
       }`,
   });
 }
@@ -289,7 +305,7 @@ class ContrailSystem {
 
     // Lokalna ramka (right) prostopadła do stycznej — TRANSPORTOWANA
     // RÓWNOLEGLE z poprzedniego punktu (stabilna w przestrzeni świata, bez
-    // migotania i bez zależności od kamery — to jest sedno naprawy z wcześniej).
+    // migotania i bez zależności od kamery).
     if (prev) {
       _ctRight.set(prev.rx, prev.ry, prev.rz);
       _ctRight.addScaledVector(_ctTan, -_ctRight.dot(_ctTan));
@@ -316,8 +332,8 @@ class ContrailSystem {
     const cloudCov  = (typeof WeatherState !== 'undefined') ? WeatherState.cloudCoverage : 0.3;
     const turb      = (typeof WeatherState !== 'undefined') ? WeatherState.turbulence   : 0.1;
     // Wilgotniejsze/bardziej zachmurzone powietrze -> smuga żyje dłużej, zanim
-    // się rozproszy (persistent contrail). Suche powietrze -> znika szybko.
-    const lifetime = _ctLerp(20, 130, _ctClamp01(cloudCov));
+    // się rozproszy (persistent contrail). Suche powietrze -> znika szybciej.
+    const lifetime = _ctLerp(25, 140, _ctClamp01(cloudCov));
 
     let sunGlow = 0.55, warm = 0;
     if (typeof sunWorldDir !== 'undefined') {
@@ -393,6 +409,7 @@ class ContrailSystem {
     const posArr = posAttr.array, normArr = normAttr.array, alphaArr = alphaAttr.array, ageArr = ageAttr.array;
     const ringCos = CONTRAIL_RING.cos, ringSin = CONTRAIL_RING.sin;
     const sides = CONTRAIL_SIDES;
+    const fadeHoldAge = lifetime * CONTRAIL_FADE_HOLD_FRAC;
 
     for (let i = 0; i < n; i++) {
       const p = pts[i];
@@ -418,9 +435,14 @@ class ContrailSystem {
       const bulge  = 1 + 0.15 * Math.sin(p.age * 1.3 + p.seed * 2.1);
       const radius = radiusBase * bulge;
 
-      const fadeIn  = Math.min(1, p.age / CONTRAIL_FADE_IN_S);
-      const fadeOut = Math.pow(Math.max(0, 1 - p.age / lifetime), 1.4);
-      const alpha   = _ctClamp01(p.strength * fadeIn * fadeOut * 0.85);
+      const fadeIn = Math.min(1, p.age / CONTRAIL_FADE_IN_S);
+      // Krycie zostaje na maksimum przez większość życia (fadeHoldAge), a
+      // dopiero potem gładko (smoothstep) opada do zera — tak jak spójny,
+      // długi "sznur" na zdjęciu referencyjnym, a nie stopniowo znikająca mgiełka.
+      const fadeOut = p.age <= fadeHoldAge
+        ? 1
+        : 1 - _ctSmooth((p.age - fadeHoldAge) / Math.max(1, lifetime - fadeHoldAge));
+      const alpha = _ctClamp01(p.strength * fadeIn * fadeOut);
 
       const ringBase = i * sides;
       for (let s = 0; s < sides; s++) {
