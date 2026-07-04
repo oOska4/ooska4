@@ -146,7 +146,7 @@ const GEAR_MAIN_REST_OFFSET = -GEAR_LEFT.y;
 // Zawieszenie (amortyzacja goleni) — na razie WYŁĄCZNIE fizyczne (wpływa na
 // wysokość kadłuba), bez animacji ugięcia samej goleni/opony (to osobny,
 // wizualny krok na później). Każda goleń ma własny, niezależny stan "wgniecenia".
-const GEAR_SUSPENSION_TRAVEL   = 0.22; // maks. całkowite wgniecenie w ziemię (m)
+const GEAR_SUSPENSION_TRAVEL   = 1.22; // maks. całkowite wgniecenie w ziemię (m)
 const GEAR_STATIC_SAG          = 0.04; // ugięcie w spoczynku pod ciężarem samolotu (m)
 const GEAR_IMPACT_SINK_PER_MS  = 0.05; // dodatkowe wgniecenie na 1 m/s prędkości pionowej przy dotknięciu
 const GEAR_SINK_SETTLE_TAU     = 0.12; // stała czasowa powrotu wgniecenia do wartości spoczynkowej (s)
