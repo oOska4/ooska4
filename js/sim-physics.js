@@ -127,7 +127,6 @@ const A321_PARAMS = {
   V1: 69.4, VR: 74.7, V2: 79.8, Vstall: 62, VMO: 189,
 };
 
-
 // ── Geometria i zawieszenie podwozia ───────────────────────────────────────────
 //
 // Współrzędne 3 punktów styczności kół z ziemią w LOKALNYM układzie samolotu
@@ -167,8 +166,15 @@ const GEAR_MAIN_MID = { x: (GEAR_LEFT.x + GEAR_RIGHT.x) / 2, y: GEAR_LEFT.y, z: 
 // spadnie poniżej GEAR_FAR_CHECK_ENTER_AGL, przechodzimy w tryb dokładny (3
 // punkty, co klatkę) i zostajemy w nim, dopóki nie oddalimy się z zapasem
 // powyżej GEAR_FAR_CHECK_EXIT_AGL (histereza, żeby nie przełączać się w kółko).
-const GEAR_FAR_CHECK_ENTER_AGL = 60;  // m — poniżej tej wysokości włącz dokładne sprawdzanie 3 punktów
-const GEAR_FAR_CHECK_EXIT_AGL  = 90;  // m — powyżej tej wysokości wróć do taniego sprawdzania 1 punktem
+const GEAR_FAR_CHECK_ENTER_AGL = 120; // m — poniżej tej wysokości włącz dokładne sprawdzanie 3 punktów
+const GEAR_FAR_CHECK_EXIT_AGL  = 150; // m — powyżej tej wysokości wróć do taniego sprawdzania 1 punktem (zapas histerezy jak wcześniej)
+
+// Jeśli którekolwiek koło jest zanurzone w terenie głębiej niż to (znacznie
+// więcej niż normalne ugięcie zawieszenia GEAR_SUSPENSION_TRAVEL) — to nie jest
+// zwykłe lądowanie, tylko sytuacja awaryjna (np. bardzo stromy lot nurkowy,
+// teleportacja, spawn w złym miejscu) — samolot od razu "wyskakuje" na
+// powierzchnię (pitch/roll/altM ustawiane wprost, bez płynnego dociagania).
+const GEAR_EMERGENCY_PEN_M = 0.5; // m
 
 function groundEffectFactor(agl_m, span) {
   const h_b = Math.max(0, agl_m) / (span * 0.5);
@@ -353,7 +359,15 @@ class A321Entity extends Entity {
     // (już obniżonego o wgniecenie) terenu jednocześnie.
     const pitchTarget = (gN - gMainAvg - (GEAR_NOSE.y - GEAR_LEFT.y)) / (GEAR_NOSE.z - GEAR_LEFT.z);
 
-    const attBlend = 1 - Math.exp(-dtCap / GEAR_ATTITUDE_SETTLE_TAU);
+    // Normalnie pitch/roll płynnie "dociąga się" do kąta spoczynkowego (efekt
+    // zawieszenia). Ale jeśli samolot jest już wyraźnie pod ziemią (patrz
+    // GEAR_EMERGENCY_PEN_M) — to sytuacja awaryjna, nie zwykłe lądowanie — wtedy
+    // ustawiamy pitch/roll (a więc i altM niżej) od razu, bez płynnego przejścia.
+    const maxPen = Math.max(gear.nose.pen, gear.left.pen, gear.right.pen);
+    const attBlend = maxPen > GEAR_EMERGENCY_PEN_M
+      ? 1
+      : 1 - Math.exp(-dtCap / GEAR_ATTITUDE_SETTLE_TAU);
+
     this.rollRad += (rollTarget - this.rollRad) * attBlend;
     // Podczas rotacji na starcie pitchem steruje istniejąca logika autoRotate —
     // tu go nie dotykamy, żeby nie "ściągać" dziobu z powrotem w trakcie odrywania koła.
