@@ -146,11 +146,26 @@ const GEAR_MAIN_REST_OFFSET = -GEAR_LEFT.y;
 // Zawieszenie (amortyzacja goleni) — na razie WYŁĄCZNIE fizyczne (wpływa na
 // wysokość kadłuba), bez animacji ugięcia samej goleni/opony (to osobny,
 // wizualny krok na później). Każda goleń ma własny, niezależny stan "wgniecenia".
-const GEAR_SUSPENSION_TRAVEL   = 1.22; // maks. całkowite wgniecenie w ziemię (m)
+const GEAR_SUSPENSION_TRAVEL   = 0.22; // maks. całkowite wgniecenie w ziemię (m)
 const GEAR_STATIC_SAG          = 0.04; // ugięcie w spoczynku pod ciężarem samolotu (m)
 const GEAR_IMPACT_SINK_PER_MS  = 0.05; // dodatkowe wgniecenie na 1 m/s prędkości pionowej przy dotknięciu
 const GEAR_SINK_SETTLE_TAU     = 0.12; // stała czasowa powrotu wgniecenia do wartości spoczynkowej (s)
 const GEAR_ATTITUDE_SETTLE_TAU = 0.18; // stała czasowa "osiadania" pitch/roll na podwoziu (s)
+
+// Środek między kołami głównymi (lewym i prawym) — najniższy, najbardziej
+// reprezentatywny pojedynczy punkt do TANIEGO, rzadkiego sprawdzania odległości
+// od ziemi, gdy samolot jest wysoko (patrz GEAR_FAR_CHECK_* niżej).
+const GEAR_MAIN_MID = { x: (GEAR_LEFT.x + GEAR_RIGHT.x) / 2, y: GEAR_LEFT.y, z: GEAR_LEFT.z };
+
+// Z dala od ziemi nie ma sensu liczyć dokładnie 3 punktów podwozia co klatkę —
+// zamiast tego co GEAR_FAR_CHECK_INTERVAL sekund sprawdzamy tylko wysokość
+// GEAR_MAIN_MID nad terenem. Gdy spadnie poniżej GEAR_FAR_CHECK_ENTER_AGL,
+// przechodzimy w tryb dokładny (3 punkty, co klatkę — jak tuż nad ziemią) i
+// zostajemy w nim, dopóki nie oddalimy się z zapasem powyżej
+// GEAR_FAR_CHECK_EXIT_AGL (histereza, żeby nie przełączać się w kółko).
+const GEAR_FAR_CHECK_INTERVAL  = 0.2; // sekundy między rzadkimi sprawdzeniami z dala od ziemi
+const GEAR_FAR_CHECK_ENTER_AGL = 60;  // m — poniżej tej wysokości włącz dokładne sprawdzanie co klatkę
+const GEAR_FAR_CHECK_EXIT_AGL  = 90;  // m — powyżej tej wysokości wróć do rzadkiego sprawdzania
 
 function groundEffectFactor(agl_m, span) {
   const h_b = Math.max(0, agl_m) / (span * 0.5);
@@ -189,6 +204,10 @@ class A321Entity extends Entity {
     // dana goleń aktualnie dotyka ziemi (do wykrywania chwili uderzenia) — patrz sampleGear()/settleOnGear().
     this.gearSink = { nose: 0, left: 0, right: 0 };
     this._gearTouch = { nose: false, left: false, right: false };
+    // Tryb dokładnego sprawdzania podwozia (patrz GEAR_FAR_CHECK_* i sampleGearPoint/sampleGear).
+    // Start jako "blisko ziemi" — bezpieczny domyślny stan tuż po starcie/spawnie.
+    this._nearGroundZone = true;
+    this._nearGroundCheck = 0;
     this.autoRotateArmed = false;
     this.airspeed = 0;
     this.vs = 0;
@@ -258,6 +277,8 @@ class A321Entity extends Entity {
     this.onGround = opts.onGround ?? true;
     this.gearSink = { nose: 0, left: 0, right: 0 };
     this._gearTouch = { nose: false, left: false, right: false };
+    this._nearGroundZone = opts.onGround ?? true;
+    this._nearGroundCheck = 0;
     this.autoRotateArmed = false;
     this.heading = this.headingDeg;
     this.pitch = this.pitchRad * 180 / Math.PI;
@@ -270,25 +291,31 @@ class A321Entity extends Entity {
     if (gearGrp) gearGrp.visible = this.gearDown;
   }
 
+  // Próbkuje teren pod JEDNYM punktem lokalnym samolotu (offset w metrach
+  // względem origin encji, w lokalnym układzie +X prawo/+Y góra/+Z dziób).
+  // noseDir/wingRight/acUp to jednostkowe wektory lokalnych osi samolotu już
+  // przeliczone na przestrzeń świata — liczone wcześniej w physicsUpdate().
+  // Zwraca: przesunięcie względem origin encji, wysokość n.p.m. tego punktu,
+  // wysokość terenu pod nim i penetrację (dodatnia = punkt już w/pod ziemią).
+  sampleGearPoint(local, noseDir, wingRight, acUp) {
+    const off = wingRight.clone().multiplyScalar(local.x)
+      .addScaledVector(acUp, local.y)
+      .addScaledVector(noseDir, local.z);
+    const worldAlt = this.altM + off.y;
+    const { lat: glat, lon: glon } = offsetGeo(this.lat, this.lon, off.x, -off.z);
+    let gH = terrainHeightM(glat, glon, this.terrainZoom);
+    if (gH <= 0) gH = terrainHeightBest(glat, glon);
+    return { offset: off, worldAlt, groundH: gH, pen: gH - worldAlt };
+  }
+
   // Próbkuje teren NIEZALEŻNIE pod każdym z 3 punktów podwozia (przednie koło,
-  // lewe i prawe główne), z uwzględnieniem aktualnego pitch/roll/yaw. noseDir/
-  // wingRight/acUp to jednostkowe wektory lokalnych osi samolotu (odpowiednio
-  // +Z/+X/+Y) już przeliczone na przestrzeń świata — liczone wcześniej w
-  // physicsUpdate(). Zwraca dla każdej goleni: przesunięcie względem origin
-  // encji, wysokość n.p.m. tej goleni, wysokość terenu pod nią i penetrację
-  // (dodatnia = koło już w/pod ziemią).
+  // lewe i prawe główne) — patrz sampleGearPoint().
   sampleGear(noseDir, wingRight, acUp) {
-    const sampleOne = (local) => {
-      const off = wingRight.clone().multiplyScalar(local.x)
-        .addScaledVector(acUp, local.y)
-        .addScaledVector(noseDir, local.z);
-      const worldAlt = this.altM + off.y;
-      const { lat: glat, lon: glon } = offsetGeo(this.lat, this.lon, off.x, -off.z);
-      let gH = terrainHeightM(glat, glon, this.terrainZoom);
-      if (gH <= 0) gH = terrainHeightBest(glat, glon);
-      return { offset: off, worldAlt, groundH: gH, pen: gH - worldAlt };
+    return {
+      nose:  this.sampleGearPoint(GEAR_NOSE,  noseDir, wingRight, acUp),
+      left:  this.sampleGearPoint(GEAR_LEFT,  noseDir, wingRight, acUp),
+      right: this.sampleGearPoint(GEAR_RIGHT, noseDir, wingRight, acUp),
     };
-    return { nose: sampleOne(GEAR_NOSE), left: sampleOne(GEAR_LEFT), right: sampleOne(GEAR_RIGHT) };
   }
 
   // Osadza samolot na podwoziu na podstawie próbki z sampleGear(): aktualizuje
@@ -430,15 +457,35 @@ class A321Entity extends Entity {
 
     // ── Kontakt z ziemią: 3 niezależne punkty (przednie koło + lewe/prawe
     //    główne koło), każdy z własnym pomiarem terenu pod sobą — patrz
-    //    sampleGear(). Podwozie próbkowane jest już od 15 m AGL, więc ten próg
-    //    zawsze "widzi" zbliżanie się do ziemi z dużym zapasem przed faktycznym
-    //    dotknięciem. Dla schowanego podwozia (lądowanie na kadłubie) zostaje
-    //    stary, jednopunktowy model (gearOffset) — patrz gałąź powietrzna niżej.
+    //    sampleGear(). Z dala od ziemi to za dużo, żeby liczyć co klatkę, więc
+    //    najpierw tanie, rzadkie sprawdzenie JEDNEGO punktu (środek kół
+    //    głównych) co GEAR_FAR_CHECK_INTERVAL sekund; gdy to pokaże zbliżanie
+    //    się do ziemi, przełączamy się na dokładne sprawdzanie 3 punktów co
+    //    klatkę (this._nearGroundZone) aż do oddalenia się z zapasem. Dla
+    //    schowanego podwozia (lądowanie na kadłubie) zostaje stary,
+    //    jednopunktowy model (gearOffset) — patrz gałąź powietrzna niżej.
+    if (this.gearDown && !this.onGround && !this._nearGroundZone) {
+      this._nearGroundCheck -= dtCap;
+      if (this._nearGroundCheck <= 0) {
+        this._nearGroundCheck = GEAR_FAR_CHECK_INTERVAL;
+        const mid = this.sampleGearPoint(GEAR_MAIN_MID, noseDir, wingRight, acUp);
+        if (-mid.pen < GEAR_FAR_CHECK_ENTER_AGL) this._nearGroundZone = true;
+      }
+    }
+
     let gear = null;
-    if (this.gearDown && (this.onGround || agl_now < 15)) {
+    if (this.gearDown && (this.onGround || this._nearGroundZone)) {
       gear = this.sampleGear(noseDir, wingRight, acUp);
     }
     const gearContact = !!gear && Math.max(gear.nose.pen, gear.left.pen, gear.right.pen) >= 0;
+
+    if (this.gearDown && !this.onGround && this._nearGroundZone && gear) {
+      const mainAgl = -((gear.left.pen + gear.right.pen) / 2);
+      if (mainAgl > GEAR_FAR_CHECK_EXIT_AGL) {
+        this._nearGroundZone = false;
+        this._nearGroundCheck = 0; // od razu spróbuj rzadkiego sprawdzenia przy najbliższej okazji
+      }
+    }
 
     if (this.onGround || gearContact) {
       if (gearContact) this.onGround = true;
