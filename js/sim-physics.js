@@ -127,6 +127,7 @@ const A321_PARAMS = {
   V1: 69.4, VR: 74.7, V2: 79.8, Vstall: 62, VMO: 189,
 };
 
+
 // ── Geometria i zawieszenie podwozia ───────────────────────────────────────────
 //
 // Współrzędne 3 punktów styczności kół z ziemią w LOKALNYM układzie samolotu
