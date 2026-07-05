@@ -180,6 +180,7 @@ const GEAR_EMERGENCY_PEN_M = 0.5; // m
 // sampleGearPoint/_debugZoomWarn i settleOnGear). Wyłącz w konsoli przeglądarki
 // wpisując: DEBUG_GEAR = false
 window.DEBUG_GEAR = window.DEBUG_GEAR ?? true;
+const GEAR_DEBUG_HEARTBEAT_SEC = 1.0; // co ile sekund wypisywać bieżący stan (patrz koniec physicsUpdate)
 
 function groundEffectFactor(agl_m, span) {
   const h_b = Math.max(0, agl_m) / (span * 0.5);
@@ -539,6 +540,20 @@ class A321Entity extends Entity {
 
     if (this.onGround || gearContact) {
       if (gearContact) this.onGround = true;
+
+      // Zawsze koryguj pozycję/pochylenie na podwoziu, gdy wykryto kontakt —
+      // NIEZALEŻNIE od tego, czy zaraz potem samolot odklei się od ziemi dzięki
+      // wystarczającej sile nośnej. Bez tego (dawny błąd): jeśli samolot miał
+      // dość siły nośnej żeby "chcieć" lecieć, korekta w ogóle się nie
+      // wykonywała (bo `onGround` od razu wracało na false niżej) i samolot mógł
+      // zostać zamurowany pod terenem na długi czas, choć formalnie "miał dosyć
+      // siły nośnej, żeby lecieć".
+      if (this.gearDown && gear) {
+        this.settleOnGear(gear, dtCap, autoRotate > 0);
+      } else if (!this.gearDown) {
+        this.altM = groundH + gearOffset; // lądowanie na kadłubie (gear w górze) — bez zmian
+      }
+
       if (liftVec.y >= weightN) {
         this.onGround = false;
       } else {
@@ -561,11 +576,6 @@ class A321Entity extends Entity {
           }
         }
         this.vel.y = 0;
-        if (this.gearDown && gear) {
-          this.settleOnGear(gear, dtCap, autoRotate > 0);
-        } else {
-          this.altM = groundH + gearOffset; // lądowanie na kadłubie (gear w górze) — bez zmian
-        }
       }
     } else {
       const ax = (thrustVec.x + dragVec.x + liftVec.x) / A321_PARAMS.mass;
@@ -617,6 +627,25 @@ class A321Entity extends Entity {
     this.pitch = this.pitchRad * 180 / Math.PI;
     this.roll  = this.rollRad  * 180 / Math.PI;
     this._noseDir = noseDir; this._wingRight = wingRight; this._acUp = acUp;
+
+    // DEBUG: co GEAR_DEBUG_HEARTBEAT_SEC sekund wypisz obecny stan, niezależnie
+    // od tego, czy dzieje się coś nietypowego — żeby widać było na bieżąco
+    // wysokość samolotu vs teren, nawet jeśli żadne z powyższych zabezpieczeń nie
+    // zadziałało. Wyłączane przez window.DEBUG_GEAR = false w konsoli.
+    if (window.DEBUG_GEAR) {
+      this._debugHeartbeat = (this._debugHeartbeat || 0) + dtCap;
+      if (this._debugHeartbeat >= GEAR_DEBUG_HEARTBEAT_SEC) {
+        this._debugHeartbeat = 0;
+        const gearInfo = gear
+          ? ` | nose:${gear.nose.pen.toFixed(2)}(Z${gear.nose.zoomUsed}) left:${gear.left.pen.toFixed(2)}(Z${gear.left.zoomUsed}) right:${gear.right.pen.toFixed(2)}(Z${gear.right.zoomUsed})`
+          : ' | (daleko od ziemi — sprawdzany tylko 1 punkt co klatkę)';
+        console.log(
+          `[GEAR DEBUG] altM=${this.altM.toFixed(1)} groundH(CG)=${groundH.toFixed(1)} agl=${this.agl.toFixed(1)} ` +
+          `vel.y=${this.vel.y.toFixed(1)} onGround=${this.onGround} gearDown=${this.gearDown} nearGroundZone=${this._nearGroundZone} ` +
+          `lat=${this.lat.toFixed(6)} lon=${this.lon.toFixed(6)}${gearInfo}`
+        );
+      }
+    }
   }
 
   renderUpdate(dt) {
