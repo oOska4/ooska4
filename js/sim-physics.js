@@ -639,7 +639,7 @@ class A321Entity extends Entity {
         const gearInfo = gear
           ? ` | nose:${gear.nose.pen.toFixed(2)}(Z${gear.nose.zoomUsed}) left:${gear.left.pen.toFixed(2)}(Z${gear.left.zoomUsed}) right:${gear.right.pen.toFixed(2)}(Z${gear.right.zoomUsed})`
           : ' | (daleko od ziemi — sprawdzany tylko 1 punkt co klatkę)';
-        console.log(
+        console.warn(
           `[GEAR DEBUG] altM=${this.altM.toFixed(1)} groundH(CG)=${groundH.toFixed(1)} agl=${this.agl.toFixed(1)} ` +
           `vel.y=${this.vel.y.toFixed(1)} onGround=${this.onGround} gearDown=${this.gearDown} nearGroundZone=${this._nearGroundZone} ` +
           `lat=${this.lat.toFixed(6)} lon=${this.lon.toFixed(6)}${gearInfo}`

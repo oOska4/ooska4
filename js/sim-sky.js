@@ -667,11 +667,11 @@ cloudScene.add(cloudQuad);
 const cloudCamera = new THREE.Camera();
 
 const QualityPresets = {
-  low:  { scale: 0.35, raySteps: 16, lightSteps: 2 },
+  low:  { scale: 0.15, raySteps: 8, lightSteps: 1 },
   med:  { scale: 0.55, raySteps: 40, lightSteps: 4 },
   high: { scale: 0.85, raySteps: 64, lightSteps: 6 },
 };
-let currentQuality = 'med';
+let currentQuality = 'low';
 
 let cloudRT = new THREE.WebGLRenderTarget(1, 1, {
   minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter,
