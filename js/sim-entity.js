@@ -1,8 +1,6 @@
 'use strict';
 
-
 // ── System encji (obiektów w świecie) ─────────────────────────────────────────
-
 
 class Entity {
   constructor(opts = {}) {

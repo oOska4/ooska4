@@ -130,7 +130,7 @@ const A321_PARAMS = {
 // ── Geometria i zawieszenie podwozia ───────────────────────────────────────────
 //
 // Współrzędne 3 punktów styczności kół z ziemią w LOKALNYM układzie samolotu
-// (ten sam, co w sim-controls.js przy emitExhaust: +X = prawe skrzydło,
+// (ten sam co reszta fizyki: +X = prawe skrzydło,
 // +Y = góra, +Z = dziób), w metrach względem "origin" encji (this.altM/lat/lon).
 // Wyznaczone bezpośrednio z geometrii a321.obj (dolne punkty opon), a nie
 // zgadnięte — dzięki temu naturalny kąt spoczynkowy samolotu na 3 kołach

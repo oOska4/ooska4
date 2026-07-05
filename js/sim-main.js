@@ -2,7 +2,6 @@
 
 // ── Pętla renderowania ─────────────────────────────────────────────────────────
 
-const exhaust = new ContrailSystem();
 let fc = 0, lastRenderT = performance.now();
 
 function animate(t) {
@@ -30,9 +29,6 @@ function animate(t) {
     e.syncMesh();
     e.renderUpdate(dt);
   }
-
-  if (activeEntity) emitExhaust(activeEntity, exhaust);
-  exhaust.update(dt);
 
   if (fc % 3 === 0) updateHUD();
   if (fc % 2 === 0 && weather) weather.update(dt, camera.position, activeEntity ? activeEntity.altM : 0);
