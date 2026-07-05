@@ -119,6 +119,19 @@ function terrainHeightBest(lat, lon, zooms = [15, 14, 13, 12, 11, 10, 9, 8, 7]) 
   return 0;
 }
 
+// Jak terrainHeightBest(), ale dodatkowo mówi, z JAKIEGO zoomu faktycznie
+// pochodzi wysokość (albo null, jeśli nic nie było jeszcze w cache'u). Służy do
+// debugowania: pozwala wykryć sytuacje, gdy najdokładniejszy DEM (Z15) w danym
+// miejscu jeszcze się nie wczytał i fizyka musiała sięgnąć po grubszy kafelek.
+function terrainHeightWithZoom(lat, lon, zooms = [15, 14, 13, 12, 11, 10, 9, 8, 7]) {
+  for (const z of zooms) {
+    const { tx, ty, pxf, pyf } = _sampleDem(null, lat, lon, z);
+    const dem = demDataCache.get(`${z}_${tx}_${ty}`);
+    if (dem) return { h: Math.max(0, _bilinearDem(dem, pxf, pyf)), zoom: z };
+  }
+  return { h: 0, zoom: null };
+}
+
 async function terrainHeightMAsync(lat, lon, zoom = 12, signal = null) {
   const { tx, ty, pxf, pyf } = _sampleDem(null, lat, lon, zoom);
   const dem = await loadDemData(zoom, tx, ty, signal);

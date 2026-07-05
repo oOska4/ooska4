@@ -176,6 +176,11 @@ const GEAR_FAR_CHECK_EXIT_AGL  = 150; // m — powyżej tej wysokości wróć do
 // powierzchnię (pitch/roll/altM ustawiane wprost, bez płynnego dociagania).
 const GEAR_EMERGENCY_PEN_M = 0.5; // m
 
+// DEBUG: pomaga namierzyć przypadki zapadania się samolotu pod ziemię (patrz
+// sampleGearPoint/_debugZoomWarn i settleOnGear). Wyłącz w konsoli przeglądarki
+// wpisując: DEBUG_GEAR = false
+window.DEBUG_GEAR = window.DEBUG_GEAR ?? true;
+
 function groundEffectFactor(agl_m, span) {
   const h_b = Math.max(0, agl_m) / (span * 0.5);
   if (h_b >= 1.0) return 1.0;
@@ -263,8 +268,8 @@ class A321Entity extends Entity {
   }
 
   groundHeight() {
-    let h = terrainHeightM(this.lat, this.lon, this.terrainZoom);
-    if (h <= 0) h = terrainHeightBest(this.lat, this.lon);
+    const { h, zoom } = terrainHeightWithZoom(this.lat, this.lon);
+    if (zoom !== null && zoom < this.terrainZoom) this._debugZoomWarn('cg', this.lat, this.lon, zoom);
     return h;
   }
 
@@ -298,30 +303,49 @@ class A321Entity extends Entity {
     if (gearGrp) gearGrp.visible = this.gearDown;
   }
 
+  // DEBUG: rzuca ostrzeżenie w konsoli, gdy wysokość terenu pod danym punktem
+  // NIE pochodzi z najdokładniejszego dostępnego DEM (this.terrainZoom, domyślnie
+  // Z15) — czyli w tym miejscu jeszcze się nie wczytał. Throttlowane per punkt,
+  // żeby nie zasypać konsoli, gdyby to trwało dłuższą chwilę. Wyłączane przez
+  // window.DEBUG_GEAR = false w konsoli przeglądarki.
+  _debugZoomWarn(label, lat, lon, zoomUsed) {
+    if (!window.DEBUG_GEAR) return;
+    if (!this._debugZoomLog) this._debugZoomLog = {};
+    const now = performance.now();
+    const last = this._debugZoomLog[label];
+    if (last && last.zoom === zoomUsed && now - last.t < 2000) return;
+    this._debugZoomLog[label] = { zoom: zoomUsed, t: now };
+    console.warn(
+      `[GEAR DEBUG] "${label}": brak DEM Z${this.terrainZoom} w (${lat.toFixed(6)}, ${lon.toFixed(6)}) ` +
+      `— użyto Z${zoomUsed} zamiast. onGround=${this.onGround} altM=${this.altM.toFixed(1)}`
+    );
+  }
+
   // Próbkuje teren pod JEDNYM punktem lokalnym samolotu (offset w metrach
   // względem origin encji, w lokalnym układzie +X prawo/+Y góra/+Z dziób).
   // noseDir/wingRight/acUp to jednostkowe wektory lokalnych osi samolotu już
   // przeliczone na przestrzeń świata — liczone wcześniej w physicsUpdate().
   // Zwraca: przesunięcie względem origin encji, wysokość n.p.m. tego punktu,
-  // wysokość terenu pod nim i penetrację (dodatnia = punkt już w/pod ziemią).
-  sampleGearPoint(local, noseDir, wingRight, acUp) {
+  // wysokość terenu pod nim, penetrację (dodatnia = punkt już w/pod ziemią) i
+  // zoomUsed (DEBUG: z jakiego zoomu DEM faktycznie pochodzi wysokość).
+  sampleGearPoint(local, noseDir, wingRight, acUp, label = '?') {
     const off = wingRight.clone().multiplyScalar(local.x)
       .addScaledVector(acUp, local.y)
       .addScaledVector(noseDir, local.z);
     const worldAlt = this.altM + off.y;
     const { lat: glat, lon: glon } = offsetGeo(this.lat, this.lon, off.x, -off.z);
-    let gH = terrainHeightM(glat, glon, this.terrainZoom);
-    if (gH <= 0) gH = terrainHeightBest(glat, glon);
-    return { offset: off, worldAlt, groundH: gH, pen: gH - worldAlt };
+    const { h: gH, zoom: zoomUsed } = terrainHeightWithZoom(glat, glon);
+    if (zoomUsed !== null && zoomUsed < this.terrainZoom) this._debugZoomWarn(label, glat, glon, zoomUsed);
+    return { offset: off, worldAlt, groundH: gH, pen: gH - worldAlt, zoomUsed };
   }
 
   // Próbkuje teren NIEZALEŻNIE pod każdym z 3 punktów podwozia (przednie koło,
   // lewe i prawe główne) — patrz sampleGearPoint().
   sampleGear(noseDir, wingRight, acUp) {
     return {
-      nose:  this.sampleGearPoint(GEAR_NOSE,  noseDir, wingRight, acUp),
-      left:  this.sampleGearPoint(GEAR_LEFT,  noseDir, wingRight, acUp),
-      right: this.sampleGearPoint(GEAR_RIGHT, noseDir, wingRight, acUp),
+      nose:  this.sampleGearPoint(GEAR_NOSE,  noseDir, wingRight, acUp, 'nose'),
+      left:  this.sampleGearPoint(GEAR_LEFT,  noseDir, wingRight, acUp, 'left'),
+      right: this.sampleGearPoint(GEAR_RIGHT, noseDir, wingRight, acUp, 'right'),
     };
   }
 
@@ -364,7 +388,26 @@ class A321Entity extends Entity {
     // GEAR_EMERGENCY_PEN_M) — to sytuacja awaryjna, nie zwykłe lądowanie — wtedy
     // ustawiamy pitch/roll (a więc i altM niżej) od razu, bez płynnego przejścia.
     const maxPen = Math.max(gear.nose.pen, gear.left.pen, gear.right.pen);
-    const attBlend = maxPen > GEAR_EMERGENCY_PEN_M
+    const isEmergency = maxPen > GEAR_EMERGENCY_PEN_M;
+    if (isEmergency && window.DEBUG_GEAR) {
+      // DEBUG: throttlowany pełny zrzut stanu w chwili awaryjnego zanurzenia —
+      // pozwala sprawdzić m.in. czy to kwestia brakującego DEM (zoomUsed < 15
+      // na którejś goleni) czy czegoś innego. Wyłączane przez window.DEBUG_GEAR = false.
+      const now = performance.now();
+      if (!this._debugEmergencyLastLog || now - this._debugEmergencyLastLog > 300) {
+        this._debugEmergencyLastLog = now;
+        console.error(
+          `[GEAR DEBUG] AWARYJNE zanurzenie w ziemię! maxPen=${maxPen.toFixed(2)}m ` +
+          `lat=${this.lat.toFixed(6)} lon=${this.lon.toFixed(6)} altM=${this.altM.toFixed(1)} ` +
+          `vel=(${this.vel.x.toFixed(1)},${this.vel.y.toFixed(1)},${this.vel.z.toFixed(1)}) ` +
+          `onGround=${this.onGround} pitch=${(this.pitchRad * 180 / Math.PI).toFixed(1)}° roll=${(this.rollRad * 180 / Math.PI).toFixed(1)}°\n` +
+          `  nose:  pen=${gear.nose.pen.toFixed(2)}  groundH=${gear.nose.groundH.toFixed(1)}  zoom=Z${gear.nose.zoomUsed}\n` +
+          `  left:  pen=${gear.left.pen.toFixed(2)}  groundH=${gear.left.groundH.toFixed(1)}  zoom=Z${gear.left.zoomUsed}\n` +
+          `  right: pen=${gear.right.pen.toFixed(2)}  groundH=${gear.right.groundH.toFixed(1)}  zoom=Z${gear.right.zoomUsed}`
+        );
+      }
+    }
+    const attBlend = isEmergency
       ? 1
       : 1 - Math.exp(-dtCap / GEAR_ATTITUDE_SETTLE_TAU);
 
@@ -479,7 +522,7 @@ class A321Entity extends Entity {
     //    schowanego podwozia (lądowanie na kadłubie) zostaje stary,
     //    jednopunktowy model (gearOffset) — patrz gałąź powietrzna niżej.
     if (this.gearDown && !this.onGround && !this._nearGroundZone) {
-      const mid = this.sampleGearPoint(GEAR_MAIN_MID, noseDir, wingRight, acUp);
+      const mid = this.sampleGearPoint(GEAR_MAIN_MID, noseDir, wingRight, acUp, 'mid');
       if (-mid.pen < GEAR_FAR_CHECK_ENTER_AGL) this._nearGroundZone = true;
     }
 
