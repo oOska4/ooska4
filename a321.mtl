@@ -10,7 +10,7 @@ Ke 0.000000 0.000000 0.000000
 Ni 1.450000
 d 1.000000
 illum 1
-map_Kd C:\\Users\\Oskar\\Desktop\\simworld\\a321textures\\engines_blade_left.png
+map_Kd a321textures/engines_blade_left.png
 
 newmtl Blades1Mtl.007
 Ns 0.000000
@@ -21,7 +21,7 @@ Ke 0.000000 0.000000 0.000000
 Ni 1.450000
 d 1.000000
 illum 1
-map_Kd C:\\Users\\Oskar\\Desktop\\simworld\\a321textures\\engines_blade_right.png
+map_Kd a321textures/engines_blade_right.png
 
 newmtl Cabine1Mtl.012
 Ns 0.000000
@@ -32,7 +32,7 @@ Ke 0.000000 0.000000 0.000000
 Ni 1.450000
 d 1.000000
 illum 1
-map_Kd C:\\Users\\Oskar\\Desktop\\simworld\\a321textures\\cockpit_inside.png
+map_Kd a321textures/cockpit_inside.png
 
 newmtl Cabine1Mtl.013
 Ns 0.000000
@@ -43,7 +43,7 @@ Ke 0.000000 0.000000 0.000000
 Ni 1.450000
 d 1.000000
 illum 1
-map_Kd C:\\Users\\Oskar\\Desktop\\simworld\\a321textures\\cockpit_interface1.png
+map_Kd a321textures/cockpit_interface1.png
 
 newmtl Cabine1Mtl.014
 Ns 0.000000
@@ -54,7 +54,7 @@ Ke 0.000000 0.000000 0.000000
 Ni 1.450000
 d 1.000000
 illum 1
-map_Kd C:\\Users\\Oskar\\Desktop\\simworld\\a321textures\\cockpit_interface2.png
+map_Kd a321textures/cockpit_interface2.png
 
 newmtl Cabine1Mtl.015
 Ns 0.000000
@@ -65,7 +65,7 @@ Ke 0.000000 0.000000 0.000000
 Ni 1.450000
 d 1.000000
 illum 1
-map_Kd C:\\Users\\Oskar\\Desktop\\simworld\\a321textures\\cockpit_interface3.png
+map_Kd a321textures/cockpit_interface3.png
 
 newmtl Color1Mtl.030
 Ns 0.000000
@@ -76,7 +76,7 @@ Ke 0.000000 0.000000 0.000000
 Ni 1.450000
 d 1.000000
 illum 1
-map_Kd C:\\Users\\Oskar\\Desktop\\simworld\\a321textures\\doors_back.png
+map_Kd a321textures/doors_back.png
 
 newmtl Color1Mtl.031
 Ns 0.000000
@@ -87,7 +87,7 @@ Ke 0.000000 0.000000 0.000000
 Ni 1.450000
 d 1.000000
 illum 1
-map_Kd C:\\Users\\Oskar\\Desktop\\simworld\\a321textures\\doors_front+doors_cargo.png
+map_Kd a321textures/doors_front+doors_cargo.png
 
 newmtl Color1Mtl.032
 Ns 0.000000
@@ -98,7 +98,7 @@ Ke 0.000000 0.000000 0.000000
 Ni 1.450000
 d 1.000000
 illum 1
-map_Kd C:\\Users\\Oskar\\Desktop\\simworld\\a321textures\\engines.png
+map_Kd a321textures/engines.png
 
 newmtl Color1Mtl.033
 Ns 0.000000
@@ -109,7 +109,7 @@ Ke 0.000000 0.000000 0.000000
 Ni 1.450000
 d 1.000000
 illum 1
-map_Kd C:\\Users\\Oskar\\Desktop\\simworld\\a321textures\\engines_cover.png
+map_Kd a321textures/engines_cover.png
 
 newmtl Color1Mtl.034
 Ns 0.000000
@@ -120,7 +120,7 @@ Ke 0.000000 0.000000 0.000000
 Ni 1.450000
 d 1.000000
 illum 1
-map_Kd C:\\Users\\Oskar\\Desktop\\simworld\\a321textures\\fuselage_back.png
+map_Kd a321textures/fuselage_back.png
 
 newmtl Color1Mtl.035
 Ns 0.000000
@@ -131,7 +131,7 @@ Ke 0.000000 0.000000 0.000000
 Ni 1.450000
 d 1.000000
 illum 1
-map_Kd C:\\Users\\Oskar\\Desktop\\simworld\\a321textures\\fuselage_front.png
+map_Kd a321textures/fuselage_front.png
 
 newmtl Color1Mtl.036
 Ns 0.000000
@@ -142,7 +142,7 @@ Ke 0.000000 0.000000 0.000000
 Ni 1.450000
 d 1.000000
 illum 1
-map_Kd C:\\Users\\Oskar\\Desktop\\simworld\\a321textures\\fuselage_middle.png
+map_Kd a321textures/fuselage_middle.png
 
 newmtl Color1Mtl.037
 Ns 0.000000
@@ -153,7 +153,7 @@ Ke 0.000000 0.000000 0.000000
 Ni 1.450000
 d 1.000000
 illum 1
-map_Kd C:\\Users\\Oskar\\Desktop\\simworld\\a321textures\\fuselage_middle_out.png
+map_Kd a321textures/fuselage_middle_out.png
 
 newmtl Color1Mtl.038
 Ns 0.000000
@@ -164,7 +164,7 @@ Ke 0.000000 0.000000 0.000000
 Ni 1.450000
 d 1.000000
 illum 1
-map_Kd C:\\Users\\Oskar\\Desktop\\simworld\\a321textures\\gears_covers.png
+map_Kd a321textures/gears_covers.png
 
 newmtl Meshpart1Mtl.036
 Ns 0.000000
@@ -175,7 +175,7 @@ Ke 0.000000 0.000000 0.000000
 Ni 1.450000
 d 1.000000
 illum 1
-map_Kd C:\\Users\\Oskar\\Desktop\\simworld\\a321textures\\back_wall+cargo+front_wall.png
+map_Kd a321textures/back_wall+cargo+front_wall.png
 
 newmtl Meshpart1Mtl.037
 Ns 0.000000
@@ -186,7 +186,7 @@ Ke 0.000000 0.000000 0.000000
 Ni 1.450000
 d 1.000000
 illum 1
-map_Kd C:\\Users\\Oskar\\Desktop\\simworld\\a321textures\\cockpit_windows_cover_out.png
+map_Kd a321textures/cockpit_windows_cover_out.png
 
 newmtl Meshpart1Mtl.038
 Ns 0.000000
@@ -197,7 +197,7 @@ Ke 0.000000 0.000000 0.000000
 Ni 1.450000
 d 1.000000
 illum 1
-map_Kd C:\\Users\\Oskar\\Desktop\\simworld\\a321textures\\gears_back_tires.png
+map_Kd a321textures/gears_back_tires.png
 
 newmtl Meshpart1Mtl.039
 Ns 0.000000
@@ -208,7 +208,7 @@ Ke 0.000000 0.000000 0.000000
 Ni 1.450000
 d 1.000000
 illum 1
-map_Kd C:\\Users\\Oskar\\Desktop\\simworld\\a321textures\\gears_front_tire.png
+map_Kd a321textures/gears_front_tire.png
 
 newmtl Meshpart1Mtl.040
 Ns 0.000000
@@ -219,7 +219,7 @@ Ke 0.000000 0.000000 0.000000
 Ni 1.450000
 d 1.000000
 illum 1
-map_Kd C:\\Users\\Oskar\\Desktop\\simworld\\a321textures\\gears_holder_front.png
+map_Kd a321textures/gears_holder_front.png
 
 newmtl Meshpart1Mtl.041
 Ns 0.000000
@@ -230,7 +230,7 @@ Ke 0.000000 0.000000 0.000000
 Ni 1.450000
 d 1.000000
 illum 1
-map_Kd C:\\Users\\Oskar\\Desktop\\simworld\\a321textures\\gears_holder_left.png
+map_Kd a321textures/gears_holder_left.png
 
 newmtl Meshpart1Mtl.042
 Ns 0.000000
@@ -241,7 +241,7 @@ Ke 0.000000 0.000000 0.000000
 Ni 1.450000
 d 1.000000
 illum 1
-map_Kd C:\\Users\\Oskar\\Desktop\\simworld\\a321textures\\gears_holder_right.png
+map_Kd a321textures/gears_holder_right.png
 
 newmtl Meshpart1Mtl.043
 Ns 0.000000
@@ -252,7 +252,7 @@ Ke 0.000000 0.000000 0.000000
 Ni 1.450000
 d 1.000000
 illum 1
-map_Kd C:\\Users\\Oskar\\Desktop\\simworld\\a321textures\\stabiliser+engine_part.png
+map_Kd a321textures/stabiliser+engine_part.png
 
 newmtl Meshpart1Mtl.044
 Ns 0.000000
@@ -263,7 +263,7 @@ Ke 0.000000 0.000000 0.000000
 Ni 1.450000
 d 1.000000
 illum 1
-map_Kd C:\\Users\\Oskar\\Desktop\\simworld\\a321textures\\wing_left_middle.png
+map_Kd a321textures/wing_left_middle.png
 
 newmtl Meshpart1Mtl.045
 Ns 0.000000
@@ -274,7 +274,7 @@ Ke 0.000000 0.000000 0.000000
 Ni 1.450000
 d 1.000000
 illum 1
-map_Kd C:\\Users\\Oskar\\Desktop\\simworld\\a321textures\\wing_left_out.png
+map_Kd a321textures/wing_left_out.png
 
 newmtl Meshpart1Mtl.046
 Ns 0.000000
@@ -285,7 +285,7 @@ Ke 0.000000 0.000000 0.000000
 Ni 1.450000
 d 1.000000
 illum 1
-map_Kd C:\\Users\\Oskar\\Desktop\\simworld\\a321textures\\wing_right_middle.png
+map_Kd a321textures/wing_right_middle.png
 
 newmtl Meshpart1Mtl.047
 Ns 0.000000
@@ -296,4 +296,4 @@ Ke 0.000000 0.000000 0.000000
 Ni 1.450000
 d 1.000000
 illum 1
-map_Kd C:\\Users\\Oskar\\Desktop\\simworld\\a321textures\\wing_right_out.png
+map_Kd a321textures/wing_right_out.png
