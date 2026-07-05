@@ -3,6 +3,7 @@
 
 // ── System encji (obiektów w świecie) ─────────────────────────────────────────
 
+
 class Entity {
   constructor(opts = {}) {
     this.id      = opts.id      ?? `entity_${Date.now()}`;
