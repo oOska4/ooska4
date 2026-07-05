@@ -150,7 +150,7 @@ const GEAR_SUSPENSION_TRAVEL   = 0.22; // maks. całkowite wgniecenie w ziemię 
 const GEAR_STATIC_SAG          = 0.04; // ugięcie w spoczynku pod ciężarem samolotu (m)
 const GEAR_IMPACT_SINK_PER_MS  = 0.05; // dodatkowe wgniecenie na 1 m/s prędkości pionowej przy dotknięciu
 const GEAR_SINK_SETTLE_TAU     = 0.12; // stała czasowa powrotu wgniecenia do wartości spoczynkowej (s)
-const GEAR_ATTITUDE_SETTLE_TAU = 0.18; // stała czasowa "osiadania" pitch/roll na podwoziu (s)
+const GEAR_ATTITUDE_SETTLE_TAU = 0.35; // stała czasowa "osiadania" pitch/roll na podwoziu (s) — łagodna, żeby nie "przyklejać" dziobu podczas rozbiegu przed VR
 
 // Środek między kołami głównymi (lewym i prawym) — najniższy, najbardziej
 // reprezentatywny pojedynczy punkt do TANIEGO sprawdzania odległości od ziemi,
@@ -172,9 +172,10 @@ const GEAR_FAR_CHECK_EXIT_AGL  = 150; // m — powyżej tej wysokości wróć do
 // Jeśli którekolwiek koło jest zanurzone w terenie głębiej niż to (znacznie
 // więcej niż normalne ugięcie zawieszenia GEAR_SUSPENSION_TRAVEL) — to nie jest
 // zwykłe lądowanie, tylko sytuacja awaryjna (np. bardzo stromy lot nurkowy,
-// teleportacja, spawn w złym miejscu) — samolot od razu "wyskakuje" na
-// powierzchnię (pitch/roll/altM ustawiane wprost, bez płynnego dociagania).
-const GEAR_EMERGENCY_PEN_M = 0.5; // m
+// teleportacja, spawn w złym miejscu) — samolot szybko (ale płynnie, nie w
+// jednej klatce) wraca na powierzchnię — patrz GEAR_EMERGENCY_SETTLE_TAU.
+const GEAR_EMERGENCY_PEN_M = 1.0; // m
+const GEAR_EMERGENCY_SETTLE_TAU = 0.05; // s — znacznie szybsze niż normalne osiadanie, ale nie natychmiastowe (łagodniejszy "wypchnij na powierzchnię")
 
 // DEBUG: pomaga namierzyć przypadki zapadania się samolotu pod ziemię (patrz
 // sampleGearPoint/_debugZoomWarn i settleOnGear). Wyłącz w konsoli przeglądarki
@@ -409,7 +410,7 @@ class A321Entity extends Entity {
       }
     }
     const attBlend = isEmergency
-      ? 1
+      ? 1 - Math.exp(-dtCap / GEAR_EMERGENCY_SETTLE_TAU)
       : 1 - Math.exp(-dtCap / GEAR_ATTITUDE_SETTLE_TAU);
 
     this.rollRad += (rollTarget - this.rollRad) * attBlend;
