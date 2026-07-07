@@ -306,7 +306,20 @@ class A321Entity extends Entity {
       scene.add(m);
       this._gearMarkers[k] = m;
     }
-
+    this._shadow = new THREE.Mesh(
+      new THREE.PlaneGeometry(1, 1),
+      new THREE.MeshBasicMaterial({
+        color: 0x000000,
+        transparent: true,
+        opacity: 0.28,
+        depthWrite: false,
+      })
+    );
+    this._shadow.rotation.x = -Math.PI / 2;
+    this._shadow.renderOrder = 998;
+    this._shadow.frustumCulled = false;
+    this._shadow.visible = false;
+    scene.add(this._shadow);
     // Stan odbicia sprężystego (patrz applyBounce()) — licznik krótkiego "cooldownu"
     // żeby jedno mocne uderzenie nie wywoływało kilku odbić pod rzędem w kolejnych
     // klatkach, zanim samolot zdąży się realnie oddalić od terenu.
@@ -915,5 +928,41 @@ class A321Entity extends Entity {
     if (p.elevatorR) p.elevatorR.rotation.x = elevDefl;
     if (p.elevatorL) p.elevatorL.rotation.x = elevDefl;
     if (p.rudder) p.rudder.rotation.y = this.yawRate * 2;
+
+    if (this._shadow) {
+      const planePos = this.worldPos;
+      const sunDir = typeof sunWorldDir !== 'undefined' && sunWorldDir ? sunWorldDir : null;
+      if (!sunDir || sunDir.y <= 0) {
+        this._shadow.visible = false;
+      } else {
+        const lightDir = new THREE.Vector3().copy(sunDir).negate().normalize();
+        const groundLatLon = worldToGeo(planePos);
+        const groundHeightM = terrainHeightBest(groundLatLon.lat, groundLatLon.lon);
+        const groundY = groundHeightM * Y_SCALE;
+
+        const verticalDist = planePos.y - groundY;
+        const travel = verticalDist / Math.max(-lightDir.y, 0.05);
+        const shadowPos = new THREE.Vector3().copy(planePos).addScaledVector(lightDir, travel);
+
+        const shadowLatLon = worldToGeo(shadowPos);
+        const shadowGroundM = terrainHeightBest(shadowLatLon.lat, shadowLatLon.lon);
+        shadowPos.y = shadowGroundM * Y_SCALE + 0.06;
+
+        const elevation = Math.max(0.1, -lightDir.y);
+        const baseSpan = 36.0;
+        const baseLength = 40.0;
+        const elongation = 1.0 / elevation;
+        const width = baseSpan * (0.75 + 0.25 * elevation);
+        const length = baseLength * (0.8 + 0.6 * (elongation - 1));
+
+        const flatDir = new THREE.Vector3(lightDir.x, 0, lightDir.z).normalize();
+        const yRotation = Math.atan2(flatDir.x, flatDir.z);
+
+        this._shadow.position.copy(shadowPos);
+        this._shadow.rotation.y = yRotation;
+        this._shadow.scale.set(width, length, 1);
+        this._shadow.visible = true;
+      }
+    }
   }
 }
