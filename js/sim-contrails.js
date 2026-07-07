@@ -270,6 +270,20 @@ class AircraftContrailSystem {
 
     const posR = this._engineWorldPos(parts.fanR, CONTRAIL_ENGINE_OFFSET_R, new THREE.Vector3());
     this.right.emit(posR, clockTime, 1);
+
+    if (!this._dbgAcc) this._dbgAcc = 0;
+    this._dbgAcc += 1;
+    if (this._dbgAcc % 90 === 0) {
+      const e = this.entity;
+      const base = e.worldPos;
+      const dx = posL.x - base.x, dz = posL.z - base.z;
+      const bearingToEngine = (Math.atan2(dx, dz) * 180 / Math.PI + 360) % 360;
+      console.log('[contrails DEBUG] heading(HUD)=' + e.heading.toFixed(1) +
+        '°  yawRad=' + (e.yawRad * 180 / Math.PI).toFixed(1) + '°' +
+        '  fanL użyty=' + (!!parts.fanL) +
+        '  kierunek do silnika L wzgl. północy=' + bearingToEngine.toFixed(1) + '°' +
+        '  (offset lokalny L powinien wypaść mniej więcej na “heading + ~90° w lewo” od dziobu)');
+    }
   }
 
   update(time) {
