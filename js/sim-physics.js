@@ -122,6 +122,9 @@ const A321_PARAMS = {
   flapCd:     [0.0, 0.040, 0.085, 0.160],
   flapStall:  [0.285, 0.32, 0.36, 0.40],
   cdGear:     0.060,
+  groundRunThrustBoost: 1.35,
+  groundRunDragScale:   0.45,
+  groundRunLiftScale:   0.28,
   spoilerCd:  0.30,
   spoilerLiftLoss: 0.35,
   V1: 69.4, VR: 74.7, V2: 79.8, Vstall: 62, VMO: 189,
@@ -666,6 +669,10 @@ class A321Entity extends Entity {
       cl = A321_PARAMS.cl0 + A321_PARAMS.flapCl[flap] + A321_PARAMS.clAlpha * alpha;
     }
     if (this.spoilers) cl -= A321_PARAMS.spoilerLiftLoss;
+    const groundRun = this.onGround && this.gearDown;
+    const liftScale = groundRun ? A321_PARAMS.groundRunLiftScale : 1.0;
+    const dragScale = groundRun ? A321_PARAMS.groundRunDragScale : 1.0;
+    cl *= liftScale;
     cl = Math.max(-0.3, Math.min(A321_PARAMS.clMax + A321_PARAMS.flapCl[flap], cl));
 
     const groundH = this.groundHeight();
@@ -673,15 +680,16 @@ class A321Entity extends Entity {
     const agl_now = this.altM - groundH - gearOffset;
     const gef = groundEffectFactor(agl_now, A321_PARAMS.span);
     const cdi = (cl * cl) / (Math.PI * A321_PARAMS.eOswald * A321_PARAMS.AR) * gef;
-    const cd  = A321_PARAMS.cdMin + A321_PARAMS.flapCd[flap] + (this.gearDown ? A321_PARAMS.cdGear : 0)
-              + cdi + A321_PARAMS.cdAlpha * alpha * alpha + (this.spoilers ? A321_PARAMS.spoilerCd : 0);
+    const cd  = (A321_PARAMS.cdMin + A321_PARAMS.flapCd[flap] + (this.gearDown ? A321_PARAMS.cdGear : 0)
+              + cdi + A321_PARAMS.cdAlpha * alpha * alpha + (this.spoilers ? A321_PARAMS.spoilerCd : 0)) * dragScale;
 
     const q       = 0.5 * RHO * airspeed * airspeed;
     const liftMag = q * A321_PARAMS.wingArea * cl;
     const dragMag = q * A321_PARAMS.wingArea * Math.max(0, cd);
 
     const weightN   = A321_PARAMS.mass * G_ACC;
-    const thrustVec = noseDir.clone().multiplyScalar(this.throttle * A321_PARAMS.maxThrust);
+    const thrustScale = groundRun ? A321_PARAMS.groundRunThrustBoost : 1.0;
+    const thrustVec = noseDir.clone().multiplyScalar(this.throttle * A321_PARAMS.maxThrust * thrustScale);
     const dragVec   = airspeed > 0.1 ? this.vel.clone().normalize().multiplyScalar(-dragMag) : new THREE.Vector3();
     const liftVec   = acUp.clone().multiplyScalar(liftMag);
 
