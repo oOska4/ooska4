@@ -151,13 +151,16 @@ class ContrailEmitter {
     this.geometry.setAttribute('aSpawnTime', new THREE.BufferAttribute(this.spawnTimes, 1));
     this.geometry.setAttribute('aRandom', new THREE.BufferAttribute(this.randoms, 1));
 
+    const isMobile = typeof navigator !== 'undefined' && navigator.maxTouchPoints > 0 && !matchMedia('(pointer:fine)').matches;
+    const baseSize = isMobile ? 1.0 : 0.5;
+
     this.material = new THREE.ShaderMaterial({
       vertexShader: CONTRAIL_VERT,
       fragmentShader: CONTRAIL_FRAG,
       uniforms: {
         uTime:     { value: 0 },
         uMaxLife:  { value: 12.0 },
-        uBaseSize: { value: 0.5 },
+        uBaseSize: { value: baseSize },
       },
       transparent: true,
       depthWrite: false,
