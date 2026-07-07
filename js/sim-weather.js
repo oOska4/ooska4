@@ -129,6 +129,22 @@ class WeatherSystem {
   getWindAtAlt(altM)    { return this.windVector; }
   getTurbulenceAt(altM) { return WeatherState.turbulence * (this.isInCloud ? 1.4 : 1.0); }
 
+  // Przybliżona relatywna wilgotność dla danej wysokości (0..1).
+  // Jeśli jesteśmy wewnątrz chmury → 1.0. Poza chmurą przybliżamy RH na podstawie
+  // zachmurzenia (im większe zachmurzenie, tym większe RH). To jest prosty
+  // model używany przez Schmidt–Appleman w tej symulacji — nie jest to pełna
+  // obsługa profilu wilgotności atmosferycznej, ale wystarcza do efektów.
+  getRelativeHumidity(altM = null) {
+    if (!activeEntity) return 0.45;
+    if (altM === null) altM = activeEntity.altM;
+    if (altM >= WeatherState.cloudAltitudeM && altM <= WeatherState.cloudAltitudeM + WeatherState.cloudThicknessM) return 1.0;
+    // Podstawowy model: RH rośnie wraz z zachmurzeniem, waha się w zakresie 0.2..0.95
+    const base = 0.35 + 0.6 * WeatherState.cloudCoverage;
+    // Lekko losowy fluktuator dla naturalności
+    const noise = (Math.sin(this._time * 0.13 + (altM % 1000) * 0.001) * 0.03);
+    return Math.max(0.05, Math.min(0.99, base + noise));
+  }
+
   // ── Pioruny (PointLight spike) ────────────────────────────────────────────────
   _initLightning() {
     this._ltLight = new THREE.PointLight(0xddeeff, 0, 80000);

@@ -220,8 +220,12 @@ class ContrailEmitter {
 const CONTRAIL_ENGINE_OFFSET_L = { x: -5.9, y: -2.0, z: 3.0 };
 const CONTRAIL_ENGINE_OFFSET_R = { x:  5.9, y: -2.0, z: 3.0 };
 
-// Zawsze aktywne na razie — TODO: podłączyć kryterium Schmidt-Appleman.
-const CONTRAIL_ALWAYS_ACTIVE = true;
+// Domyślnie smugi generowane tylko gdy spełnione warunki fizyczne
+const CONTRAIL_ALWAYS_ACTIVE = false;
+// Włącz/wyłącz sprawdzanie kryterium Schmidt–Appleman
+const CONTRAIL_SA_ENABLED = true;
+// Override w runtime: `window.CONTRAILS_ALWAYS_ON = true` wymusi emisję niezależnie od warunków
+const CONTRAIL_RUNTIME_FORCE_FLAG = 'CONTRAILS_ALWAYS_ON';
 
 class AircraftContrailSystem {
   constructor(entity) {
@@ -251,8 +255,58 @@ class AircraftContrailSystem {
     return out.copy(this._tmpOffset);
   }
 
+  // Proste, przybliżone (ale sensowne) sprawdzenie kryterium Schmidt–Appleman.
+  // Bazuje na temperaturze, ciśnieniu i przybliżonej relatywnej wilgotności
+  // dostarczonej przez WeatherSystem.getRelativeHumidity(alt). Nie jest to
+  // pełna numeryczna implementacja publikacji źródłowych z dokładnością
+  // do każdego termu spalania, ale dobrze sprawdza się w symulacji i jest
+  // konfigurowalne przez stałe powyżej.
+  _schmidtAppleman() {
+    if (typeof weather === 'undefined' || !weather) return true;
+    const T_C = weather.temperature; // w °C
+    const p_hPa = weather.pressure; // w hPa
+    const RH = (typeof weather.getRelativeHumidity === 'function') ? weather.getRelativeHumidity(this.entity.altM) : 0.45;
+
+    // Funkcje pomocnicze: nasycenie pary wodnej nad wodą / lodem (hPa)
+    function es_water(T) { return 6.112 * Math.exp(17.62 * T / (243.12 + T)); }
+    function es_ice(T)   { return 6.112 * Math.exp(22.46 * T / (272.62 + T)); }
+
+    const esw = es_water(T_C);
+    const esi = es_ice(T_C);
+
+    // Relative humidity w stosunku do lodu (RHi) — ważne dla kondensacji/sublimacji
+    const RHi = RH * (esw / Math.max(esi, 1e-6));
+
+    // Proste zasady decyzyjne — z tolerancją numeryczną oraz mniej restrykcyjne
+    // progi dla bardzo niskich temperatur (przydatne na dużych wysokościach).
+    // 1) Jeśli powietrze jest przesycone względem lodu → smugi powstają
+    if (RHi >= 1.0) return true;
+
+    // 2) Jeśli RHi jest bliskie nasycenia (>0.90) uznajemy to za wystarczające
+    //    (dotyczy to warunków, gdzie model RH może być przybliżony).
+    if (RHi >= 0.90) return true;
+
+    // 3) Dla bardzo niskich temperatur (głębokie przestworza) pozwólmy na
+    //    formację smug przy nieco niższych wartościach RHi (np. 0.85), ponieważ
+    //    fizyczne procesy i rozrzedzenie pary sprzyjają kondensacji przy -40°C i niżej.
+    if (T_C <= -40 && RHi >= 0.85) return true;
+
+    // 4) W pozostałych przypadkach brak formacji smug
+    return false;
+  }
+
   emit(clockTime, dt = 1 / 60) {
-    if (!CONTRAIL_ALWAYS_ACTIVE) return;
+    // Runtime override: umożliwia wymuszenie smug z konsoli przez ustawienie
+    // `window.CONTRAILS_ALWAYS_ON = true`. Jeśli nie ma override'u, stosujemy
+    // kryterium Schmidt–Appleman (jeśli włączone) lub legacy flagę.
+    const runtimeForce = (typeof window !== 'undefined') && (window[CONTRAIL_RUNTIME_FORCE_FLAG] === true);
+    if (!runtimeForce) {
+      if (CONTRAIL_SA_ENABLED) {
+        if (!this._schmidtAppleman()) return;
+      } else if (!CONTRAIL_ALWAYS_ACTIVE) {
+        return;
+      }
+    }
 
     const e = this.entity;
     const speedMps = e.airspeed ?? (e.vel ? e.vel.length() : 0);
