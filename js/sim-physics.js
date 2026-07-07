@@ -177,7 +177,7 @@ const GEAR_FAR_CHECK_EXIT_AGL  = 150; // m — powyżej tej wysokości wróć do
 // to nie jest zwykłe lądowanie, tylko prawdziwa sytuacja awaryjna (np. stromy
 // lot nurkowy, teleportacja, spawn w złym miejscu) — samolot szybko (ale
 // płynnie, nie w jednej klatce) wraca na powierzchnię — patrz GEAR_EMERGENCY_SETTLE_TAU.
-const GEAR_EMERGENCY_PEN_M = 2.5; // m
+const GEAR_EMERGENCY_PEN_M = 10; // m
 const GEAR_EMERGENCY_SETTLE_TAU = 0.05; // s — znacznie szybsze niż normalne osiadanie, ale nie natychmiastowe (łagodniejszy "wypchnij na powierzchnię")
 
 // DEBUG: pomaga namierzyć przypadki zapadania się samolotu pod ziemię (patrz
