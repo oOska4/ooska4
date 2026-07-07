@@ -241,11 +241,15 @@ function elevatorAuthority(speedKt) {
 // terenu w miejscu uderzenia, z tłumieniem (coefficient of restitution) — część
 // energii uderzenia jest tracona (deformacja/hałas/ciepło), reszta wraca jako
 // odbicie, dokładnie jak przy zderzeniu sprężystym z tłumieniem.
-const BOUNCE_TRIGGER_VSPEED   = 6.0;  // m/s prędkości pionowej w dół — od tego uznajemy uderzenie za "twarde" (nie zwykłe osiadanie)
-const BOUNCE_TRIGGER_HSPEED_INTO_SLOPE = 8.0; // m/s składowej prędkości WCHODZĄCEJ w stromy teren (wzdłuż normalnej), przy locie w zbocze
-const BOUNCE_RESTITUTION      = 0.45; // ułamek prędkości normalnej odbitej z powrotem (0=brak odbicia/pochłonięte, 1=idealnie sprężyste)
-const BOUNCE_TANGENT_DAMPING  = 0.75; // ułamek prędkości stycznej zachowanej po uderzeniu (tarcie/poślizg podczas odbicia)
-const BOUNCE_MIN_UP_SPEED     = 3.0;  // m/s — minimalna prędkość "w górę" nadana przy odbiciu, żeby efekt był czytelny nawet przy uderzeniu prawie stycznym
+const BOUNCE_TRIGGER_VSPEED   = 4.8;  // m/s prędkości pionowej w dół — od tego uznajemy uderzenie za "twarde" (nie zwykłe osiadanie)
+const BOUNCE_TRIGGER_HSPEED_INTO_SLOPE = 6.2; // m/s składowej prędkości WCHODZĄCEJ w stromy teren (wzdłuż normalnej), przy locie w zbocze
+const BOUNCE_RESTITUTION      = 0.58; // ułamek prędkości normalnej odbitej z powrotem (0=brak odbicia/pochłonięte, 1=idealnie sprężyste)
+const BOUNCE_TANGENT_DAMPING  = 0.55; // ułamek prędkości stycznej zachowanej po uderzeniu (tarcie/poślizg podczas odbicia)
+const BOUNCE_MIN_UP_SPEED     = 4.0;  // m/s — minimalna prędkość "w górę" nadana przy odbiciu, żeby efekt był czytelny nawet przy uderzeniu prawie stycznym
+const BOUNCE_ON_GROUND_SLOPE_DEG = 16; //° — przy wejściu w zbocze o takim kącie lub większym, a przy dużej prędkości po ziemi, samolot odskakuje zamiast "przyklejać" się do terenu
+const BOUNCE_ON_GROUND_MIN_SPEED = 18.0; // m/s — minimalna prędkość po ziemi, przy której aktywujemy ten efekt
+const GROUND_SLOPE_ACCEL_GAIN = 0.95; // mnożnik przyspieszenia grawitacyjnego wzdłuż spadku terenu
+const GROUND_SLOPE_DAMPING = 0.985; // lekki tłumik, żeby ruch po ziemi nie był zbyt sztywny
 
 const planeInput = {
   pitch: 0, roll: 0, yaw: 0,
@@ -439,39 +443,48 @@ class A321Entity extends Entity {
     return new THREE.Vector3(-dhdx, 1, -dhdz).normalize();
   }
 
+  bestGearPoint(gear) {
+    let bestKey = 'nose', bestPen = gear.nose.pen;
+    if (gear.left.pen  > bestPen) { bestKey = 'left';  bestPen = gear.left.pen; }
+    if (gear.right.pen > bestPen) { bestKey = 'right'; bestPen = gear.right.pen; }
+    return { key: bestKey, point: gear[bestKey] };
+  }
+
   // Odbicie sprężyste przy mocnym/nietypowym uderzeniu w teren (patrz BOUNCE_*).
   // Wywoływane raz, w chwili świeżego, twardego kontaktu — modyfikuje this.vel
   // bezpośrednio (odbija składową normalną, tłumi składową styczną). Zwraca true
   // jeśli faktycznie doszło do odbicia.
-  applyBounce(gear) {
+  applyBounce(gear, opts = {}) {
     if (this._bounceCooldown > 0) return false;
     const impactVy = Math.max(0, -this.vel.y);
-
-    let bestKey = 'nose', bestPen = gear.nose.pen;
-    if (gear.left.pen  > bestPen) { bestKey = 'left';  bestPen = gear.left.pen; }
-    if (gear.right.pen > bestPen) { bestKey = 'right'; bestPen = gear.right.pen; }
-    const off = gear[bestKey].offset;
+    const best = this.bestGearPoint(gear);
+    const off = best.point.offset;
     const { lat: glat, lon: glon } = offsetGeo(this.lat, this.lon, off.x, -off.z);
     const normal = this.terrainNormalAt(glat, glon);
+    const slopeAngleDeg = Math.acos(Math.max(-1, Math.min(1, normal.y))) * 180 / Math.PI;
 
     const velIntoSlope  = -this.vel.dot(normal);
     const hardVertical   = impactVy >= BOUNCE_TRIGGER_VSPEED;
     const hardIntoSlope  = velIntoSlope >= BOUNCE_TRIGGER_HSPEED_INTO_SLOPE;
-    if (!hardVertical && !hardIntoSlope) return false;
+    const hardGroundDrop = !!opts.allowWhileOnGround && this.onGround && this.gearDown &&
+      this.vel.length() >= BOUNCE_ON_GROUND_MIN_SPEED &&
+      slopeAngleDeg >= BOUNCE_ON_GROUND_SLOPE_DEG &&
+      velIntoSlope >= 4.5;
+    if (!hardVertical && !hardIntoSlope && !hardGroundDrop) return false;
 
     const vNormal  = normal.clone().multiplyScalar(this.vel.dot(normal));
     const vTangent = this.vel.clone().sub(vNormal);
     const incomingNormalSpeed = Math.max(0, -this.vel.dot(normal));
-    const bounceSpeed = Math.max(incomingNormalSpeed * BOUNCE_RESTITUTION, BOUNCE_MIN_UP_SPEED);
-    const newVel = vTangent.multiplyScalar(BOUNCE_TANGENT_DAMPING).addScaledVector(normal, bounceSpeed);
+    const bounceSpeed = Math.max(incomingNormalSpeed * (hardGroundDrop ? 0.72 : BOUNCE_RESTITUTION), hardGroundDrop ? 5.5 : BOUNCE_MIN_UP_SPEED);
+    const newVel = vTangent.multiplyScalar(hardGroundDrop ? 0.45 : BOUNCE_TANGENT_DAMPING).addScaledVector(normal, bounceSpeed);
 
     this.vel.copy(newVel);
-    this._bounceCooldown = 0.35;
+    this._bounceCooldown = hardGroundDrop ? 0.24 : 0.35;
     this.onGround = false;
     this._nearGroundZone = true;
 
     if (window.DEBUG_GEAR) {
-      console.warn(`[BOUNCE] Twarde uderzenie w teren (${bestKey}) — impactVy=${impactVy.toFixed(1)} m/s, velIntoSlope=${velIntoSlope.toFixed(1)} m/s → odbicie ${bounceSpeed.toFixed(1)} m/s wzdłuż normalnej.`);
+      console.warn(`[BOUNCE] Twarde uderzenie w teren (${best.key}) — impactVy=${impactVy.toFixed(1)} m/s, velIntoSlope=${velIntoSlope.toFixed(1)} m/s, slope=${slopeAngleDeg.toFixed(1)}° → odbicie ${bounceSpeed.toFixed(1)} m/s wzdłuż normalnej.`);
     }
     return true;
   }
@@ -696,15 +709,15 @@ class A321Entity extends Entity {
     }
 
     // ── Odbicie sprężyste przy świeżym, TWARDYM kontakcie ────────────────
-    // Wykrywane TYLKO w chwili przejścia z "nie było kontaktu" na "jest kontakt"
-    // (this.onGround było false w poprzedniej klatce) — zwykłe kołowanie z kołami
-    // już na ziemi (this.onGround true) zawsze idzie przez normalne, łagodne
-    // settleOnGear, nigdy przez bounce. Jeśli applyBounce() uzna uderzenie za
-    // wystarczająco twarde, ustawia this.onGround=false i modyfikuje vel —
-    // wtedy POMIJAMY settleOnGear w tej samej klatce (samolot już "odskakuje").
+    // Wykrywane nie tylko przy pierwszym kontakcie z ziemią, ale też wtedy, gdy
+    // samolot jedzie po ziemi w stronę stromego spadku i nagle wpada w jego
+    // ścianę — wtedy zamiast bezwładnie "przyklejać" się do terenu, powinien
+    // odskoczyć. Jeśli applyBounce() uzna uderzenie za wystarczająco twarde,
+    // ustawia this.onGround=false i modyfikuje vel — wtedy POMIJAMY settleOnGear
+    // w tej samej klatce (samolot już "odskakuje").
     let bounced = false;
-    if (gearContact && !this.onGround && this.gearDown && gear) {
-      bounced = this.applyBounce(gear);
+    if (gearContact && this.gearDown && gear) {
+      bounced = this.applyBounce(gear, { allowWhileOnGround: this.onGround });
     }
 
     if (bounced) {
@@ -733,6 +746,23 @@ class A321Entity extends Entity {
         const brake = input.brakes ? 5.0 : 0.06;
         const spoilerBrake = this.spoilers ? 8.0 : 0;
         const totalBrake = brake + spoilerBrake;
+
+        // Przyspieszenie po stromym terenie: gdy koła są na ziemi i samolot
+        // zjeżdża po zboczu, dodatkowo „ciągnie” go w dół po powierzchni, co
+        // daje bardziej naturalne przyspieszenie i poczucie „staczania się z góry".
+        const best = this.bestGearPoint(gear);
+        const off = best.point.offset;
+        const { lat: glat, lon: glon } = offsetGeo(this.lat, this.lon, off.x, -off.z);
+        const normal = this.terrainNormalAt(glat, glon);
+        const tangent = new THREE.Vector3(0, -1, 0).sub(normal.clone().multiplyScalar(normal.y));
+        if (tangent.lengthSq() > 1e-6) {
+          tangent.normalize();
+          const slopeAngle = Math.acos(Math.max(-1, Math.min(1, normal.y)));
+          const slopeAccel = G_ACC * Math.sin(slopeAngle) * GROUND_SLOPE_ACCEL_GAIN * Math.min(1.0, Math.max(0.2, hs / 35.0));
+          this.vel.x += tangent.x * slopeAccel * dtCap;
+          this.vel.z += tangent.z * slopeAccel * dtCap;
+        }
+
         this.vel.x += ((thrustVec.x + dragVec.x) / A321_PARAMS.mass - (hs > 0.05 ? this.vel.x / hs * totalBrake : 0)) * dtCap;
         this.vel.z += ((thrustVec.z + dragVec.z) / A321_PARAMS.mass - (hs > 0.05 ? this.vel.z / hs * totalBrake : 0)) * dtCap;
         const turnDemand = Math.min(1, Math.abs(yawInput) + Math.abs(rollInput) * 0.35);
@@ -747,6 +777,8 @@ class A321Entity extends Entity {
             this.vel.z = newTrackDir.z * horizSpeed;
           }
         }
+        this.vel.x *= GROUND_SLOPE_DAMPING;
+        this.vel.z *= GROUND_SLOPE_DAMPING;
         this.vel.y = 0;
       }
     } else {
