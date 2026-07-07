@@ -3,6 +3,7 @@
 // ── Pętla renderowania ─────────────────────────────────────────────────────────
 
 let fc = 0, lastRenderT = performance.now();
+let contrails = null;
 
 function animate(t) {
   requestAnimationFrame(animate);
@@ -37,6 +38,14 @@ function animate(t) {
   // aktualizowane co klatkę dla płynności animacji czasu i smug deszczu.
   updateSky(dt);
 
+  // Smugi kondensacyjne silników A321 — emisja + aktualizacja czasu życia
+  // cząsteczek, co klatkę dla płynności (patrz sim-contrails.js).
+  if (contrails) {
+    const ct = t / 1000;
+    contrails.emit(ct);
+    contrails.update(ct);
+  }
+
   // Cały potok renderowania (scena → mainRT z głębią → chmury z okluzją →
   // złożenie na ekranie) — patrz sim-sky.js/renderFrame().
   renderFrame();
@@ -67,6 +76,9 @@ const loadInterval = setInterval(() => {
   scene.add(plane.mesh);
   addEntity(plane);
   activeEntity = plane;
+
+  // Smugi kondensacyjne silników — podpięte pod encję samolotu (patrz sim-contrails.js).
+  contrails = new AircraftContrailSystem(plane);
 
   applyCamera(0);
   const initialGroundDist = cameraGroundDistanceM(orb.dist);
