@@ -30,6 +30,8 @@
 // ════════════════════════════════════════════════════════════════════════════════
 
 const CONTRAIL_VERT = `
+    #include <common>
+    #include <logdepthbuf_pars_vertex>
     uniform float uTime;
     uniform float uMaxLife;
     uniform float uBaseSize;
@@ -64,6 +66,7 @@ const CONTRAIL_VERT = `
 
         vec4 mvPosition = modelViewMatrix * vec4(currentPos, 1.0);
         gl_Position = projectionMatrix * mvPosition;
+        #include <logdepthbuf_vertex>
 
         // Rozmiar bazowy skalowany do metrycznej skali świata simworld (kamera
         // bywa setki metrów od smugi) — na tyle duży, by smuga (średnica rzędu
@@ -74,6 +77,8 @@ const CONTRAIL_VERT = `
 `;
 
 const CONTRAIL_FRAG = `
+    #include <common>
+    #include <logdepthbuf_pars_fragment>
     uniform float uTime;
     uniform float uMaxLife;
     varying float vAge;
@@ -125,6 +130,7 @@ const CONTRAIL_FRAG = `
         vec3 finalColor = mix(shadowColor, iceColor, smoothstep(0.2, 0.6, cloudNoise * sphereShape));
 
         gl_FragColor = vec4(finalColor, density * 0.5);
+        #include <logdepthbuf_fragment>
     }
 `;
 
@@ -161,7 +167,7 @@ class ContrailEmitter {
 
     this.mesh = new THREE.Points(this.geometry, this.material);
     this.mesh.frustumCulled = false;
-    this.mesh.renderOrder = 100;
+    this.mesh.renderOrder = 0;
     scene.add(this.mesh);
   }
 
