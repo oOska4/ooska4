@@ -122,9 +122,9 @@ const A321_PARAMS = {
   flapCd:     [0.0, 0.040, 0.085, 0.160],
   flapStall:  [0.285, 0.32, 0.36, 0.40],
   cdGear:     0.060,
-  groundRunThrustBoost: 1.35,
-  groundRunDragScale:   0.45,
-  groundRunLiftScale:   0.28,
+  groundRunThrustBoost: 2.20,
+  groundRunDragScale:   0.22,
+  groundRunLiftScale:   0.22,
   spoilerCd:  0.30,
   spoilerLiftLoss: 0.35,
   V1: 69.4, VR: 74.7, V2: 79.8, Vstall: 62, VMO: 189,
@@ -252,7 +252,7 @@ const BOUNCE_MIN_UP_SPEED     = 1.8;  // m/s — minimalna prędkość "w górę
 const BOUNCE_ON_GROUND_SLOPE_DEG = 20; //° — przy wejściu w zbocze o takim kącie lub większym, a przy dużej prędkości po ziemi, samolot odskakuje zamiast "przyklejać" się do terenu
 const BOUNCE_ON_GROUND_MIN_SPEED = 24.0; // m/s — minimalna prędkość po ziemi, przy której aktywujemy ten efekt
 const GROUND_SLOPE_ACCEL_GAIN = 0.55; // mnożnik przyspieszenia grawitacyjnego wzdłuż spadku terenu
-const GROUND_SLOPE_DAMPING = 0.995; // lekki tłumik, żeby ruch po ziemi nie był zbyt sztywny
+const GROUND_SLOPE_DAMPING = 0.99965; // lekki tłumik, żeby ruch po ziemi nie był zbyt sztywny
 
 const planeInput = {
   pitch: 0, roll: 0, yaw: 0,
@@ -764,10 +764,11 @@ class A321Entity extends Entity {
         const { lat: glat, lon: glon } = offsetGeo(this.lat, this.lon, off.x, -off.z);
         const normal = this.terrainNormalAt(glat, glon);
         const tangent = new THREE.Vector3(0, -1, 0).sub(normal.clone().multiplyScalar(normal.y));
+        let slopeAngleDeg = 0;
         if (tangent.lengthSq() > 1e-6) {
           tangent.normalize();
           const slopeAngle = Math.acos(Math.max(-1, Math.min(1, normal.y)));
-          const slopeAngleDeg = slopeAngle * 180 / Math.PI;
+          slopeAngleDeg = slopeAngle * 180 / Math.PI;
           const slopeAccel = slopeAngleDeg > 8 && hs > 10
             ? G_ACC * Math.sin(slopeAngle) * GROUND_SLOPE_ACCEL_GAIN * Math.min(1.0, Math.max(0.2, hs / 35.0))
             : 0;
@@ -789,8 +790,9 @@ class A321Entity extends Entity {
             this.vel.z = newTrackDir.z * horizSpeed;
           }
         }
-        this.vel.x *= GROUND_SLOPE_DAMPING;
-        this.vel.z *= GROUND_SLOPE_DAMPING;
+        const groundFriction = slopeAngleDeg > 3 ? GROUND_SLOPE_DAMPING : 0.99992;
+        this.vel.x *= groundFriction;
+        this.vel.z *= groundFriction;
         this.vel.y = 0;
       }
     } else {
