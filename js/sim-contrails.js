@@ -10,6 +10,20 @@
 // pozycji silników A321 (dwa punkty emisji zamiast jednego) w skali świata
 // simworld (Y_SCALE / DEM_EXAG jak reszta sceny — patrz sim-constants.js).
 //
+// UWAGA log-depth: renderer.js (sim-scene.js) używa logarithmicDepthBuffer:true.
+// Próba ręcznego dopisania logiki logarytmicznej głębi do tego custom
+// ShaderMaterial (przez #include Three.js LUB przez ręczny zapis do
+// gl_FragDepthEXT) okazała się kruche i psuło kompilację shadera na części
+// konfiguracji GPU/przeglądarek. Zamiast tego — dokładnie tak jak sim-sky.js
+// robi to dla chmur wolumetrycznych i sky dome (depthTest:false, depthWrite:
+// false, renderOrder ustawiony tak by rysować się na wierzchu) — smugi mają
+// depthTest:false: zawsze widoczne, niezależnie od tego co jest "przed" nimi
+// w buforze głębi. To rozwiązuje problem "smuga renderuje się za terenem" w
+// najprostszy, najbardziej niezawodny sposób kosztem tego, że teoretycznie
+// smuga schowana za górą/budynkiem też by "prześwitywała" — w praktyce
+// smugi lecą na wysokości przelotowej dużo ponad terenem, więc to nie
+// występuje w normalnym użytkowaniu.
+//
 // Na razie smugi są ZAWSZE aktywne (emitowane niezależnie od warunków
 // atmosferycznych) — later TODO: kryterium Schmidt-Appleman (temperatura,
 // wilgotność, ciśnienie na wysokości przelotu) do włączania/wyłączania emisji.
@@ -27,8 +41,6 @@ const CONTRAIL_VERT = `
     varying float vAge;
     varying float vRandom;
     varying vec3 vWorldPos;
-
-    #include <logdepthbuf_pars_vertex>
 
     void main() {
         vRandom = aRandom;
@@ -58,8 +70,6 @@ const CONTRAIL_VERT = `
         // kilku metrów przy dyszy, rosnąca z wiekiem) była widoczna z typowego
         // dystansu orbitu/kokpitu, ale bez zamieniania jej w plamę.
         gl_PointSize = uBaseSize * expansion * (700.0 / -mvPosition.z);
-
-        #include <logdepthbuf_vertex>
     }
 `;
 
@@ -69,8 +79,6 @@ const CONTRAIL_FRAG = `
     varying float vAge;
     varying float vRandom;
     varying vec3 vWorldPos;
-
-    #include <logdepthbuf_pars_fragment>
 
     float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123); }
     float noise(vec2 p) {
@@ -90,8 +98,6 @@ const CONTRAIL_FRAG = `
     }
 
     void main() {
-        #include <logdepthbuf_fragment>
-
         vec2 uv = gl_PointCoord;
 
         // Zaokrąglenie cząsteczki
@@ -149,12 +155,13 @@ class ContrailEmitter {
       },
       transparent: true,
       depthWrite: false,
-      depthTest: true,
+      depthTest: false,
       blending: THREE.NormalBlending,
     });
 
     this.mesh = new THREE.Points(this.geometry, this.material);
     this.mesh.frustumCulled = false;
+    this.mesh.renderOrder = 500;
     scene.add(this.mesh);
   }
 
