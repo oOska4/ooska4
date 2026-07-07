@@ -149,10 +149,11 @@ const GEAR_MAIN_REST_OFFSET = -GEAR_LEFT.y;
 // Zawieszenie (amortyzacja goleni) — na razie WYŁĄCZNIE fizyczne (wpływa na
 // wysokość kadłuba), bez animacji ugięcia samej goleni/opony (to osobny,
 // wizualny krok na później). Każda goleń ma własny, niezależny stan "wgniecenia".
-const GEAR_SUSPENSION_TRAVEL   = 0.22; // maks. całkowite wgniecenie w ziemię (m)
-const GEAR_STATIC_SAG          = 0.04; // ugięcie w spoczynku pod ciężarem samolotu (m)
-const GEAR_IMPACT_SINK_PER_MS  = 0.05; // dodatkowe wgniecenie na 1 m/s prędkości pionowej przy dotknięciu
-const GEAR_SINK_SETTLE_TAU     = 0.12; // stała czasowa powrotu wgniecenia do wartości spoczynkowej (s)
+const GEAR_SUSPENSION_TRAVEL   = 0.42; // maks. całkowite wgniecenie w ziemię (m)
+const GEAR_STATIC_SAG          = 0.05; // ugięcie w spoczynku pod ciężarem samolotu (m)
+const GEAR_IMPACT_SINK_PER_MS  = 0.08; // dodatkowe wgniecenie na 1 m/s prędkości pionowej przy dotknięciu
+const GEAR_IMPACT_MAIN_SINK_MULT = 1.35; // główne koła mogą ugiąć się jeszcze mocniej przy lądowaniu
+const GEAR_SINK_SETTLE_TAU     = 0.18; // stała czasowa powrotu wgniecenia do wartości spoczynkowej (s)
 const GEAR_ATTITUDE_SETTLE_TAU = 0.35; // stała czasowa "osiadania" pitch/roll na podwoziu (s) — łagodna, żeby nie "przyklejać" dziobu podczas rozbiegu przed VR
 
 // Środek między kołami głównymi (lewym i prawym) — najniższy, najbardziej
@@ -506,8 +507,9 @@ class A321Entity extends Entity {
       const touching = gear[k].pen >= 0;
       if (touching && !this._gearTouch[k]) {
         // świeże dotknięcie tej goleni — "wbij" amortyzator proporcjonalnie do prędkości uderzenia
-        const impact = Math.min(GEAR_SUSPENSION_TRAVEL - GEAR_STATIC_SAG, impactVy * GEAR_IMPACT_SINK_PER_MS);
-        this.gearSink[k] = Math.min(GEAR_SUSPENSION_TRAVEL, this.gearSink[k] + GEAR_STATIC_SAG + impact);
+        const baseImpact = Math.min(GEAR_SUSPENSION_TRAVEL - GEAR_STATIC_SAG, impactVy * GEAR_IMPACT_SINK_PER_MS);
+        const extraMainImpact = (k === 'left' || k === 'right') ? baseImpact * GEAR_IMPACT_MAIN_SINK_MULT : baseImpact;
+        this.gearSink[k] = Math.min(GEAR_SUSPENSION_TRAVEL, this.gearSink[k] + GEAR_STATIC_SAG + extraMainImpact);
       }
       this._gearTouch[k] = touching;
       const target = touching ? GEAR_STATIC_SAG : 0;
