@@ -52,7 +52,7 @@ const CONTRAIL_VERT = `
         gl_Position = projectionMatrix * mvPosition;
 
         // Mniejszy rozmiar bazowy (uBaseSize), zapobiega grubym kluchom
-        gl_PointSize = uBaseSize * expansion * (350.0 / -mvPosition.z);
+        gl_PointSize = uBaseSize * expansion * (2200.0 / -mvPosition.z);
     }
 `;
 
@@ -245,6 +245,11 @@ class AircraftContrailSystem {
 
     const posR = this._engineWorldPos(parts.fanR, CONTRAIL_ENGINE_OFFSET_R, new THREE.Vector3());
     this.right.emit(posR, clockTime, 1);
+
+    if (!this._loggedOnce) {
+      this._loggedOnce = true;
+      console.log('[contrails] pierwsza emisja — posL:', posL, 'posR:', posR, 'fanL znaleziony:', !!parts.fanL, 'fanR znaleziony:', !!parts.fanR, 'camera dist do posL:', camera.position.distanceTo(posL));
+    }
   }
 
   update(time) {
