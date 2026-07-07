@@ -152,7 +152,7 @@ class ContrailEmitter {
     this.geometry.setAttribute('aRandom', new THREE.BufferAttribute(this.randoms, 1));
 
     const isMobile = typeof navigator !== 'undefined' && navigator.maxTouchPoints > 0 && !matchMedia('(pointer:fine)').matches;
-    const baseSize = isMobile ? 1.0 : 0.5;
+    const baseSize = isMobile ? 2.0 : 0.5;
 
     this.material = new THREE.ShaderMaterial({
       vertexShader: CONTRAIL_VERT,
