@@ -241,15 +241,15 @@ function elevatorAuthority(speedKt) {
 // terenu w miejscu uderzenia, z tłumieniem (coefficient of restitution) — część
 // energii uderzenia jest tracona (deformacja/hałas/ciepło), reszta wraca jako
 // odbicie, dokładnie jak przy zderzeniu sprężystym z tłumieniem.
-const BOUNCE_TRIGGER_VSPEED   = 4.8;  // m/s prędkości pionowej w dół — od tego uznajemy uderzenie za "twarde" (nie zwykłe osiadanie)
-const BOUNCE_TRIGGER_HSPEED_INTO_SLOPE = 6.2; // m/s składowej prędkości WCHODZĄCEJ w stromy teren (wzdłuż normalnej), przy locie w zbocze
-const BOUNCE_RESTITUTION      = 0.58; // ułamek prędkości normalnej odbitej z powrotem (0=brak odbicia/pochłonięte, 1=idealnie sprężyste)
-const BOUNCE_TANGENT_DAMPING  = 0.55; // ułamek prędkości stycznej zachowanej po uderzeniu (tarcie/poślizg podczas odbicia)
-const BOUNCE_MIN_UP_SPEED     = 4.0;  // m/s — minimalna prędkość "w górę" nadana przy odbiciu, żeby efekt był czytelny nawet przy uderzeniu prawie stycznym
-const BOUNCE_ON_GROUND_SLOPE_DEG = 16; //° — przy wejściu w zbocze o takim kącie lub większym, a przy dużej prędkości po ziemi, samolot odskakuje zamiast "przyklejać" się do terenu
-const BOUNCE_ON_GROUND_MIN_SPEED = 18.0; // m/s — minimalna prędkość po ziemi, przy której aktywujemy ten efekt
-const GROUND_SLOPE_ACCEL_GAIN = 0.95; // mnożnik przyspieszenia grawitacyjnego wzdłuż spadku terenu
-const GROUND_SLOPE_DAMPING = 0.985; // lekki tłumik, żeby ruch po ziemi nie był zbyt sztywny
+const BOUNCE_TRIGGER_VSPEED   = 7.2;  // m/s prędkości pionowej w dół — od tego uznajemy uderzenie za "twarde" (nie zwykłe osiadanie)
+const BOUNCE_TRIGGER_HSPEED_INTO_SLOPE = 8.5; // m/s składowej prędkości WCHODZĄCEJ w stromy teren (wzdłuż normalnej), przy locie w zbocze
+const BOUNCE_RESTITUTION      = 0.28; // ułamek prędkości normalnej odbitej z powrotem (0=brak odbicia/pochłonięte, 1=idealnie sprężyste)
+const BOUNCE_TANGENT_DAMPING  = 0.82; // ułamek prędkości stycznej zachowanej po uderzeniu (tarcie/poślizg podczas odbicia)
+const BOUNCE_MIN_UP_SPEED     = 1.8;  // m/s — minimalna prędkość "w górę" nadana przy odbiciu, żeby efekt był czytelny nawet przy uderzeniu prawie stycznym
+const BOUNCE_ON_GROUND_SLOPE_DEG = 20; //° — przy wejściu w zbocze o takim kącie lub większym, a przy dużej prędkości po ziemi, samolot odskakuje zamiast "przyklejać" się do terenu
+const BOUNCE_ON_GROUND_MIN_SPEED = 24.0; // m/s — minimalna prędkość po ziemi, przy której aktywujemy ten efekt
+const GROUND_SLOPE_ACCEL_GAIN = 0.55; // mnożnik przyspieszenia grawitacyjnego wzdłuż spadku terenu
+const GROUND_SLOPE_DAMPING = 0.995; // lekki tłumik, żeby ruch po ziemi nie był zbyt sztywny
 
 const planeInput = {
   pitch: 0, roll: 0, yaw: 0,
@@ -475,7 +475,8 @@ class A321Entity extends Entity {
     const vNormal  = normal.clone().multiplyScalar(this.vel.dot(normal));
     const vTangent = this.vel.clone().sub(vNormal);
     const incomingNormalSpeed = Math.max(0, -this.vel.dot(normal));
-    const bounceSpeed = Math.max(incomingNormalSpeed * (hardGroundDrop ? 0.72 : BOUNCE_RESTITUTION), hardGroundDrop ? 5.5 : BOUNCE_MIN_UP_SPEED);
+    const flatGroundScale = slopeAngleDeg < 8 ? 0.35 : slopeAngleDeg < 16 ? 0.6 : 1.0;
+    const bounceSpeed = Math.max(incomingNormalSpeed * (hardGroundDrop ? 0.72 : BOUNCE_RESTITUTION * flatGroundScale), hardGroundDrop ? 5.5 : BOUNCE_MIN_UP_SPEED * flatGroundScale);
     const newVel = vTangent.multiplyScalar(hardGroundDrop ? 0.45 : BOUNCE_TANGENT_DAMPING).addScaledVector(normal, bounceSpeed);
 
     this.vel.copy(newVel);
@@ -758,7 +759,10 @@ class A321Entity extends Entity {
         if (tangent.lengthSq() > 1e-6) {
           tangent.normalize();
           const slopeAngle = Math.acos(Math.max(-1, Math.min(1, normal.y)));
-          const slopeAccel = G_ACC * Math.sin(slopeAngle) * GROUND_SLOPE_ACCEL_GAIN * Math.min(1.0, Math.max(0.2, hs / 35.0));
+          const slopeAngleDeg = slopeAngle * 180 / Math.PI;
+          const slopeAccel = slopeAngleDeg > 8 && hs > 10
+            ? G_ACC * Math.sin(slopeAngle) * GROUND_SLOPE_ACCEL_GAIN * Math.min(1.0, Math.max(0.2, hs / 35.0))
+            : 0;
           this.vel.x += tangent.x * slopeAccel * dtCap;
           this.vel.z += tangent.z * slopeAccel * dtCap;
         }
