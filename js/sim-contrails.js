@@ -224,14 +224,20 @@ class AircraftContrailSystem {
   }
 
   // Zwraca pozycję świata (world-space, ze skalą Y_SCALE/DEM_EXAG spójną z
-  // resztą sceny) danego silnika. Jeśli model wczytał już węzeł fan_L/fan_R,
-  // używamy jego rzeczywistej macierzy świata (dokładne dopasowanie do
-  // geometrii); w przeciwnym razie liczymy przybliżony offset lokalny
-  // analogicznie do sampleGearPoint() w sim-physics.js.
+  // resztą sceny) danego silnika. Używamy PRAWDZIWEJ macierzy świata węzła
+  // fan_L/fan_R modelu (dokładne dopasowanie do geometrii), a nie fallbacku
+  // z lokalnego offsetu — ten drugi służy TYLKO zanim model się wczyta.
+  //
+  // WAŻNE: mesh.matrixWorld samolotu jest normalnie przeliczane dopiero
+  // wewnątrz renderer.render() (w renderFrame()), które w pętli animate()
+  // wywołuje się PO contrails.emit(). Bez jawnego updateMatrixWorld() tutaj,
+  // getWorldPosition() czytałoby macierz sprzed jednej klatki obrotu —
+  // dokładnie to powodowało "odklejanie się" punktu emisji od kadłuba przy
+  // obrocie w osi Y (yaw). Wymuszamy świeżą macierz TU, zaraz po syncMesh().
   _engineWorldPos(fanNode, localOffset, out) {
     if (fanNode) {
-      fanNode.getWorldPosition(out);
-      return out;
+      this.entity.mesh.updateMatrixWorld(true);
+      return fanNode.getWorldPosition(out);
     }
     const e = this.entity;
     const noseDir   = e._noseDir   || new THREE.Vector3(Math.sin(e.yawRad || 0), 0, Math.cos(e.yawRad || 0));
