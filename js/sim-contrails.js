@@ -151,17 +151,17 @@ class ContrailEmitter {
       uniforms: {
         uTime:     { value: 0 },
         uMaxLife:  { value: 12.0 },
-        uBaseSize: { value: 1.3 },
+        uBaseSize: { value: 0.5 },
       },
       transparent: true,
       depthWrite: false,
-      depthTest: false,
+      depthTest: true,
       blending: THREE.NormalBlending,
     });
 
     this.mesh = new THREE.Points(this.geometry, this.material);
     this.mesh.frustumCulled = false;
-    this.mesh.renderOrder = 500;
+    this.mesh.renderOrder = 100;
     scene.add(this.mesh);
   }
 
