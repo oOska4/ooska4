@@ -183,6 +183,19 @@ const GEAR_EMERGENCY_SETTLE_TAU = 0.05; // s — znacznie szybsze niż normalne 
 window.DEBUG_GEAR = window.DEBUG_GEAR ?? true;
 const GEAR_DEBUG_HEARTBEAT_SEC = 1.0; // co ile sekund wypisywać bieżący stan (patrz koniec physicsUpdate)
 
+// ── Kulki-znaczniki 3 punktów kolizji podwozia ─────────────────────────
+//
+// Małe kolorowe kule pokazujące dokładnie te same 3 punkty, które silnik fizyki
+// używa do wykrywania kontaktu z ziemią (GEAR_NOSE/GEAR_LEFT/GEAR_RIGHT) — świecą
+// pełnym kolorem gdy dane koło dotyka/koliduje z terenem, są przygaszone gdy nie.
+// Czysto wizualny debug/feedback, nie wpływa na fizykę.
+const GEAR_MARKER_RADIUS = 0.35; // m
+const GEAR_MARKER_COLORS = {
+  nose:  0xffdd33, // żółty  — przednie koło
+  left:  0x33ccff, // niebieski — lewe główne koło
+  right: 0xff3355, // czerwony — prawe główne koło
+};
+
 function groundEffectFactor(agl_m, span) {
   const h_b = Math.max(0, agl_m) / (span * 0.5);
   if (h_b >= 1.0) return 1.0;
@@ -194,6 +207,45 @@ function groundSteerTrackFactor(speedKt) {
   if (speedKt >= 115) return 0.0;
   return 1.0 - (speedKt - 50) / 65;
 }
+
+// ── Autorytet steru wysokości (elevator authority) ─────────────────────────────
+//
+// Zamiast sztywnego progu "poniżej VR nic nie robi, od VR*0.98 pełen auto-rotate",
+// siła, z jaką ster wysokości potrafi obrócić samolot wokół kół głównych, rośnie
+// PŁYNNIE z ciśnieniem dynamicznym (q ~ prędkość²) — dokładnie tak jak w realnym
+// samolocie: skuteczność powierzchni sterowych zależy od naporu powietrza na nie,
+// więc rośnie z kwadratem prędkości, nie liniowo. Efekt: przy 10 kt praktycznie
+// nic nie da się zrobić (brak przepływu nad usterzeniem ogonowym), a im szybciej,
+// tym łatwiej unieść i UTRZYMAĆ nos w górze — bez sztucznego "pociągnięcia za sznurek"
+// przy jednej konkretnej prędkości.
+const ELEVATOR_MIN_KT  = 15;  // poniżej tej prędkości ster wysokości praktycznie nie działa (brak przepływu)
+const ELEVATOR_FULL_KT = 95;  // od tej prędkości pełna skuteczność steru (dalej już nie rośnie)
+
+function elevatorAuthority(speedKt) {
+  if (speedKt <= ELEVATOR_MIN_KT) return 0;
+  if (speedKt >= ELEVATOR_FULL_KT) return 1;
+  // Normalizowany zakres 0..1 w paśmie [MIN, FULL], podniesiony do kwadratu —
+  // odzwierciedla to, że siła aerodynamiczna na sterze ~ q ~ v², a nie samo v.
+  const t = (speedKt - ELEVATOR_MIN_KT) / (ELEVATOR_FULL_KT - ELEVATOR_MIN_KT);
+  return t * t;
+}
+
+// ── Odbicie sprężyste przy mocnym/nietypowym uderzeniu w teren ────────────────
+//
+// Normalne, łagodne osiadanie na 3 punktach podwozia (patrz settleOnGear) zostaje
+// bez zmian — to obsługuje zwykłe lądowania i kołowanie. Ale gdy samolot uderzy
+// w teren z dużą prędkością PIONOWĄ (twarde lądowanie / "zaorywanie" ziemi) albo
+// wjedzie w stromą ścianę terenu przy dużej prędkości POZIOMEJ (np. w zbocze
+// góry), to nie jest już "osiadanie zawieszenia" — to zderzenie, które powinno
+// fizycznie odrzucić samolot: odbicie wektora prędkości względem normalnej
+// terenu w miejscu uderzenia, z tłumieniem (coefficient of restitution) — część
+// energii uderzenia jest tracona (deformacja/hałas/ciepło), reszta wraca jako
+// odbicie, dokładnie jak przy zderzeniu sprężystym z tłumieniem.
+const BOUNCE_TRIGGER_VSPEED   = 6.0;  // m/s prędkości pionowej w dół — od tego uznajemy uderzenie za "twarde" (nie zwykłe osiadanie)
+const BOUNCE_TRIGGER_HSPEED_INTO_SLOPE = 8.0; // m/s składowej prędkości WCHODZĄCEJ w stromy teren (wzdłuż normalnej), przy locie w zbocze
+const BOUNCE_RESTITUTION      = 0.45; // ułamek prędkości normalnej odbitej z powrotem (0=brak odbicia/pochłonięte, 1=idealnie sprężyste)
+const BOUNCE_TANGENT_DAMPING  = 0.75; // ułamek prędkości stycznej zachowanej po uderzeniu (tarcie/poślizg podczas odbicia)
+const BOUNCE_MIN_UP_SPEED     = 3.0;  // m/s — minimalna prędkość "w górę" nadana przy odbiciu, żeby efekt był czytelny nawet przy uderzeniu prawie stycznym
 
 const planeInput = {
   pitch: 0, roll: 0, yaw: 0,
@@ -233,6 +285,24 @@ class A321Entity extends Entity {
     this.mesh = grp;
     this.modelLoaded = false;
     this._parts = {}; // cache animowanych części — wypełniane po wczytaniu modelu
+
+    // Kulki-znaczniki 3 punktów kolizji podwozia (patrz GEAR_MARKER_*) — osobne
+    // meshe DODANE BEZPOŚREDNIO DO SCENY (nie do `grp`), bo mają własną pozycję
+    // światową liczoną z sampleGear() (a nie transformację względem samolotu).
+    this._gearMarkers = {};
+    for (const k of ['nose', 'left', 'right']) {
+      const mat = new THREE.MeshBasicMaterial({ color: GEAR_MARKER_COLORS[k], transparent: true, opacity: 0.35, depthTest: false });
+      const m = new THREE.Mesh(new THREE.SphereGeometry(GEAR_MARKER_RADIUS, 12, 10), mat);
+      m.renderOrder = 999;
+      m.visible = false;
+      scene.add(m);
+      this._gearMarkers[k] = m;
+    }
+
+    // Stan odbicia sprężystego (patrz applyBounce()) — licznik krótkiego "cooldownu"
+    // żeby jedno mocne uderzenie nie wywoływało kilku odbić pod rzędem w kolejnych
+    // klatkach, zanim samolot zdąży się realnie oddalić od terenu.
+    this._bounceCooldown = 0;
 
     loadA321Model().then(model => {
       model.rotation.y = A321_MODEL_ROT_Y;
@@ -351,6 +421,61 @@ class A321Entity extends Entity {
     };
   }
 
+  // Liczy przybliżoną normalną terenu (jednostkowy wektor w górę, prostopadły do
+  // zbocza) pod dowolnym punktem geo, próbkując wysokość w 4 sąsiednich punktach
+  // (różnice centralne) — potrzebne do applyBounce(), żeby odbicie od stromego
+  // zbocza szło w sensownym kierunku, nie tylko pionowo w górę.
+  terrainNormalAt(lat, lon, stepM = 6) {
+    const n = offsetGeo(lat, lon, 0, stepM);
+    const s = offsetGeo(lat, lon, 0, -stepM);
+    const e = offsetGeo(lat, lon, stepM, 0);
+    const w = offsetGeo(lat, lon, -stepM, 0);
+    const hN = terrainHeightBest(n.lat, n.lon);
+    const hS = terrainHeightBest(s.lat, s.lon);
+    const hE = terrainHeightBest(e.lat, e.lon);
+    const hW = terrainHeightBest(w.lat, w.lon);
+    const dhdx = (hE - hW) / (2 * stepM);
+    const dhdz = -(hN - hS) / (2 * stepM);
+    return new THREE.Vector3(-dhdx, 1, -dhdz).normalize();
+  }
+
+  // Odbicie sprężyste przy mocnym/nietypowym uderzeniu w teren (patrz BOUNCE_*).
+  // Wywoływane raz, w chwili świeżego, twardego kontaktu — modyfikuje this.vel
+  // bezpośrednio (odbija składową normalną, tłumi składową styczną). Zwraca true
+  // jeśli faktycznie doszło do odbicia.
+  applyBounce(gear) {
+    if (this._bounceCooldown > 0) return false;
+    const impactVy = Math.max(0, -this.vel.y);
+
+    let bestKey = 'nose', bestPen = gear.nose.pen;
+    if (gear.left.pen  > bestPen) { bestKey = 'left';  bestPen = gear.left.pen; }
+    if (gear.right.pen > bestPen) { bestKey = 'right'; bestPen = gear.right.pen; }
+    const off = gear[bestKey].offset;
+    const { lat: glat, lon: glon } = offsetGeo(this.lat, this.lon, off.x, -off.z);
+    const normal = this.terrainNormalAt(glat, glon);
+
+    const velIntoSlope  = -this.vel.dot(normal);
+    const hardVertical   = impactVy >= BOUNCE_TRIGGER_VSPEED;
+    const hardIntoSlope  = velIntoSlope >= BOUNCE_TRIGGER_HSPEED_INTO_SLOPE;
+    if (!hardVertical && !hardIntoSlope) return false;
+
+    const vNormal  = normal.clone().multiplyScalar(this.vel.dot(normal));
+    const vTangent = this.vel.clone().sub(vNormal);
+    const incomingNormalSpeed = Math.max(0, -this.vel.dot(normal));
+    const bounceSpeed = Math.max(incomingNormalSpeed * BOUNCE_RESTITUTION, BOUNCE_MIN_UP_SPEED);
+    const newVel = vTangent.multiplyScalar(BOUNCE_TANGENT_DAMPING).addScaledVector(normal, bounceSpeed);
+
+    this.vel.copy(newVel);
+    this._bounceCooldown = 0.35;
+    this.onGround = false;
+    this._nearGroundZone = true;
+
+    if (window.DEBUG_GEAR) {
+      console.warn(`[BOUNCE] Twarde uderzenie w teren (${bestKey}) — impactVy=${impactVy.toFixed(1)} m/s, velIntoSlope=${velIntoSlope.toFixed(1)} m/s → odbicie ${bounceSpeed.toFixed(1)} m/s wzdłuż normalnej.`);
+    }
+    return true;
+  }
+
   // Osadza samolot na podwoziu na podstawie próbki z sampleGear(): aktualizuje
   // "wgniecenie" zawieszenia każdej goleni (mocniejsze przy twardszym dotknięciu,
   // potem wraca do niewielkiego ugięcia spoczynkowego — na razie czysto
@@ -414,7 +539,8 @@ class A321Entity extends Entity {
       : 1 - Math.exp(-dtCap / GEAR_ATTITUDE_SETTLE_TAU);
 
     this.rollRad += (rollTarget - this.rollRad) * attBlend;
-    // Podczas rotacji na starcie pitchem steruje istniejąca logika autoRotate —
+    // Podczas rotacji na starcie (isRotating=true, patrz isRotatingGround w
+    // physicsUpdate) pitchem steruje bezpośrednio pilot przez elevatorAuthority —
     // tu go nie dotykamy, żeby nie "ściągać" dziobu z powrotem w trakcie odrywania koła.
     if (!isRotating) this.pitchRad += (pitchTarget - this.pitchRad) * attBlend;
 
@@ -438,27 +564,57 @@ class A321Entity extends Entity {
   physicsUpdate(dt, input) {
     const dtCap = Math.min(dt, 0.05);
     const airspeed = this.vel.length();
+    if (this._bounceCooldown > 0) this._bounceCooldown = Math.max(0, this._bounceCooldown - dtCap);
 
     if (input.throttleUp)   this.throttle = Math.min(1, this.throttle + dtCap * 0.6);
     if (input.throttleDown) this.throttle = Math.max(0, this.throttle - dtCap * 0.8);
 
+    const speedKt = Units.msToKt(airspeed);
+    // Autorytet steru wysokości/lotek w powietrzu (jak wcześniej: rośnie z prędkością
+    // od 12 do 52 m/s) — używany TYLKO gdy samolot lata. Na ziemi rotacją (unoszeniem
+    // przedniego koła) rządzi teraz osobno elevatorAuthority(speedKt) niżej, bo
+    // fizyka steru wysokości przy kołowaniu/rozbiegu jest inna niż w locie (działa
+      // wokół kół głównych, nie wokół środka masy).
     const ctrlEff = Math.max(0, Math.min(1.0, (airspeed - 12.0) / 40.0));
     const pitchInput = input.pitch;
     const rollInput  = input.roll;
     const yawInput   = input.yaw;
 
-    if (this.onGround && airspeed >= A321_PARAMS.VR * 0.98 && this.throttle > 0.15) this.autoRotateArmed = true;
-    if (!this.onGround) this.autoRotateArmed = false;
-    const autoRotate = (this.autoRotateArmed && pitchInput > 0) ? 0.5 : 0;
+    // ── Unoszenie przedniego koła (rotacja) na ziemi ────────────────────
+    // Realistyczny model: siła dostępna na sterze wysokości rośnie PŁYNNIE z
+    // ciśnieniem dynamicznym (prawie zero <15kt, pełna skuteczność >=95kt — patrz
+    // elevatorAuthority()). To ZASTĘPUJE dawny sztywny próg "autoRotateArmed" przy
+    // VR*0.98: teraz można zacząć delikatnie unosić nos już przy kilkudziesięciu
+    // węzłach, ale wymaga to trzymania drążka — im wolniej, tym słabszy efekt i
+    // łatwiej nos opadnie z powrotem, dokładnie jak w prawdziwym samolocie.
+    const groundElevAuth = this.onGround ? elevatorAuthority(speedKt) : 0;
+    // Rotacja aktywna, gdy pilot RZECZYWIŚCIE ciągnie drążek do siebie na ziemi z
+    // jakąkolwiek dostępną siłą steru — to zastępuje stary autoRotateArmed/VR i
+    // pozwala settleOnGear() nie "przyklejac" nosa, gdy pilot aktywnie ciągnie.
+    const isRotatingGround = this.onGround && pitchInput > 0.02 && groundElevAuth > 0.001;
 
-    this.pitchRate += (pitchInput + autoRotate) * 1.4 * ctrlEff * dtCap;
-    this.pitchRate *= Math.pow(0.05, dtCap);
-    this.rollRate  += rollInput * 1.6 * ctrlEff * dtCap;
-    this.rollRate  *= Math.pow(0.04, dtCap);
+    if (this.onGround) {
+      // Na ziemi pitch rate reaguje na siłę steru wg elevatorAuthority — nos nie
+      // "skacze" przy jednej konkretnej prędkości, tylko płynnie łatwiej reaguje z
+      // prędkością. Pchnięcie drążka od siebie (pitchInput<0) zawsze działa z pełną
+      // siłą niezależnie od prędkości — opuszczenie przedniego koła z powrotem na
+      // ziemię nie wymaga przepływu nad usterzeniem, wystarczy grawitacja/moment.
+      const pushDown = pitchInput < 0 ? -pitchInput * 1.4 : 0;
+      const pullUp   = pitchInput > 0 ? pitchInput * 1.9 * groundElevAuth : 0;
+      this.pitchRate += (pullUp - pushDown) * dtCap;
+      this.pitchRate *= Math.pow(0.06, dtCap);
+      this.rollRate = 0; // na 3 kołach nie da się samemu przechylić — o kąt banku decyduje wyłącznie teren pod kołami (patrz settleOnGear)
+    } else {
+      this.pitchRate += pitchInput * 1.4 * ctrlEff * dtCap;
+      this.pitchRate *= Math.pow(0.05, dtCap);
+      this.rollRate  += rollInput * 1.6 * ctrlEff * dtCap;
+      this.rollRate  *= Math.pow(0.04, dtCap);
+    }
 
     this.pitchRad += this.pitchRate * dtCap;
     this.rollRad  += this.rollRate  * dtCap;
-    this.pitchRad  = Math.max(-0.45, Math.min(this.onGround ? 0.35 : 0.52, this.pitchRad));
+    // Limit górny pitch na ziemi to kąt "tail strike" — dalej ogon zaryje w pas.
+    this.pitchRad  = Math.max(-0.45, Math.min(this.onGround ? 0.22 : 0.52, this.pitchRad));
     this.rollRad   = Math.max(-1.40, Math.min(1.40, this.rollRad));
 
     const forward = new THREE.Vector3(Math.sin(this.yawRad), 0, Math.cos(this.yawRad));
@@ -539,7 +695,22 @@ class A321Entity extends Entity {
       if (mainAgl > GEAR_FAR_CHECK_EXIT_AGL) this._nearGroundZone = false;
     }
 
-    if (this.onGround || gearContact) {
+    // ── Odbicie sprężyste przy świeżym, TWARDYM kontakcie ────────────────
+    // Wykrywane TYLKO w chwili przejścia z "nie było kontaktu" na "jest kontakt"
+    // (this.onGround było false w poprzedniej klatce) — zwykłe kołowanie z kołami
+    // już na ziemi (this.onGround true) zawsze idzie przez normalne, łagodne
+    // settleOnGear, nigdy przez bounce. Jeśli applyBounce() uzna uderzenie za
+    // wystarczająco twarde, ustawia this.onGround=false i modyfikuje vel —
+    // wtedy POMIJAMY settleOnGear w tej samej klatce (samolot już "odskakuje").
+    let bounced = false;
+    if (gearContact && !this.onGround && this.gearDown && gear) {
+      bounced = this.applyBounce(gear);
+    }
+
+    if (bounced) {
+      // nic więcej do zrobienia w tej klatce — vel już ustawiony przez applyBounce,
+      // samolot przechodzi do gałęzi "w powietrzu" niżej w NASTĘPNEJ klatce.
+    } else if (this.onGround || gearContact) {
       if (gearContact) this.onGround = true;
 
       // Zawsze koryguj pozycję/pochylenie na podwoziu, gdy wykryto kontakt —
@@ -550,7 +721,7 @@ class A321Entity extends Entity {
       // zostać zamurowany pod terenem na długi czas, choć formalnie "miał dosyć
       // siły nośnej, żeby lecieć".
       if (this.gearDown && gear) {
-        this.settleOnGear(gear, dtCap, autoRotate > 0);
+        this.settleOnGear(gear, dtCap, isRotatingGround);
       } else if (!this.gearDown) {
         this.altM = groundH + gearOffset; // lądowanie na kadłubie (gear w górze) — bez zmian
       }
@@ -646,6 +817,35 @@ class A321Entity extends Entity {
           `lat=${this.lat.toFixed(6)} lon=${this.lon.toFixed(6)}${gearInfo}`
         );
       }
+    }
+
+    this._updateGearMarkers(gear);
+  }
+
+  // Aktualizuje pozycję/widoczność/kolor 3 kulek-markerów kolizji podwozia
+  // (patrz GEAR_MARKER_*): widoczne TYLKO gdy sampleGear() faktycznie zostało
+  // policzone w tej klatce (this._nearGroundZone lub onGround — patrz gear
+  // wyżej w physicsUpdate), bo tylko wtedy znamy ich rzeczywistą pozycję.
+  // Pełna jasność = koło aktualnie dotyka/koliduje z terenem (pen >= 0),
+  // przygaszona = w pobliżu ziemi ale jeszcze w powietrzu — daje wizualny
+  // podgląd dokładnie tych samych 3 punktów, których używa silnik fizyki.
+  _updateGearMarkers(gear) {
+    if (!gear) {
+      for (const k of ['nose', 'left', 'right']) this._gearMarkers[k].visible = false;
+      return;
+    }
+    for (const k of ['nose', 'left', 'right']) {
+      const g = gear[k];
+      const marker = this._gearMarkers[k];
+      marker.visible = true;
+      // Pozycja w świecie: ten sam punkt geo co użyty w sampleGearPoint(), na
+      // wysokości terenu w tym miejscu (a nie na wysokości koła) — tak marker
+      // zawsze "leży" na ziemi, dobrze pokazując gdzie fizyka sprawdza kontakt.
+      const { lat: glat, lon: glon } = offsetGeo(this.lat, this.lon, g.offset.x, -g.offset.z);
+      marker.position.copy(geoToWorld(glat, glon, g.groundH * DEM_EXAG));
+      const touching = g.pen >= 0;
+      marker.material.opacity = touching ? 0.85 : 0.25;
+      marker.scale.setScalar(touching ? 1.4 : 1.0);
     }
   }
 
