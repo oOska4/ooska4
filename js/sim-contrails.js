@@ -28,6 +28,8 @@ const CONTRAIL_VERT = `
     varying float vRandom;
     varying vec3 vWorldPos;
 
+    #include <logdepthbuf_pars_vertex>
+
     void main() {
         vRandom = aRandom;
         float age = uTime - aSpawnTime;
@@ -51,8 +53,13 @@ const CONTRAIL_VERT = `
         vec4 mvPosition = modelViewMatrix * vec4(currentPos, 1.0);
         gl_Position = projectionMatrix * mvPosition;
 
-        // Mniejszy rozmiar bazowy (uBaseSize), zapobiega grubym kluchom
-        gl_PointSize = uBaseSize * expansion * (2200.0 / -mvPosition.z);
+        // Rozmiar bazowy skalowany do metrycznej skali świata simworld (kamera
+        // bywa setki metrów od smugi) — na tyle duży, by smuga (średnica rzędu
+        // kilku metrów przy dyszy, rosnąca z wiekiem) była widoczna z typowego
+        // dystansu orbitu/kokpitu, ale bez zamieniania jej w plamę.
+        gl_PointSize = uBaseSize * expansion * (700.0 / -mvPosition.z);
+
+        #include <logdepthbuf_vertex>
     }
 `;
 
@@ -62,6 +69,8 @@ const CONTRAIL_FRAG = `
     varying float vAge;
     varying float vRandom;
     varying vec3 vWorldPos;
+
+    #include <logdepthbuf_pars_fragment>
 
     float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123); }
     float noise(vec2 p) {
@@ -81,6 +90,8 @@ const CONTRAIL_FRAG = `
     }
 
     void main() {
+        #include <logdepthbuf_fragment>
+
         vec2 uv = gl_PointCoord;
 
         // Zaokrąglenie cząsteczki
@@ -138,6 +149,7 @@ class ContrailEmitter {
       },
       transparent: true,
       depthWrite: false,
+      depthTest: true,
       blending: THREE.NormalBlending,
     });
 
@@ -245,11 +257,6 @@ class AircraftContrailSystem {
 
     const posR = this._engineWorldPos(parts.fanR, CONTRAIL_ENGINE_OFFSET_R, new THREE.Vector3());
     this.right.emit(posR, clockTime, 1);
-
-    if (!this._loggedOnce) {
-      this._loggedOnce = true;
-      console.log('[contrails] pierwsza emisja — posL:', posL, 'posR:', posR, 'fanL znaleziony:', !!parts.fanL, 'fanR znaleziony:', !!parts.fanR, 'camera dist do posL:', camera.position.distanceTo(posL));
-    }
   }
 
   update(time) {
