@@ -172,12 +172,12 @@ const GEAR_MAIN_MID = { x: (GEAR_LEFT.x + GEAR_RIGHT.x) / 2, y: GEAR_LEFT.y, z: 
 const GEAR_FAR_CHECK_ENTER_AGL = 120; // m — poniżej tej wysokości włącz dokładne sprawdzanie 3 punktów
 const GEAR_FAR_CHECK_EXIT_AGL  = 150; // m — powyżej tej wysokości wróć do taniego sprawdzania 1 punktem (zapas histerezy jak wcześniej)
 
-// Jeśli którekolwiek koło jest zanurzone w terenie głębiej niż to (znacznie
-// więcej niż normalne ugięcie zawieszenia GEAR_SUSPENSION_TRAVEL) — to nie jest
-// zwykłe lądowanie, tylko sytuacja awaryjna (np. bardzo stromy lot nurkowy,
-// teleportacja, spawn w złym miejscu) — samolot szybko (ale płynnie, nie w
-// jednej klatce) wraca na powierzchnię — patrz GEAR_EMERGENCY_SETTLE_TAU.
-const GEAR_EMERGENCY_PEN_M = 1.0; // m
+// Jeśli którekolwiek koło jest zanurzone w terenie głębiej niż to (kilka metrów,
+// znacznie więcej niż normalne ugięcie zawieszenia GEAR_SUSPENSION_TRAVEL) —
+// to nie jest zwykłe lądowanie, tylko prawdziwa sytuacja awaryjna (np. stromy
+// lot nurkowy, teleportacja, spawn w złym miejscu) — samolot szybko (ale
+// płynnie, nie w jednej klatce) wraca na powierzchnię — patrz GEAR_EMERGENCY_SETTLE_TAU.
+const GEAR_EMERGENCY_PEN_M = 2.5; // m
 const GEAR_EMERGENCY_SETTLE_TAU = 0.05; // s — znacznie szybsze niż normalne osiadanie, ale nie natychmiastowe (łagodniejszy "wypchnij na powierzchnię")
 
 // DEBUG: pomaga namierzyć przypadki zapadania się samolotu pod ziemię (patrz
