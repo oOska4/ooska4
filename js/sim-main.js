@@ -42,7 +42,7 @@ function animate(t) {
   // cząsteczek, co klatkę dla płynności (patrz sim-contrails.js).
   if (contrails) {
     const ct = t / 1000;
-    contrails.emit(ct);
+    contrails.emit(ct, dt);
     contrails.update(ct);
   }
 

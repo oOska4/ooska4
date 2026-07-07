@@ -151,7 +151,7 @@ class ContrailEmitter {
       uniforms: {
         uTime:     { value: 0 },
         uMaxLife:  { value: 12.0 },
-        uBaseSize: { value: 2.2 },
+        uBaseSize: { value: 1.3 },
       },
       transparent: true,
       depthWrite: false,
@@ -221,55 +221,46 @@ class AircraftContrailSystem {
     this.right = new ContrailEmitter(1000);
     this._tmpOffset = new THREE.Vector3();
     this._tmpWorld  = new THREE.Vector3();
+    this._emitAccumulator = 0;
   }
 
   // Zwraca pozycję świata (world-space, ze skalą Y_SCALE/DEM_EXAG spójną z
-  // resztą sceny) danego silnika. Używamy PRAWDZIWEJ macierzy świata węzła
-  // fan_L/fan_R modelu (dokładne dopasowanie do geometrii), a nie fallbacku
-  // z lokalnego offsetu — ten drugi służy TYLKO zanim model się wczyta.
-  //
-  // WAŻNE: mesh.matrixWorld samolotu jest normalnie przeliczane dopiero
-  // wewnątrz renderer.render() (w renderFrame()), które w pętli animate()
-  // wywołuje się PO contrails.emit(). Bez jawnego updateMatrixWorld() tutaj,
-  // getWorldPosition() czytałoby macierz sprzed jednej klatki obrotu —
-  // dokładnie to powodowało "odklejanie się" punktu emisji od kadłuba przy
-  // obrocie w osi Y (yaw). Wymuszamy świeżą macierz TU, zaraz po syncMesh().
+  // resztą sceny) danego silnika. W przypadku fan_L/fan_R używamy prawdziwej
+  // pozycji węzła w scenie, a w fallbackzie transformujemy offset lokalny przez
+  // pełną macierz świata samolotu. Dzięki temu punkty emisji pozostają stałe
+  // względem kadłuba niezależnie od orientacji (yaw/pitch/roll).
   _engineWorldPos(fanNode, localOffset, out) {
+    const e = this.entity;
+    e.mesh.updateMatrixWorld(true);
+
     if (fanNode) {
-      this.entity.mesh.updateMatrixWorld(true);
       return fanNode.getWorldPosition(out);
     }
-    const e = this.entity;
-    const noseDir   = e._noseDir   || new THREE.Vector3(Math.sin(e.yawRad || 0), 0, Math.cos(e.yawRad || 0));
-    const wingRight = e._wingRight || new THREE.Vector3(Math.cos(e.yawRad || 0), 0, -Math.sin(e.yawRad || 0));
-    const acUp      = e._acUp      || new THREE.Vector3(0, 1, 0);
 
-    this._tmpOffset.set(0, 0, 0)
-      .addScaledVector(wingRight, localOffset.x)
-      .addScaledVector(acUp, localOffset.y)
-      .addScaledVector(noseDir, localOffset.z);
-
-    // worldPos encji już zawiera skalowanie Y_SCALE*DEM_EXAG (geoToWorld) —
-    // offset lokalny w metrach realnych trzeba przeskalować tak samo w Y,
-    // żeby "opadanie" silnika pod kadłubem nie wyglądało na zbyt duże/małe.
-    const basePos = e.worldPos;
-    out.set(
-      basePos.x + this._tmpOffset.x,
-      basePos.y + this._tmpOffset.y * Y_SCALE * DEM_EXAG,
-      basePos.z - this._tmpOffset.z
-    );
-    return out;
+    this._tmpOffset.set(localOffset.x, localOffset.y, localOffset.z)
+      .applyMatrix4(e.mesh.matrixWorld);
+    return out.copy(this._tmpOffset);
   }
 
-  emit(clockTime) {
+  emit(clockTime, dt = 1 / 60) {
     if (!CONTRAIL_ALWAYS_ACTIVE) return;
-    const parts = this.entity._parts || {};
+
+    const e = this.entity;
+    const speedMps = e.airspeed ?? (e.vel ? e.vel.length() : 0);
+    const speedFactor = Math.max(0, Math.min(1, (speedMps - 8) / 80));
+    this._emitAccumulator += speedFactor * 32.0 * dt;
+    let count = Math.min(3, Math.floor(this._emitAccumulator));
+    this._emitAccumulator -= count;
+
+    if (count <= 0) return;
+
+    const parts = e._parts || {};
 
     const posL = this._engineWorldPos(parts.fanL, CONTRAIL_ENGINE_OFFSET_L, this._tmpWorld);
-    this.left.emit(posL, clockTime, 1);
+    this.left.emit(posL, clockTime, count);
 
     const posR = this._engineWorldPos(parts.fanR, CONTRAIL_ENGINE_OFFSET_R, new THREE.Vector3());
-    this.right.emit(posR, clockTime, 1);
+    this.right.emit(posR, clockTime, count);
 
     if (!this._dbgAcc) this._dbgAcc = 0;
     this._dbgAcc += 1;
