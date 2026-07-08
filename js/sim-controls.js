@@ -14,14 +14,32 @@ const cv = document.getElementById('c');
 // ── Klawiatura ────────────────────────────────────────────────────────────────
 const keys      = new Set();
 const planeKeys = {};
+let shiftPressed = false, ctrlPressed = false;
 
 window.addEventListener('keydown', e => {
+  shiftPressed = e.shiftKey;
+  ctrlPressed = e.ctrlKey;
+  
+  // Obsługa Shift/Ctrl dla FREE camera (mnożnik prędkości)
+  if (camMode === CameraMode.FREE) {
+    if (e.shiftKey) freeCamera.speedMult = 2.0;
+    if (e.ctrlKey) freeCamera.speedMult = 0.5;
+  }
+  
   const k = e.key.toLowerCase();
   if (['w','a','s','d','q','e'].includes(k)) keys.add(k);
   const PC = ['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','KeyW','KeyS','KeyQ','KeyE'];
   if (PC.includes(e.code)) { planeKeys[e.code] = true; e.preventDefault(); }
 });
 window.addEventListener('keyup', e => {
+  shiftPressed = e.shiftKey;
+  ctrlPressed = e.ctrlKey;
+  
+  // Reset mnożnika prędkości
+  if (camMode === CameraMode.FREE) {
+    freeCamera.speedMult = 1.0;
+  }
+  
   keys.delete(e.key.toLowerCase());
   planeKeys[e.code] = false;
   const p = activeEntity;

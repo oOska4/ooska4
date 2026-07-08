@@ -45,17 +45,21 @@ const cockpitLook   = { yaw: 0, pitch: 0 };
 const freeCamera = {
   pos: new THREE.Vector3(0, 50, 0),
   look: { yaw: 0, pitch: 0 },  // kierunek patrzenia w stopniach
-  speed: 50  // m/s ruchu
+  speed: 50,  // m/s ruchu
+  fov: 60,    // field of view (stopnie)
+  speedMult: 1.0  // mnożnik prędkości (Shift = 2x, Ctrl = 0.5x)
 };
 
 // ── CINEMATIC — patrzy na samolot z autozooma ────────────────────────────────
 const cinematicCamera = {
-  lat: SPAWN_LAT,
-  lon: SPAWN_LON,
+  offsetLat: 0,    // offset od samolotu w lat (stopnie)
+  offsetLon: 0,    // offset od samolotu w lon (stopnie)
   heightAbove: 150,  // wysokość nad samolotem (m)
   zoom: 1.0,  // 1.0 = auto, <1 = bliżej, >1 = dalej
   autoZoomEnabled: true,
-  targetDistance: 80  // idealna odległość do samolotu (m)
+  targetDistance: 80,  // idealna odległość do samolotu (m)
+  fov: 25,  // field of view dla cinematic (mały FOV = więcej zbliżenia)
+  autoFov: true  // czy automatycznie dostosowywać FOV do zoomu
 };
 
 // ── FLYBY — szybka projekcja wokół samolotu ─────────────────────────────────
@@ -80,14 +84,16 @@ const dollyCamera = {
 
 // ── TOWER — punkt obserwacyjny z góry ────────────────────────────────────────
 const towerCamera = {
-  lat: SPAWN_LAT,
-  lon: SPAWN_LON,
+  offsetLat: 0,    // offset od samolotu w lat (m / EARTH_RADIUS)
+  offsetLon: 0,    // offset od samolotu w lon (m / EARTH_RADIUS)
   height: 500,  // wysokość nad całą sceną
-  radius: 100,  // "szerokość" widoku
-  trackPlane: true  // czy śledzić samolot w poziomie
+  lookHeading: 0,  // kierunek, w którym patrzy (stopnie)
+  trackPlane: true,  // czy śledzić samolot w poziomie
+  lookDownPitch: -45  // kąt patrzenia w dół (stopnie)
 };
 
 let _cinematicZoomSmoothness = 0;  // wygładzenie zoomu cinematic
+let _freeCameraSpeedMult = 1.0;    // wygładzony mnożnik prędkości FREE
 
 function _shortestYawDeg(from, to) {
   return (((to - from) % 360) + 540) % 360 - 180;
@@ -106,6 +112,8 @@ function applyCamera(dt) {
 // ── ORBIT — jedyne miejsce gdzie kamera jest pozycjonowana w tym trybie ──────
 function _applyOrbitCamera(dt) {
   camera.up.set(0, 1, 0);
+  camera.fov = 60;  // Reset FOV na domyślny
+  camera.updateProjectionMatrix();
 
   if (!_orbitReady) { _orb.dist = orb.dist; _orbitReady = true; }
   _orb.dist += (orb.dist - _orb.dist) * Math.min(1, dt * 10);
@@ -135,6 +143,9 @@ function _applyOrbitCamera(dt) {
 
 // ── COCKPIT ──────────────────────────────────────────────────────────────────
 function _applyCockpitCamera() {
+  camera.fov = 60;  // Reset FOV na domyślny
+  camera.updateProjectionMatrix();
+  
   const e   = activeEntity;
   const pos = e.worldPos;
   const planeQ = new THREE.Quaternion().setFromEuler(
@@ -163,10 +174,16 @@ function _applyCockpitCamera() {
 function _applyFreeCamera(dt) {
   camera.up.set(0, 1, 0);
   
+  // Wygładź mnożnik prędkości (Shift/Ctrl)
+  _freeCameraSpeedMult += (freeCamera.speedMult - _freeCameraSpeedMult) * Math.min(1, dt * 5);
+  
   const yRad = Units.degToRad(freeCamera.look.yaw);
   const pRad = Units.degToRad(freeCamera.look.pitch);
   
   camera.position.copy(freeCamera.pos);
+  camera.fov = freeCamera.fov;
+  camera.updateProjectionMatrix();
+  
   camera.lookAt(
     freeCamera.pos.x + Math.cos(pRad) * Math.sin(yRad) * 100,
     freeCamera.pos.y + Math.sin(pRad) * 100,
@@ -178,7 +195,7 @@ function _applyFreeCamera(dt) {
 function moveFreeCameraForward(dt) {
   const yRad = Units.degToRad(freeCamera.look.yaw);
   const pRad = Units.degToRad(freeCamera.look.pitch);
-  const dist = freeCamera.speed * dt;
+  const dist = freeCamera.speed * _freeCameraSpeedMult * dt;
   freeCamera.pos.x += Math.cos(pRad) * Math.sin(yRad) * dist;
   freeCamera.pos.y += Math.sin(pRad) * dist;
   freeCamera.pos.z += Math.cos(pRad) * Math.cos(yRad) * dist;
@@ -190,7 +207,7 @@ function moveFreeCameraBackward(dt) {
 
 function moveFreeCameraLeft(dt) {
   const yRad = Units.degToRad(freeCamera.look.yaw + 90);
-  const dist = freeCamera.speed * dt;
+  const dist = freeCamera.speed * _freeCameraSpeedMult * dt;
   freeCamera.pos.x += Math.sin(yRad) * dist;
   freeCamera.pos.z += Math.cos(yRad) * dist;
 }
@@ -200,11 +217,11 @@ function moveFreeCameraRight(dt) {
 }
 
 function moveFreeCameraUp(dt) {
-  freeCamera.pos.y += freeCamera.speed * dt;
+  freeCamera.pos.y += freeCamera.speed * _freeCameraSpeedMult * dt;
 }
 
 function moveFreeCameraDown(dt) {
-  freeCamera.pos.y -= freeCamera.speed * dt;
+  freeCamera.pos.y -= freeCamera.speed * _freeCameraSpeedMult * dt;
 }
 
 function rotateFreeCameraYaw(deltaDeg) {
@@ -213,6 +230,18 @@ function rotateFreeCameraYaw(deltaDeg) {
 
 function rotateFreeCameraPitch(deltaDeg) {
   freeCamera.look.pitch = Math.max(-90, Math.min(90, freeCamera.look.pitch + deltaDeg));
+}
+
+function setFreeCameraSpeed(metersPerSecond) {
+  freeCamera.speed = Math.max(1, metersPerSecond);
+}
+
+function setFreeCameraFOV(fovDegrees) {
+  freeCamera.fov = Math.max(15, Math.min(120, fovDegrees));
+}
+
+function setFreeCameraSpeedMultiplier(mult) {
+  freeCamera.speedMult = Math.max(0.25, Math.min(4, mult));  // 0.25x do 4x
 }
 
 // ── CINEMATIC — patrzy na samolot z autozooma ────────────────────────────────
@@ -227,15 +256,14 @@ function _applyCinematicCamera(dt) {
   const e = activeEntity;
   const planePos = e.worldPos;
   
-  // Śledź pozycję samolotu (lat/lon)
-  cinematicCamera.lat = e.lat;
-  cinematicCamera.lon = e.lon;
-  
-  // Pozycja kamery: stała pozycja z odsetkiem wysokości
+  // Pozycja kamery: offsetowana od samolotu
   const cosRef = Math.cos(Units.degToRad(refLat));
-  const cx = (cinematicCamera.lon - refLon) * Math.PI / 180 * EARTH_RADIUS * cosRef;
+  const cameraPlaneLat = e.lat + cinematicCamera.offsetLat;
+  const cameraPlaneLon = e.lon + cinematicCamera.offsetLon;
+  
+  const cx = (cameraPlaneLon - refLon) * Math.PI / 180 * EARTH_RADIUS * cosRef;
   const cy = cinematicCamera.heightAbove;
-  const cz = -(cinematicCamera.lat - refLat) * Math.PI / 180 * EARTH_RADIUS;
+  const cz = -(cameraPlaneLat - refLat) * Math.PI / 180 * EARTH_RADIUS;
   
   // Auto-zoom: oblicz odległość do samolotu
   let distToPlane = Math.sqrt(
@@ -271,6 +299,17 @@ function _applyCinematicCamera(dt) {
   }
   
   camera.position.set(camX, camY, camZ);
+  
+  // Auto FOV: mniejszy FOV gdy jest bardziej zbliżona
+  if (cinematicCamera.autoFov) {
+    const fovRange = 25;  // min FOV
+    const fovMax = 60;    // max FOV
+    camera.fov = fovRange + (fovMax - fovRange) * _cinematicZoomSmoothness;
+  } else {
+    camera.fov = cinematicCamera.fov;
+  }
+  camera.updateProjectionMatrix();
+  
   camera.lookAt(planePos.x, planePos.y, planePos.z);
 }
 
@@ -283,13 +322,28 @@ function setCinematicHeightAbove(height) {
   cinematicCamera.heightAbove = Math.max(10, height);
 }
 
+function setCinematicOffset(offsetLat, offsetLon) {
+  cinematicCamera.offsetLat = offsetLat;
+  cinematicCamera.offsetLon = offsetLon;
+}
+
+function setCinematicFOV(fov) {
+  cinematicCamera.fov = Math.max(15, Math.min(90, fov));
+}
+
 function toggleCinematicAutoZoom() {
   cinematicCamera.autoZoomEnabled = !cinematicCamera.autoZoomEnabled;
+}
+
+function toggleCinematicAutoFOV() {
+  cinematicCamera.autoFov = !cinematicCamera.autoFov;
 }
 
 // ── FLYBY — szybka projekcja wokół samolotu ──────────────────────────────────
 function _applyFlybyCamera(dt) {
   camera.up.set(0, 1, 0);
+  camera.fov = 60;  // Reset FOV na domyślny
+  camera.updateProjectionMatrix();
   
   if (!activeEntity) {
     _applyOrbitCamera(dt);
@@ -332,6 +386,8 @@ function setFlybyRadius(meters) {
 // ── DOLLY — kamera na torze wokół samolotu ──────────────────────────────────
 function _applyDollyCamera(dt) {
   camera.up.set(0, 1, 0);
+  camera.fov = 60;  // Reset FOV na domyślny
+  camera.updateProjectionMatrix();
   
   if (!activeEntity) {
     _applyOrbitCamera(dt);
@@ -382,31 +438,72 @@ function toggleDollyAutoZoom() {
 // ── TOWER — punkt obserwacyjny z góry ────────────────────────────────────────
 function _applyTowerCamera(dt) {
   camera.up.set(0, 1, 0);
+  camera.fov = 60;  // Reset FOV na domyślny
+  camera.updateProjectionMatrix();
   
   let cx, cy, cz;
+  let lookX, lookY, lookZ;
   
   if (towerCamera.trackPlane && activeEntity) {
-    // Śledź samolot w poziomie, ale zostań wysoko
+    // Śledź samolot w poziomie + offset
     const e = activeEntity;
-    cx = e.worldPos.x;
+    const cosRef = Math.cos(Units.degToRad(refLat));
+    
+    // Pozycja kamery z offsetem od samolotu
+    const offsetLatRad = Units.degToRad(towerCamera.offsetLat / 111320); // 1 stopień ≈ 111.32 km
+    const offsetLonRad = Units.degToRad(towerCamera.offsetLon / (111320 * cosRef));
+    
+    const camLat = e.lat + (offsetLatRad * 180 / Math.PI);
+    const camLon = e.lon + (offsetLonRad * 180 / Math.PI);
+    
+    cx = (camLon - refLon) * Math.PI / 180 * EARTH_RADIUS * cosRef;
     cy = towerCamera.height;
-    cz = e.worldPos.z;
+    cz = -(camLat - refLat) * Math.PI / 180 * EARTH_RADIUS;
+    
+    // Patrz na samolot
+    lookX = e.worldPos.x;
+    lookY = e.worldPos.y;
+    lookZ = e.worldPos.z;
   } else {
     // Stała pozycja wieży obserwacyjnej
     const cosRef = Math.cos(Units.degToRad(refLat));
-    cx = (towerCamera.lon - refLon) * Math.PI / 180 * EARTH_RADIUS * cosRef;
+    const offsetLatRad = Units.degToRad(towerCamera.offsetLat / 111320);
+    const offsetLonRad = Units.degToRad(towerCamera.offsetLon / (111320 * cosRef));
+    
+    const towerLat = SPAWN_LAT + (offsetLatRad * 180 / Math.PI);
+    const towerLon = SPAWN_LON + (offsetLonRad * 180 / Math.PI);
+    
+    cx = (towerLon - refLon) * Math.PI / 180 * EARTH_RADIUS * cosRef;
     cy = towerCamera.height;
-    cz = -(towerCamera.lat - refLat) * Math.PI / 180 * EARTH_RADIUS;
+    cz = -(towerLat - refLat) * Math.PI / 180 * EARTH_RADIUS;
+    
+    // Patrz w kierunku lookHeading i w dół
+    const headingRad = Units.degToRad(towerCamera.lookHeading);
+    const pitchRad = Units.degToRad(towerCamera.lookDownPitch);
+    lookX = cx + Math.sin(headingRad) * 500;
+    lookY = cy + Math.tan(pitchRad) * 500;
+    lookZ = cz + Math.cos(headingRad) * 500;
   }
   
   camera.position.set(cx, cy, cz);
-  
-  // Patrz na szerszą obszar
-  camera.lookAt(cx, 0, cz + towerCamera.radius * 0.3);
+  camera.lookAt(lookX, lookY, lookZ);
 }
 
 function setTowerHeight(meters) {
   towerCamera.height = Math.max(100, meters);
+}
+
+function setTowerOffset(offsetLat, offsetLon) {
+  towerCamera.offsetLat = offsetLat;
+  towerCamera.offsetLon = offsetLon;
+}
+
+function setTowerLookDirection(headingDeg) {
+  towerCamera.lookHeading = headingDeg % 360;
+}
+
+function setTowerLookPitch(pitchDeg) {
+  towerCamera.lookDownPitch = Math.max(-90, Math.min(0, pitchDeg));
 }
 
 function toggleTowerTracking() {
@@ -447,14 +544,14 @@ function _onCamModeChange() {
   }
   
   if (camMode === CameraMode.CINEMATIC) {
-    if (activeEntity) {
-      cinematicCamera.lat = activeEntity.lat;
-      cinematicCamera.lon = activeEntity.lon;
-      cinematicCamera.heightAbove = 150;
-      cinematicCamera.zoom = 1.0;
-      cinematicCamera.autoZoomEnabled = true;
-      _cinematicZoomSmoothness = 0;
-    }
+    cinematicCamera.offsetLat = 0;
+    cinematicCamera.offsetLon = 0;
+    cinematicCamera.heightAbove = 150;
+    cinematicCamera.zoom = 1.0;
+    cinematicCamera.fov = 25;
+    cinematicCamera.autoZoomEnabled = true;
+    cinematicCamera.autoFov = true;
+    _cinematicZoomSmoothness = 0;
   }
   
   if (camMode === CameraMode.FLYBY) {
@@ -475,11 +572,11 @@ function _onCamModeChange() {
   }
   
   if (camMode === CameraMode.TOWER) {
-    if (activeEntity) {
-      towerCamera.lat = activeEntity.lat;
-      towerCamera.lon = activeEntity.lon;
-    }
+    towerCamera.offsetLat = 0;
+    towerCamera.offsetLon = 0;
     towerCamera.height = 500;
+    towerCamera.lookHeading = 0;
+    towerCamera.lookDownPitch = -45;
     towerCamera.trackPlane = true;
   }
   

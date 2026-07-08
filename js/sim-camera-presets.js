@@ -96,8 +96,108 @@ const CameraPresets = {
       console.log('📹 Preset: Eagle View (1200m altitude)');
     },
     duration: 8000
+  },
+
+  // CINEMATIC z boku (offset)
+  cinematic_side: {
+    setup() {
+      setCameraMode(CameraMode.CINEMATIC);
+      setCinematicOffset(0, 0.005);  // offset w prawo
+      setCinematicTargetDistance(100);
+      setCinematicHeightAbove(120);
+      console.log('📹 Preset: Cinematic Side View (offset boczny)');
+    },
+    duration: 6000
+  },
+
+  // TOWER z przodu lotniska
+  tower_runway: {
+    setup() {
+      setCameraMode(CameraMode.TOWER);
+      setTowerOffset(500, 0);  // offset 500m z przodu
+      setTowerHeight(400);
+      setTowerLookPitch(-30);
+      console.log('📹 Preset: Tower Runway (front view)');
+    },
+    duration: 7000
+  },
+
+  // FREE camera custom flight
+  free_cinematic: {
+    setup() {
+      setCameraMode(CameraMode.FREE);
+      freeCamera.pos.set(0, 80, -200);
+      freeCamera.look.yaw = 0;
+      freeCamera.look.pitch = 5;
+      freeCamera.fov = 35;
+      console.log('📹 Preset: Free Cinematic Custom');
+    },
+    duration: 0  // nie ma limitu czasu
   }
 };
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// DOKUMENTACJA NOWYCH FUNKCJI
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * CINEMATIC Camera - Sterowanie Pozycją i Zoomem:
+ * 
+ * setCinematicOffset(lat, lon)      - Offset pozycji kamery od samolotu (lat/lon)
+ * setCinematicTargetDistance(dist)  - Idealna odległość dla autozooma
+ * setCinematicHeightAbove(height)   - Wysokość kamery nad samolotem
+ * setCinematicFOV(fov)              - Ustaw FOV (domyślnie 25°)
+ * toggleCinematicAutoZoom()         - On/Off autozooma
+ * toggleCinematicAutoFOV()          - On/Off automatycznego FOV (dostosowanie do zoomu)
+ * 
+ * Przykład: Cinematic z boku i bardzo bliskim zoomem
+ * setCinematicOffset(0, 0.01);      // Daleko z boku
+ * setCinematicTargetDistance(50);   // Bliski zoom
+ * setCinematicHeightAbove(80);      // Niżej
+ */
+
+/**
+ * FREE Camera - Ulepszone Sterowanie:
+ * 
+ * W grze:
+ * - W/A/S/D      - Ruch do przodu/lewo/tył/prawo
+ * - Q/E          - Ruch w dół/góra
+ * - Mysz LPM     - Obrót kamery (yaw/pitch)
+ * - Mysz PPM     - Przesunięcie boczne/pionowe
+ * - Shift        - 2x szybciej
+ * - Ctrl         - 0.5x wolniej
+ * - Scroll       - Zmiana FOV
+ * 
+ * Z konsoli:
+ * setFreeCameraSpeed(100)           - Zmiana prędkości (m/s)
+ * setFreeCameraFOV(45)              - Zmiana FOV
+ * setFreeCameraSpeedMultiplier(2)   - Mnożnik prędkości
+ */
+
+/**
+ * TOWER Camera - Obserwacja z Wysokości:
+ * 
+ * setTowerHeight(meters)            - Wysokość kamery
+ * setTowerOffset(lat, lon)          - Offset pozycji od spawnu/samolotu
+ * setTowerLookDirection(heading)    - Kierunek, w którym patrzy (stopnie)
+ * setTowerLookPitch(pitch)          - Kąt patrzenia w dół (-90 do 0)
+ * toggleTowerTracking()             - Śledź samolot w poziomie (on/off)
+ * 
+ * Przykład: Wieża obserwacyjna z przodu lotniska
+ * setTowerOffset(500, 0);           // 500m z przodu
+ * setTowerHeight(300);              // 300m wysoko
+ * setTowerLookPitch(-30);           // Patrz 30° w dół
+ */
+
+/**
+ * Zmienne Globalne dla Sterowania w Konsoli:
+ * 
+ * freeCamera.speed = 50;            // Prędkość FREE camera
+ * freeCamera.fov = 60;              // FOV FREE camera
+ * cinematicCamera.fov = 25;         // FOV CINEMATIC camera
+ * towerCamera.height = 500;         // Wysokość TOWER camera
+ */
+
 
 // Globalny scheduler dla sekwencji
 let _sequenceRunning = false;
