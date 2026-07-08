@@ -1082,7 +1082,7 @@ class A321Entity extends Entity {
           _shadowWorldVec.z + lightDir.z * travel
         );
         const geo = worldToGeo(_shadowHitVec);
-        groundY = terrainHeightBest(geo.lat, geo.lon) * Y_SCALE;
+        groundY = terrainHeightBest(geo.lat, geo.lon) * DEM_EXAG * Y_SCALE;
       }
       _shadowLastGroundY = groundY;
 
