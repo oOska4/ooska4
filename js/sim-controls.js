@@ -31,6 +31,13 @@ window.addEventListener('keyup', e => {
     case 'KeyB': if (p) { p.spoilers = !p.spoilers; _syncSplrBtn(); } break;
     case 'KeyR': resetPlane(); break;
     case 'KeyC': cycleCameraMode(); break;
+    case 'Digit1': setCameraMode(CameraMode.ORBIT); break;
+    case 'Digit2': setCameraMode(CameraMode.COCKPIT); break;
+    case 'Digit3': setCameraMode(CameraMode.FREE); break;
+    case 'Digit4': setCameraMode(CameraMode.CINEMATIC); break;
+    case 'Digit5': setCameraMode(CameraMode.FLYBY); break;
+    case 'Digit6': setCameraMode(CameraMode.DOLLY); break;
+    case 'Digit7': setCameraMode(CameraMode.TOWER); break;
   }
 });
 
@@ -53,6 +60,9 @@ window.addEventListener('mousemove', e => {
     } else if (camMode === CameraMode.COCKPIT) {
       cockpitLook.yaw   = Math.max(-2.6, Math.min(2.6, cockpitLook.yaw   - dx * 0.006));
       cockpitLook.pitch = Math.max(-1.3, Math.min(1.3, cockpitLook.pitch + dy * 0.004));
+    } else if (camMode === CameraMode.FREE) {
+      rotateFreeCameraYaw(-dx * 0.3);
+      rotateFreeCameraPitch(dy * 0.25);
     }
   }
   if (rDown && camMode === CameraMode.ORBIT) {
@@ -61,29 +71,53 @@ window.addEventListener('mousemove', e => {
     const yr  = Units.degToRad(orb.yaw);
     orb.lon += (Math.sin(yr) * dy - Math.cos(yr) * dx) * spd / cosRef;
     orb.lat += (Math.cos(yr) * dy + Math.sin(yr) * dx) * spd;
+  } else if (rDown && camMode === CameraMode.FREE) {
+    moveFreeCameraLeft(-dx * 0.15);
+    moveFreeCameraUp(-dy * 0.15);
   }
 });
 cv.addEventListener('wheel', e => {
-  if (camMode === CameraMode.ORBIT)
+  if (camMode === CameraMode.ORBIT) {
     orb.dist = Math.max(30, Math.min(900_000, orb.dist * (1 + e.deltaY * 0.001)));
+  } else if (camMode === CameraMode.CINEMATIC) {
+    setCinematicTargetDistance(cinematicCamera.targetDistance * (1 + e.deltaY * 0.002));
+  } else if (camMode === CameraMode.FLYBY) {
+    setFlybyRadius(flybyCamera.orbitRadius * (1 + e.deltaY * 0.0015));
+  } else if (camMode === CameraMode.DOLLY) {
+    setDollyRadius(dollyCamera.orbitRadius * (1 + e.deltaY * 0.0015));
+  } else if (camMode === CameraMode.TOWER) {
+    setTowerHeight(towerCamera.height * (1 + e.deltaY * 0.002));
+  }
   e.preventDefault();
 }, { passive: false });
 cv.addEventListener('contextmenu', e => e.preventDefault());
 
-// ── Desktop: klawiatura orbit ─────────────────────────────────────────────────
+// ── Desktop: klawiatura orbit i FREE camera ────────────────────────────────
 function updateOrbitKeyboard(dt) {
-  if (camMode !== CameraMode.ORBIT) return;
-  const fwd = (keys.has('s')?1:0) - (keys.has('w')?1:0);
-  const str = (keys.has('a')?1:0) - (keys.has('d')?1:0);
-  const clb = (keys.has('e')?1:0) - (keys.has('q')?1:0);
-  if (!fwd && !str && !clb) return;
-  const cosRef = Math.cos(Units.degToRad(refLat));
-  const yr  = Units.degToRad(orb.yaw);
-  const hm  = Math.max(50, orb.dist * 0.0015) * WASD_SPEED * dt;
-  const vm  = Math.max(50, orb.dist * 0.0015) * QE_SPEED   * dt;
-  orb.lon += ((fwd*Math.sin(yr)+str*Math.cos(yr))*hm/(EARTH_RADIUS*cosRef))*180/Math.PI;
-  orb.lat += ((fwd*Math.cos(yr)-str*Math.sin(yr))*hm/EARTH_RADIUS)         *180/Math.PI;
-  orb.y   +=  clb * vm;
+  if (camMode === CameraMode.ORBIT) {
+    const fwd = (keys.has('s')?1:0) - (keys.has('w')?1:0);
+    const str = (keys.has('a')?1:0) - (keys.has('d')?1:0);
+    const clb = (keys.has('e')?1:0) - (keys.has('q')?1:0);
+    if (!fwd && !str && !clb) return;
+    const cosRef = Math.cos(Units.degToRad(refLat));
+    const yr  = Units.degToRad(orb.yaw);
+    const hm  = Math.max(50, orb.dist * 0.0015) * WASD_SPEED * dt;
+    const vm  = Math.max(50, orb.dist * 0.0015) * QE_SPEED   * dt;
+    orb.lon += ((fwd*Math.sin(yr)+str*Math.cos(yr))*hm/(EARTH_RADIUS*cosRef))*180/Math.PI;
+    orb.lat += ((fwd*Math.cos(yr)-str*Math.sin(yr))*hm/EARTH_RADIUS)         *180/Math.PI;
+    orb.y   +=  clb * vm;
+  } else if (camMode === CameraMode.FREE) {
+    const fwd = (keys.has('w')?1:0) - (keys.has('s')?1:0);
+    const str = (keys.has('a')?1:0) - (keys.has('d')?1:0);
+    const clb = (keys.has('e')?1:0) - (keys.has('q')?1:0);
+    if (!fwd && !str && !clb) return;
+    if (fwd > 0) moveFreeCameraForward(dt);
+    if (fwd < 0) moveFreeCameraBackward(dt);
+    if (str < 0) moveFreeCameraLeft(dt);
+    if (str > 0) moveFreeCameraRight(dt);
+    if (clb > 0) moveFreeCameraUp(dt);
+    if (clb < 0) moveFreeCameraDown(dt);
+  }
 }
 
 // stubs żeby sim-main.js się nie poskarżył
@@ -128,6 +162,12 @@ cv.addEventListener('touchmove', e => {
     if (cur&&old){
       cockpitLook.yaw  =Math.max(-2.6,Math.min(2.6,cockpitLook.yaw  -(cur.x-old.x)*0.006));
       cockpitLook.pitch=Math.max(-1.3,Math.min(1.3,cockpitLook.pitch+(cur.y-old.y)*0.004));
+    }
+  } else if (camMode===CameraMode.FREE&&cvT.size===1) {
+    const id=cvT.keys().next().value,cur=cvT.get(id),old=prev.get(id);
+    if (cur&&old){
+      rotateFreeCameraYaw(-(cur.x-old.x)*0.35);
+      rotateFreeCameraPitch((cur.y-old.y)*0.25);
     }
   }
 }, { passive: true });
@@ -304,6 +344,14 @@ _btn('mpop-map',  () => {
 //  updatePlaneInput
 // ═══════════════════════════════════════════════════════════════════════════════
 function updatePlaneInput() {
+  // W FREE camera mode, nie sterujemy samolotem za pomocą WASD
+  if (camMode === CameraMode.FREE) {
+    planeInput.pitch=0; planeInput.roll=0; planeInput.yaw=0;
+    planeInput.throttleUp=false; planeInput.throttleDown=false;
+    planeInput.brakes=false;
+    return;
+  }
+
   let pitch = (planeKeys['ArrowUp']?1:0)    - (planeKeys['ArrowDown']?1:0);
   let roll  = (planeKeys['ArrowRight']?1:0) - (planeKeys['ArrowLeft']?1:0);
   if (_isMobile() && flyId>=0) { pitch=-flyDelta.y; roll=flyDelta.x; }

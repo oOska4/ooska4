@@ -244,3 +244,51 @@ function updateHUD() {
   else if (vs_fpm < -800) hudEl.vs.classList.add('warn');
   else if (vs_fpm > 100) hudEl.vs.classList.add('green');
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// CAMERA BUTTONS — Obsługa przycisków przełączania kamer (1-7)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function _updateCameraButtonStates() {
+  const btnMap = {
+    'cam-orbit': CameraMode.ORBIT,
+    'cam-cockpit': CameraMode.COCKPIT,
+    'cam-free': CameraMode.FREE,
+    'cam-cinematic': CameraMode.CINEMATIC,
+    'cam-flyby': CameraMode.FLYBY,
+    'cam-dolly': CameraMode.DOLLY,
+    'cam-tower': CameraMode.TOWER,
+  };
+  
+  Object.entries(btnMap).forEach(([btnId, mode]) => {
+    const btn = document.getElementById(btnId);
+    if (btn) btn.classList.toggle('active', camMode === mode);
+  });
+}
+
+// Inicjalizacja przycisków kamer
+(function initCameraButtons() {
+  const btnMap = {
+    'cam-orbit': CameraMode.ORBIT,
+    'cam-cockpit': CameraMode.COCKPIT,
+    'cam-free': CameraMode.FREE,
+    'cam-cinematic': CameraMode.CINEMATIC,
+    'cam-flyby': CameraMode.FLYBY,
+    'cam-dolly': CameraMode.DOLLY,
+    'cam-tower': CameraMode.TOWER,
+  };
+  
+  Object.entries(btnMap).forEach(([btnId, mode]) => {
+    const btn = document.getElementById(btnId);
+    if (btn) {
+      btn.addEventListener('click', () => setCameraMode(mode));
+    }
+  });
+})();
+
+// Uaktualnij stany przycisków po każdej zmianie kamery
+const _originalSetCameraMode = setCameraMode;
+window.setCameraMode = function(mode) {
+  _originalSetCameraMode(mode);
+  _updateCameraButtonStates();
+};
