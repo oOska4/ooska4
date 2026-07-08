@@ -200,6 +200,78 @@ const GEAR_MARKER_COLORS = {
   right: 0xff3355, // czerwony — prawe główne koło
 };
 
+// ── Prawdziwy cień 3D samolotu (rzut sylwetki na teren wzdłuż Słońca) ─────────
+//
+// Zamiast płaskiego sprite'a/tekstury, kształt cienia jest liczony NAPRAWDĘ co
+// klatkę: definiujemy obrys samolotu (kadłub, skrzydła, statecznik pionowy i
+// poziomy) jako punkty w LOKALNYM układzie samolotu (ten sam układ co
+// GEAR_NOSE/LEFT/RIGHT: +X = prawe skrzydło, +Y = góra, +Z = dziób), wyskalowane
+// wprost z A321_PARAMS (rozpiętość/długość), więc kształt zawsze pasuje do
+// reszty fizyki. Co klatkę te punkty są:
+//   1) obracane pełną orientacją samolotu (yaw/pitch/roll — ta sama macierz co
+//      mesh, patrz syncMesh()),
+//   2) przesuwane do pozycji świata samolotu,
+//   3) rzutowane na teren WZDŁUŻ kierunku promieni słonecznych (a nie po prostu
+//      pionowo w dół) — z kilkoma iteracjami dopasowania do wysokości terenu w
+//      punkcie trafienia, bo teren nie jest płaski.
+// Wynikowe punkty budują prawdziwą siatkę trójkątów (BufferGeometry), aktualizowaną
+// co klatkę — kształt cienia realnie zmienia się z pitch/roll/heading samolotu
+// i z kątem Słońca, dokładnie jak w rzeczywistości.
+
+const SHADOW_HALF_SPAN   = A321_PARAMS.span / 2;      // rozpiętość skrzydeł / 2
+const SHADOW_FUSE_LEN    = 44.5;                       // długość kadłuba A321 (m), dziób→ogon
+const SHADOW_NOSE_Z      = GEAR_NOSE.z + 2.2;          // czubek dzioba lekko przed kołem przednim
+const SHADOW_TAIL_Z      = SHADOW_NOSE_Z - SHADOW_FUSE_LEN;
+const SHADOW_WING_Z      = GEAR_LEFT.z + 1.0;          // krawędź natarcia skrzydła ~przy kołach głównych
+const SHADOW_WING_TIP_Z  = SHADOW_WING_Z - 6.0;        // skrzydła lekko skośne do tyłu
+const SHADOW_TAILPLANE_Z = SHADOW_TAIL_Z + 4.5;        // statecznik poziomy blisko ogona
+const SHADOW_TAILPLANE_HALF_SPAN = SHADOW_HALF_SPAN * 0.34;
+const SHADOW_FIN_Z0       = SHADOW_TAIL_Z + 7.0;       // podstawa statecznika pionowego
+const SHADOW_FIN_Z1       = SHADOW_TAIL_Z + 1.5;       // szczyt statecznika (rzut na płaszczyznę = trochę do tyłu)
+const SHADOW_FIN_HALF_W   = 3.2;                       // "grubość" cienia statecznika pionowego w rzucie z góry
+const SHADOW_FUSE_HALF_W  = 2.2;                       // połowa szerokości kadłuba w rzucie z góry
+
+// Obrys samolotu w rzucie z góry (widok wzdłuż +Y, płaszczyzna X-Z), jako
+// zamknięty wielokąt (dziób → prawe skrzydło → prawy statecznik poziomy →
+// prawa strona statecznika pionowego → ogon → lewa strona statecznika
+// pionowego → lewy statecznik poziomy → lewe skrzydło → z powrotem do dziobu).
+// Każdy punkt: { x, z } w lokalnych metrach samolotu (y=0, dopasowywane później
+// przy rzutowaniu 3D → brane jest y=0, kadłub jest "płaski" na potrzeby cienia,
+// co jest wystarczająco dobrym przybliżeniem sylwetki widzianej z góry).
+const SHADOW_OUTLINE_LOCAL = [
+  { x: 0,                          z: SHADOW_NOSE_Z },
+  { x: SHADOW_FUSE_HALF_W,         z: SHADOW_NOSE_Z - 6 },
+  { x: SHADOW_FUSE_HALF_W,         z: SHADOW_WING_Z + 2 },
+  { x: SHADOW_HALF_SPAN,           z: SHADOW_WING_TIP_Z },
+  { x: SHADOW_FUSE_HALF_W,         z: SHADOW_WING_Z - 3 },
+  { x: SHADOW_FUSE_HALF_W * 0.85,  z: SHADOW_TAILPLANE_Z + 1 },
+  { x: SHADOW_TAILPLANE_HALF_SPAN, z: SHADOW_TAILPLANE_Z - 2.2 },
+  { x: SHADOW_FIN_HALF_W * 0.6,    z: SHADOW_TAILPLANE_Z - 2.8 },
+  { x: SHADOW_FIN_HALF_W,          z: SHADOW_TAIL_Z + 0.5 },
+  { x: 0,                          z: SHADOW_TAIL_Z },
+  { x: -SHADOW_FIN_HALF_W,         z: SHADOW_TAIL_Z + 0.5 },
+  { x: -SHADOW_FIN_HALF_W * 0.6,   z: SHADOW_TAILPLANE_Z - 2.8 },
+  { x: -SHADOW_TAILPLANE_HALF_SPAN,z: SHADOW_TAILPLANE_Z - 2.2 },
+  { x: -SHADOW_FUSE_HALF_W * 0.85, z: SHADOW_TAILPLANE_Z + 1 },
+  { x: -SHADOW_FUSE_HALF_W,        z: SHADOW_WING_Z - 3 },
+  { x: -SHADOW_HALF_SPAN,          z: SHADOW_WING_TIP_Z },
+  { x: -SHADOW_FUSE_HALF_W,        z: SHADOW_WING_Z + 2 },
+  { x: -SHADOW_FUSE_HALF_W,        z: SHADOW_NOSE_Z - 6 },
+];
+const SHADOW_OUTLINE_N = SHADOW_OUTLINE_LOCAL.length;
+
+// Triangulacja "fan" od centroidu — poprawna dla wypukłego/lekko wklęsłego
+// obrysu jak nasz (samolot w rzucie z góry nie ma głębokich wklęsłości poza
+// przewężeniem kadłub↔statecznik, które i tak jest łagodne), znacznie prostsza
+// niż ogólna triangulacja wielokąta i wystarczająca dla cienia.
+function _buildShadowFanIndices(n) {
+  const idx = [];
+  for (let i = 0; i < n; i++) {
+    idx.push(0, 1 + i, 1 + ((i + 1) % n));
+  }
+  return new Uint16Array(idx);
+}
+
 function groundEffectFactor(agl_m, span) {
   const h_b = Math.max(0, agl_m) / (span * 0.5);
   if (h_b >= 1.0) return 1.0;
@@ -261,6 +333,18 @@ const planeInput = {
   brakes: false,
 };
 
+// ── Bufory wielokrotnego użytku dla _updateShadow() ────────────────────────
+// Alokowane RAZ (nie co klatkę/punkt) — _updateShadow() liczy do 18 punktów co
+// klatkę, więc unikanie alokacji tu ma realne znaczenie dla GC/framerate.
+const _shadowLightDir  = new THREE.Vector3();
+const _shadowLocalVec  = new THREE.Vector3();
+const _shadowWorldVec  = new THREE.Vector3();
+const _shadowHitVec    = new THREE.Vector3();
+const _shadowEuler     = new THREE.Euler();
+const _shadowQuat      = new THREE.Quaternion();
+let   _shadowLastGroundY = 0;
+function _clamp01(v) { return v < 0 ? 0 : v > 1 ? 1 : v; }
+
 // ── Encja samolotu A321 ────────────────────────────────────────────────────────
 
 class A321Entity extends Entity {
@@ -306,19 +390,33 @@ class A321Entity extends Entity {
       scene.add(m);
       this._gearMarkers[k] = m;
     }
+    // Geometria cienia: N punktów obrysu + 1 centroid (indeks 0) — wypełniana
+    // NA NOWO co klatkę w renderUpdate() rzeczywistymi, przeliczonymi pozycjami
+    // świata (rzut na teren wzdłuż kierunku Słońca), więc tu tylko rezerwujemy
+    // bufor i indeksy — to NIE jest płaski placek/tekstura, tylko prawdziwa,
+    // co klatkę przeliczana siatka 3D w kształcie sylwetki samolotu.
+    const shadowGeo = new THREE.BufferGeometry();
+    const shadowPosArr = new Float32Array((SHADOW_OUTLINE_N + 1) * 3);
+    shadowGeo.setAttribute('position', new THREE.BufferAttribute(shadowPosArr, 3));
+    shadowGeo.setIndex(new THREE.BufferAttribute(_buildShadowFanIndices(SHADOW_OUTLINE_N), 1));
     this._shadow = new THREE.Mesh(
-      new THREE.PlaneGeometry(1, 1),
+      shadowGeo,
       new THREE.MeshBasicMaterial({
         color: 0x000000,
         transparent: true,
-        opacity: 0.28,
+        opacity: 0.45,
         depthWrite: false,
+        depthTest: true,
+        side: THREE.DoubleSide,
+        polygonOffset: true,
+        polygonOffsetFactor: -4,
+        polygonOffsetUnits: -4,
       })
     );
-    this._shadow.rotation.x = -Math.PI / 2;
     this._shadow.renderOrder = 998;
     this._shadow.frustumCulled = false;
     this._shadow.visible = false;
+    this._shadowPos = shadowPosArr;
     scene.add(this._shadow);
     // Stan odbicia sprężystego (patrz applyBounce()) — licznik krótkiego "cooldownu"
     // żeby jedno mocne uderzenie nie wywoływało kilku odbić pod rzędem w kolejnych
@@ -929,40 +1027,84 @@ class A321Entity extends Entity {
     if (p.elevatorL) p.elevatorL.rotation.x = elevDefl;
     if (p.rudder) p.rudder.rotation.y = this.yawRate * 2;
 
-    if (this._shadow) {
-      const planePos = this.worldPos;
-      const sunDir = typeof sunWorldDir !== 'undefined' && sunWorldDir ? sunWorldDir : null;
-      if (!sunDir || sunDir.y <= 0) {
-        this._shadow.visible = false;
-      } else {
-        const lightDir = new THREE.Vector3().copy(sunDir).negate().normalize();
-        const groundLatLon = worldToGeo(planePos);
-        const groundHeightM = terrainHeightBest(groundLatLon.lat, groundLatLon.lon);
-        const groundY = groundHeightM * Y_SCALE;
+    this._updateShadow();
+  }
 
-        const verticalDist = planePos.y - groundY;
-        const travel = verticalDist / Math.max(-lightDir.y, 0.05);
-        const shadowPos = new THREE.Vector3().copy(planePos).addScaledVector(lightDir, travel);
-
-        const shadowLatLon = worldToGeo(shadowPos);
-        const shadowGroundM = terrainHeightBest(shadowLatLon.lat, shadowLatLon.lon);
-        shadowPos.y = shadowGroundM * Y_SCALE + 0.06;
-
-        const elevation = Math.max(0.1, -lightDir.y);
-        const baseSpan = 36.0;
-        const baseLength = 40.0;
-        const elongation = 1.0 / elevation;
-        const width = baseSpan * (0.75 + 0.25 * elevation);
-        const length = baseLength * (0.8 + 0.6 * (elongation - 1));
-
-        const flatDir = new THREE.Vector3(lightDir.x, 0, lightDir.z).normalize();
-        const yRotation = Math.atan2(flatDir.x, flatDir.z);
-
-        this._shadow.position.copy(shadowPos);
-        this._shadow.rotation.y = yRotation;
-        this._shadow.scale.set(width, length, 1);
-        this._shadow.visible = true;
-      }
+  // Prawdziwy cień 3D: liczy pozycję KAŻDEGO punktu obrysu samolotu osobno
+  // (nie jednej figury sztywno przeskalowanej) — obraca obrys pełną orientacją
+  // samolotu, przesuwa do jego pozycji w świecie, a potem rzutuje każdy punkt
+  // na teren WZDŁUŻ kierunku promieni słonecznych (z doprecyzowaniem wysokości
+  // terenu w miejscu trafienia w kilku iteracjach, bo teren pod cieniem nie musi
+  // być płaski — np. na zboczu albo przy krawędzi pasa). Bez Słońca nad
+  // horyzontem (noc) cień jest po prostu ukryty.
+  _updateShadow() {
+    if (!this._shadow) return;
+    const sunDir = typeof sunWorldDir !== 'undefined' ? sunWorldDir : null;
+    if (!sunDir || sunDir.y <= 0.006) {
+      this._shadow.visible = false;
+      return;
     }
+
+    const planePos = this.worldPos;
+    // Kierunek W KTÓRYM PADAJĄ promienie (od Słońca w dół/na zewnątrz) —
+    // dokładnie przeciwny do wektora "do Słońca" używanego przez reszę sceny.
+    const lightDir = _shadowLightDir.copy(sunDir).negate().normalize();
+    const invLy = 1 / Math.max(-lightDir.y, 0.035); // ograniczone, żeby cień nie "uciekał" w nieskończoność tuż przy horyzoncie
+
+    // Ta sama macierz orientacji, której używa syncMesh() (kolejność 'YXZ':
+    // najpierw pitch wokół X, potem yaw wokół Y, na końcu roll wokół Z) — dzięki
+    // temu cień zawsze odpowiada RZECZYWISTEJ, aktualnej pozie samolotu.
+    _shadowEuler.set(-this.pitchRad, this.yawRad, this.rollRad, 'YXZ');
+    _shadowQuat.setFromEuler(_shadowEuler);
+
+    let cx = 0, cz = 0, cy = 0;
+
+    for (let i = 0; i < SHADOW_OUTLINE_N; i++) {
+      const local = SHADOW_OUTLINE_LOCAL[i];
+      _shadowLocalVec.set(local.x, 0, local.z).applyQuaternion(_shadowQuat);
+      _shadowWorldVec.set(
+        planePos.x + _shadowLocalVec.x,
+        planePos.y + _shadowLocalVec.y,
+        planePos.z + _shadowLocalVec.z
+      );
+
+      // Rzut wzdłuż promienia słonecznego na teren: zaczynamy od przybliżenia
+      // wysokością terenu z poprzedniej klatki, potem doprecyzowujemy 2x
+      // wysokością terenu FAKTYCZNIE pod punktem trafienia — wystarczająco
+      // dokładne dla cienia (rzędy metrów błędu przy stromym terenie znikają po
+      // 2 iteracjach), dużo tańsze niż prawdziwy raymarching przez DEM.
+      let groundY = _shadowLastGroundY;
+      for (let iter = 0; iter < 3; iter++) {
+        const travel = (_shadowWorldVec.y - groundY) * invLy;
+        _shadowHitVec.set(
+          _shadowWorldVec.x + lightDir.x * travel,
+          _shadowWorldVec.y + lightDir.y * travel,
+          _shadowWorldVec.z + lightDir.z * travel
+        );
+        const geo = worldToGeo(_shadowHitVec);
+        groundY = terrainHeightBest(geo.lat, geo.lon) * Y_SCALE;
+      }
+      _shadowLastGroundY = groundY;
+
+      const hitY = groundY + 0.05; // mały offset, żeby cień nie migotał (z-fighting) z terenem
+      this._shadowPos[(i + 1) * 3 + 0] = _shadowHitVec.x;
+      this._shadowPos[(i + 1) * 3 + 1] = hitY;
+      this._shadowPos[(i + 1) * 3 + 2] = _shadowHitVec.z;
+      cx += _shadowHitVec.x; cy += hitY; cz += _shadowHitVec.z;
+    }
+
+    // Centroid (indeks 0 w buforze) — środek triangulacji typu "fan".
+    this._shadowPos[0] = cx / SHADOW_OUTLINE_N;
+    this._shadowPos[1] = cy / SHADOW_OUTLINE_N;
+    this._shadowPos[2] = cz / SHADOW_OUTLINE_N;
+
+    this._shadow.geometry.attributes.position.needsUpdate = true;
+
+    // Słońce nisko nad horyzontem → kontakt cienia z ziemią jest w rzeczywistości
+    // słabszy/bardziej rozmyty — lekko przyciemniamy cień przy wysokim słońcu
+    // (ostry cień w południe) i rozjaśniamy przy niskim (słabszy o świcie/zmierzchu).
+    const sunElevFactor = _clamp01(sunDir.y / 0.5);
+    this._shadow.material.opacity = 0.20 + 0.30 * sunElevFactor;
+    this._shadow.visible = true;
   }
 }
