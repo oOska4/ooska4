@@ -200,70 +200,103 @@ const GEAR_MARKER_COLORS = {
   right: 0xff3355, // czerwony — prawe główne koło
 };
 
-// ── Prawdziwy cień 3D samolotu (rzut sylwetki na teren wzdłuż Słońca) ─────────
+// ── Prawdziwy cień 3D samolotu (rzut RZECZYWISTEJ geometrii modelu na teren
+//    wzdłuż kierunku Słońca) ────────────────────────────────────────────────
 //
-// Zamiast płaskiego sprite'a/tekstury, kształt cienia jest liczony NAPRAWDĘ co
-// klatkę: definiujemy obrys samolotu (kadłub, skrzydła, statecznik pionowy i
-// poziomy) jako punkty w LOKALNYM układzie samolotu (ten sam układ co
-// GEAR_NOSE/LEFT/RIGHT: +X = prawe skrzydło, +Y = góra, +Z = dziób), wyskalowane
-// wprost z A321_PARAMS (rozpiętość/długość), więc kształt zawsze pasuje do
-// reszty fizyki. Co klatkę te punkty są:
-//   1) obracane pełną orientacją samolotu (yaw/pitch/roll — ta sama macierz co
-//      mesh, patrz syncMesh()),
-//   2) przesuwane do pozycji świata samolotu,
-//   3) rzutowane na teren WZDŁUŻ kierunku promieni słonecznych (a nie po prostu
-//      pionowo w dół) — z kilkoma iteracjami dopasowania do wysokości terenu w
-//      punkcie trafienia, bo teren nie jest płaski.
-// Wynikowe punkty budują prawdziwą siatkę trójkątów (BufferGeometry), aktualizowaną
-// co klatkę — kształt cienia realnie zmienia się z pitch/roll/heading samolotu
-// i z kątem Słońca, dokładnie jak w rzeczywistości.
+// W przeciwieństwie do poprzedniej wersji (ręcznie narysowany, przybliżony
+// obrys), obrys cienia jest teraz wyliczony z PRAWDZIWYCH wierzchołków
+// wczytanego a321.obj: po wczytaniu modelu bierzemy WSZYSTKIE wierzchołki
+// wszystkich części (kadłub, skrzydła, statecznik — z wyłączeniem elementów
+// wewnętrznych typu cockpit_inside/interface, które i tak są w całości
+// wewnątrz bryły kadłuba i nie mogą poszerzyć sylwetki), rzutujemy je na
+// płaszczyznę X-Z (widok z góry, w LOKALNYM układzie samolotu — ten sam co
+// GEAR_NOSE/LEFT/RIGHT) i liczymy 2D convex hull (otoczkę wypukłą) tego rzutu.
+// To daje dokładny, prawdziwy kontur sylwetki samolotu z góry — bez
+// zgadywania wymiarów, i bez ryzyka samoprzecinających się trójkątów (hull
+// jest z definicji wypukły, więc triangulacja "fan" od centroidu zawsze
+// wychodzi poprawnie, inaczej niż przy ręcznie rysowanym, nie do końca
+// wypukłym obrysie).
+//
+// Liczenie hull z ~35 tys. wierzchołków trwa rzędu kilkudziesięciu
+// milisekund — WYKONYWANE WYŁĄCZNIE RAZ, zaraz po wczytaniu modelu (patrz
+// .then() w konstruktorze), NIE co klatkę. Co klatkę (_updateShadow) używamy
+// już tylko tego gotowego, małego zestawu punktów obrysu (typowo kilkanaście-
+// kilkadziesiąt), dokładnie tak jak poprzednio dla ręcznego obrysu.
 
-const SHADOW_HALF_SPAN   = A321_PARAMS.span / 2;      // rozpiętość skrzydeł / 2
-const SHADOW_FUSE_LEN    = 44.5;                       // długość kadłuba A321 (m), dziób→ogon
-const SHADOW_NOSE_Z      = GEAR_NOSE.z + 2.2;          // czubek dzioba lekko przed kołem przednim
-const SHADOW_TAIL_Z      = SHADOW_NOSE_Z - SHADOW_FUSE_LEN;
-const SHADOW_WING_Z      = GEAR_LEFT.z + 1.0;          // krawędź natarcia skrzydła ~przy kołach głównych
-const SHADOW_WING_TIP_Z  = SHADOW_WING_Z - 6.0;        // skrzydła lekko skośne do tyłu
-const SHADOW_TAILPLANE_Z = SHADOW_TAIL_Z + 4.5;        // statecznik poziomy blisko ogona
-const SHADOW_TAILPLANE_HALF_SPAN = SHADOW_HALF_SPAN * 0.34;
-const SHADOW_FIN_Z0       = SHADOW_TAIL_Z + 7.0;       // podstawa statecznika pionowego
-const SHADOW_FIN_Z1       = SHADOW_TAIL_Z + 1.5;       // szczyt statecznika (rzut na płaszczyznę = trochę do tyłu)
-const SHADOW_FIN_HALF_W   = 3.2;                       // "grubość" cienia statecznika pionowego w rzucie z góry
-const SHADOW_FUSE_HALF_W  = 2.2;                       // połowa szerokości kadłuba w rzucie z góry
+// Nazwy części modelu POMIJANE przy liczeniu obrysu — elementy wnętrza
+// kokpitu leżą całkowicie wewnątrz bryły zewnętrznej kadłuba i tylko
+// spowalniałyby liczenie hull bez żadnego wpływu na wynik.
+const SHADOW_HULL_EXCLUDE_PREFIXES = ['cockpit_inside', 'cockpit_interface'];
 
-// Obrys samolotu w rzucie z góry (widok wzdłuż +Y, płaszczyzna X-Z), jako
-// zamknięty wielokąt (dziób → prawe skrzydło → prawy statecznik poziomy →
-// prawa strona statecznika pionowego → ogon → lewa strona statecznika
-// pionowego → lewy statecznik poziomy → lewe skrzydło → z powrotem do dziobu).
-// Każdy punkt: { x, z } w lokalnych metrach samolotu (y=0, dopasowywane później
-// przy rzutowaniu 3D → brane jest y=0, kadłub jest "płaski" na potrzeby cienia,
-// co jest wystarczająco dobrym przybliżeniem sylwetki widzianej z góry).
-const SHADOW_OUTLINE_LOCAL = [
-  { x: 0,                          z: SHADOW_NOSE_Z },
-  { x: SHADOW_FUSE_HALF_W,         z: SHADOW_NOSE_Z - 6 },
-  { x: SHADOW_FUSE_HALF_W,         z: SHADOW_WING_Z + 2 },
-  { x: SHADOW_HALF_SPAN,           z: SHADOW_WING_TIP_Z },
-  { x: SHADOW_FUSE_HALF_W,         z: SHADOW_WING_Z - 3 },
-  { x: SHADOW_FUSE_HALF_W * 0.85,  z: SHADOW_TAILPLANE_Z + 1 },
-  { x: SHADOW_TAILPLANE_HALF_SPAN, z: SHADOW_TAILPLANE_Z - 2.2 },
-  { x: SHADOW_FIN_HALF_W * 0.6,    z: SHADOW_TAILPLANE_Z - 2.8 },
-  { x: SHADOW_FIN_HALF_W,          z: SHADOW_TAIL_Z + 0.5 },
-  { x: 0,                          z: SHADOW_TAIL_Z },
-  { x: -SHADOW_FIN_HALF_W,         z: SHADOW_TAIL_Z + 0.5 },
-  { x: -SHADOW_FIN_HALF_W * 0.6,   z: SHADOW_TAILPLANE_Z - 2.8 },
-  { x: -SHADOW_TAILPLANE_HALF_SPAN,z: SHADOW_TAILPLANE_Z - 2.2 },
-  { x: -SHADOW_FUSE_HALF_W * 0.85, z: SHADOW_TAILPLANE_Z + 1 },
-  { x: -SHADOW_FUSE_HALF_W,        z: SHADOW_WING_Z - 3 },
-  { x: -SHADOW_HALF_SPAN,          z: SHADOW_WING_TIP_Z },
-  { x: -SHADOW_FUSE_HALF_W,        z: SHADOW_WING_Z + 2 },
-  { x: -SHADOW_FUSE_HALF_W,        z: SHADOW_NOSE_Z - 6 },
-];
-const SHADOW_OUTLINE_N = SHADOW_OUTLINE_LOCAL.length;
+// Andrew's monotone chain — 2D convex hull, O(n log n), zwraca punkty w
+// kolejności przeciwnej do ruchu wskazówek zegara (CCW), bez duplikatu
+// punktu początkowego na końcu.
+function _convexHull2D(points) {
+  const pts = points.slice().sort((a, b) => a.x - b.x || a.z - b.z);
+  const n = pts.length;
+  if (n < 3) return pts;
+  const cross = (o, a, b) => (a.x - o.x) * (b.z - o.z) - (a.z - o.z) * (b.x - o.x);
+  const lower = [];
+  for (const p of pts) {
+    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0) lower.pop();
+    lower.push(p);
+  }
+  const upper = [];
+  for (let i = n - 1; i >= 0; i--) {
+    const p = pts[i];
+    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0) upper.pop();
+    upper.push(p);
+  }
+  lower.pop(); upper.pop();
+  return lower.concat(upper);
+}
 
-// Triangulacja "fan" od centroidu — poprawna dla wypukłego/lekko wklęsłego
-// obrysu jak nasz (samolot w rzucie z góry nie ma głębokich wklęsłości poza
-// przewężeniem kadłub↔statecznik, które i tak jest łagodne), znacznie prostsza
-// niż ogólna triangulacja wielokąta i wystarczająca dla cienia.
+// Wyciąga WSZYSTKIE wierzchołki geometrii z modelu (a321.obj) PO zastosowaniu
+// jego własnej transformacji (rotation.y=A321_MODEL_ROT_Y, scale, translateY —
+// ustawione w konstruktorze PRZED wywołaniem tej funkcji), ale NIEZALEżNIE od
+// pozycji/orientacji całej encji w świecie (`grp`) — czyli dokładnie w tych
+// samych, lokalnych współrzędnych względem origin encji co GEAR_NOSE/LEFT/RIGHT.
+// Liczymy transformację KAŻDEGO node'a względem `model` ręcznie (idziemy w
+// górę łańcucha rodziców aż do `model` włącznie), a NIE przez
+// `node.matrixWorld` — to ostatnie włączyłoby też aktualną, zmienną w czasie
+// pozycję `grp` w świecie, której tu NIE chcemy (hull liczymy raz, niezależnie
+// od tego, gdzie samolot akurat lata). Rzutuje na płaszczyznę X-Z (widok z
+// góry) i liczy convex hull. Zwraca tablicę { x, z } gotową do użycia jako
+// obrys cienia.
+function computeShadowHullFromModel(model) {
+  const pts = [];
+  const v = new THREE.Vector3();
+  model.updateMatrix();
+  const modelMatrix = model.matrix;
+  model.traverse(node => {
+    if (!node.isMesh || !node.geometry || node === model) return;
+    if (SHADOW_HULL_EXCLUDE_PREFIXES.some(p => node.name.startsWith(p))) return;
+    const posAttr = node.geometry.attributes.position;
+    if (!posAttr) return;
+
+    // Łańcuch macierzy lokalnych od `model` (wyłącznie) do `node` włącznie.
+    const chain = [];
+    let cur = node;
+    while (cur && cur !== model) {
+      cur.updateMatrix();
+      chain.unshift(cur.matrix);
+      cur = cur.parent;
+    }
+    const full = modelMatrix.clone();
+    for (const m of chain) full.multiply(m);
+
+    for (let i = 0; i < posAttr.count; i++) {
+      v.fromBufferAttribute(posAttr, i).applyMatrix4(full);
+      pts.push({ x: v.x, z: v.z });
+    }
+  });
+  if (pts.length < 3) return null;
+  return _convexHull2D(pts);
+}
+
+// Triangulacja "fan" od centroidu — poprawna dla WYPUKŁEGO wielokąta (convex
+// hull jest z definicji wypukły, więc to zawsze daje poprawną, nieprzecinającą
+// się triangulację, w przeciwieństwie do ręcznie rysowanego obrysu wcześniej).
 function _buildShadowFanIndices(n) {
   const idx = [];
   for (let i = 0; i < n; i++) {
@@ -390,34 +423,15 @@ class A321Entity extends Entity {
       scene.add(m);
       this._gearMarkers[k] = m;
     }
-    // Geometria cienia: N punktów obrysu + 1 centroid (indeks 0) — wypełniana
-    // NA NOWO co klatkę w renderUpdate() rzeczywistymi, przeliczonymi pozycjami
-    // świata (rzut na teren wzdłuż kierunku Słońca), więc tu tylko rezerwujemy
-    // bufor i indeksy — to NIE jest płaski placek/tekstura, tylko prawdziwa,
-    // co klatkę przeliczana siatka 3D w kształcie sylwetki samolotu.
-    const shadowGeo = new THREE.BufferGeometry();
-    const shadowPosArr = new Float32Array((SHADOW_OUTLINE_N + 1) * 3);
-    shadowGeo.setAttribute('position', new THREE.BufferAttribute(shadowPosArr, 3));
-    shadowGeo.setIndex(new THREE.BufferAttribute(_buildShadowFanIndices(SHADOW_OUTLINE_N), 1));
-    this._shadow = new THREE.Mesh(
-      shadowGeo,
-      new THREE.MeshBasicMaterial({
-        color: 0x000000,
-        transparent: true,
-        opacity: 0.45,
-        depthWrite: false,
-        depthTest: true,
-        side: THREE.DoubleSide,
-        polygonOffset: true,
-        polygonOffsetFactor: -4,
-        polygonOffsetUnits: -4,
-      })
-    );
-    this._shadow.renderOrder = 998;
-    this._shadow.frustumCulled = false;
-    this._shadow.visible = false;
-    this._shadowPos = shadowPosArr;
-    scene.add(this._shadow);
+    // Cień 3D w kształcie PRAWDZIWEJ sylwetki modelu — nie możemy zbudować go
+    // TERAZ (model jeszcze się nie wczytał, a hull=obrys zależy od jego
+    // geometrii). Zbudujemy go leniwie, w .then() poniżej, zaraz po
+    // computeShadowHullFromModel(). Do tego czasu cień po prostu nie istnieje
+    // (nie jest jeszcze dodany do sceny) — to bezpieczne, bo _updateShadow()
+    // sprawdza `if (!this._shadow) return;` na starcie.
+    this._shadow = null;
+    this._shadowHull = null;
+    this._shadowPos = null;
     // Stan odbicia sprężystego (patrz applyBounce()) — licznik krótkiego "cooldownu"
     // żeby jedno mocne uderzenie nie wywoływało kilku odbić pod rzędem w kolejnych
     // klatkach, zanim samolot zdąży się realnie oddalić od terenu.
@@ -430,6 +444,42 @@ class A321Entity extends Entity {
       grp.add(model);
       this.modelLoaded = true;
       this.updateGearVisibility();
+
+      // Buduj cień z PRAWDZIWEJ geometrii modelu, TERAZ gdy model.matrix jest
+      // już ustawiona (rotation.y/scale/translateY wyżej) — patrz
+      // computeShadowHullFromModel(). Liczone WYŁĄCZNIE RAZ (koszt rzędu
+      // kilkudziesięciu ms dla ~35 tys. wierzchołków), NIE co klatkę.
+      const hull = computeShadowHullFromModel(model);
+      if (hull && hull.length >= 3) {
+        this._shadowHull = hull;
+        const n = hull.length;
+        const shadowGeo = new THREE.BufferGeometry();
+        const shadowPosArr = new Float32Array((n + 1) * 3);
+        shadowGeo.setAttribute('position', new THREE.BufferAttribute(shadowPosArr, 3));
+        shadowGeo.setIndex(new THREE.BufferAttribute(_buildShadowFanIndices(n), 1));
+        this._shadow = new THREE.Mesh(
+          shadowGeo,
+          new THREE.MeshBasicMaterial({
+            color: 0x000000,
+            transparent: true,
+            opacity: 0.45,
+            depthWrite: false,
+            depthTest: true,
+            side: THREE.DoubleSide,
+            polygonOffset: true,
+            polygonOffsetFactor: -4,
+            polygonOffsetUnits: -4,
+          })
+        );
+        this._shadow.renderOrder = 998;
+        this._shadow.frustumCulled = false;
+        this._shadow.visible = false;
+        this._shadowPos = shadowPosArr;
+        scene.add(this._shadow);
+      } else {
+        console.warn('[A321] Nie udało się policzyć obrysu cienia z geometrii modelu (za mało wierzchołków?) — cień będzie wyłączony.');
+      }
+
       // Wyszukaj animowane części RAZ — getObjectByName() przechodzi cały graf
       // sceny, więc robienie tego co klatkę (jak wcześniej w renderUpdate) jest
       // niepotrzebnym kosztem. Wynik cache'ujemy raz, po wczytaniu modelu.
@@ -1038,13 +1088,15 @@ class A321Entity extends Entity {
   // być płaski — np. na zboczu albo przy krawędzi pasa). Bez Słońca nad
   // horyzontem (noc) cień jest po prostu ukryty.
   _updateShadow() {
-    if (!this._shadow) return;
+    if (!this._shadow || !this._shadowHull) return;
     const sunDir = typeof sunWorldDir !== 'undefined' ? sunWorldDir : null;
     if (!sunDir || sunDir.y <= 0.006) {
       this._shadow.visible = false;
       return;
     }
 
+    const outline = this._shadowHull;
+    const n = outline.length;
     const planePos = this.worldPos;
     // Kierunek W KTÓRYM PADAJĄ promienie (od Słońca w dół/na zewnątrz) —
     // dokładnie przeciwny do wektora "do Słońca" używanego przez reszę sceny.
@@ -1059,8 +1111,8 @@ class A321Entity extends Entity {
 
     let cx = 0, cz = 0, cy = 0;
 
-    for (let i = 0; i < SHADOW_OUTLINE_N; i++) {
-      const local = SHADOW_OUTLINE_LOCAL[i];
+    for (let i = 0; i < n; i++) {
+      const local = outline[i];
       _shadowLocalVec.set(local.x, 0, local.z).applyQuaternion(_shadowQuat);
       _shadowWorldVec.set(
         planePos.x + _shadowLocalVec.x,
@@ -1094,9 +1146,9 @@ class A321Entity extends Entity {
     }
 
     // Centroid (indeks 0 w buforze) — środek triangulacji typu "fan".
-    this._shadowPos[0] = cx / SHADOW_OUTLINE_N;
-    this._shadowPos[1] = cy / SHADOW_OUTLINE_N;
-    this._shadowPos[2] = cz / SHADOW_OUTLINE_N;
+    this._shadowPos[0] = cx / n;
+    this._shadowPos[1] = cy / n;
+    this._shadowPos[2] = cz / n;
 
     this._shadow.geometry.attributes.position.needsUpdate = true;
 
