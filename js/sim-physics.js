@@ -13,7 +13,7 @@ const A321_MODEL_ROT_Y = Math.PI / 2;
 // Jeśli samolot będzie zbyt duży/mały względem terenu, zmień skalę (np. 0.01 jeśli model jest w cm).
 const A321_MODEL_SCALE = 0.25;
 // Jeśli samolot będzie przesunięty w górę/dół względem terenu, zmień przesunięcie (np. 0.01 jeśli model jest w cm).
-const A321_MODEL_TRANSLATE_Y = -3.75;
+const A321_MODEL_TRANSLATE_Y = -4.5;
 
 // Obiekty w a321.obj o nazwie zaczynającej się od tego prefiksu (gears_back_tires,
 // gears_covers, gears_front_tire, gears_holder_*) trafiają do wspólnej grupy
@@ -124,7 +124,14 @@ const A321_PARAMS = {
   cdGear:     0.060,
   groundRunThrustBoost: 2.20,
   groundRunDragScale:   0.30,
-  groundRunLiftScale:   0.80,
+  // NAPRAWA: poprzednio 0.80 sztucznie ODEJMOWAŁO 20% siły nośnej blisko
+  // ziemi — w rzeczywistości efekt przyziemny (ground effect) siłę nośną
+  // raczej lekko ZWIĘKSZA (redukcję oporu indukowanego blisko ziemi i tak już
+  // modeluje osobno groundEffectFactor()/cdi niżej). Ta kara powodowała, że
+  // samolot fizycznie nie mógł wygenerować dość siły nośnej do oderwania w
+  // pobliżu zamierzonego Vr — musiał jechać dużo szybciej niż powinien,
+  // cały czas "przyklejony" do limitu pitch (patrz GEAR_TAILSTRIKE_PITCH_LIMIT).
+  groundRunLiftScale:   1.0,
   spoilerCd:  0.30,
   spoilerLiftLoss: 0.35,
   V1: 69.4, VR: 74.7, V2: 79.8, Vstall: 62, VMO: 189,
@@ -149,12 +156,155 @@ const GEAR_MAIN_REST_OFFSET = -GEAR_LEFT.y;
 // Zawieszenie (amortyzacja goleni) — na razie WYŁĄCZNIE fizyczne (wpływa na
 // wysokość kadłuba), bez animacji ugięcia samej goleni/opony (to osobny,
 // wizualny krok na później). Każda goleń ma własny, niezależny stan "wgniecenia".
-const GEAR_SUSPENSION_TRAVEL   = 0.42; // maks. całkowite wgniecenie w ziemię (m)
-const GEAR_STATIC_SAG          = 0.05; // ugięcie w spoczynku pod ciężarem samolotu (m)
-const GEAR_IMPACT_SINK_PER_MS  = 0.08; // dodatkowe wgniecenie na 1 m/s prędkości pionowej przy dotknięciu
-const GEAR_IMPACT_MAIN_SINK_MULT = 1.35; // główne koła mogą ugiąć się jeszcze mocniej przy lądowaniu
-const GEAR_SINK_SETTLE_TAU     = 0.18; // stała czasowa powrotu wgniecenia do wartości spoczynkowej (s)
-const GEAR_ATTITUDE_SETTLE_TAU = 0.35; // stała czasowa "osiadania" pitch/roll na podwoziu (s) — łagodna, żeby nie "przyklejać" dziobu podczas rozbiegu przed VR
+const GEAR_SUSPENSION_TRAVEL   = 0.42; // maks. całkowite wgniecenie w ziemię (m) — od tego miejsca dochodzi dodatkowa sztywność "twardego zderzaka" (patrz GEAR_HARDSTOP_K_MULT)
+
+// ZMIANA ARCHITEKTURY: zawieszenie już NIE ma własnego, osobnego stanu
+// "wgniecenia" (dawne this.gearSink/gearSinkVel) — to była animacja BLENDOWANA
+// do wyniku, a nie prawdziwa siła. Teraz ugięcie to po prostu GEOMETRYCZNA
+// głębokość penetracji terenu przez faktyczną, aktualną pozycję/orientację
+// samolotu (pen z sampleGear()), a siła sprężysto-tłumiąca liczona z niej
+// WPROST (F = k·pen + c·prędkość_zagłębiania, patrz physicsUpdate) trafia do
+// sumy sił/momentów całej bryły sztywnej — tak jak w prawdziwym zawieszeniu:
+// to sama sprężyna, poprzez swoją siłę, decyduje jak samolot się zachowuje, a
+// nie osobna symulacja "na boku", której wynik potem doklejamy do pitch/roll.
+const GEAR_SUSP_OMEGA_MAIN     = 12.57; // rad/s — częstość własna zawieszenia głównego (~0.5s okresu, nietłumiony)
+const GEAR_SUSP_ZETA_MAIN      = 0.85;  // współczynnik tłumienia głównego (0.85 = mocno tłumiony, bez widocznego odbicia)
+const GEAR_SUSP_OMEGA_NOSE     = 15.0;  // rad/s — przednie koło nieco sztywniejsze/szybsze
+const GEAR_SUSP_ZETA_NOSE      = 0.9;
+// ── Bryła sztywna: masa, momenty bezwładności, geometria aerodynamiczna ────────
+//
+// KOMPLETNY REMAKE fizyki ziemia/rotacja/pitch: zamiast oddzielnych "sztucznych"
+// krzywych (elevatorAuthority, timer oderwania, blendowanie kąta do terenu,
+// zaciskający się limit pitch) samolot jest teraz PRAWDZIWĄ bryłą sztywną —
+// każda siła (skrzydło, usterzenie/ster wysokości, statecznik/ster kierunku,
+// ciąg, 3 punkty podwozia) jest przyłożona w swoim RZECZYWISTYM miejscu
+// względem środka masy (CG), co razem z ramieniem daje moment (τ = r×F). Suma
+// momentów / moment bezwładności = przyspieszenie kątowe (patrz physicsUpdate)
+// — samolot podrywa nos, bo ster wysokości FIZYCZNIE go podrywa, i odrywa się
+// od ziemi, bo siły w pionie FIZYCZNIE to robią, a nie bo jakiś timer/próg tak
+// zdecydował.
+//
+// Dokładne certyfikowane momenty bezwładności nie są publicznie dostępne —
+// liczymy je standardową metodą inżynierską "promienia żyracji" (radius of
+// gyration): I = masa × r_żyr², gdzie r_żyr to ułamek charakterystycznego
+// wymiaru samolotu (kadłub dla pitch/yaw, rozpiętość dla roll). To
+// przybliżenie, ale oparte na prawdziwej geometrii A321, nie na zgadywaniu.
+const A321_FUSELAGE_LEN = 44.5; // m
+const A321_IYY = A321_PARAMS.mass * (0.25 * A321_FUSELAGE_LEN) ** 2; // pitch, ok. 9.3M kg·m²
+const A321_IXX = A321_PARAMS.mass * (0.23 * A321_PARAMS.span) ** 2;  // roll,  ok. 5.1M kg·m²
+const A321_IZZ = A321_PARAMS.mass * (0.27 * A321_FUSELAGE_LEN) ** 2; // yaw,   ok. 12.2M kg·m² (obejmuje i długość, i rozstaw mas)
+
+// Gdzie faktycznie działają siły aerodynamiczne, w LOKALNYM układzie samolotu
+// (ten sam co GEAR_NOSE/LEFT/RIGHT: +X prawe skrzydło, +Y góra, +Z dziób). To
+// jest sedno "prawdziwej fizyki": ster wysokości nie "ustawia pitchRate"
+// bezpośrednio — wytwarza siłę W TYM miejscu, daleko za CG, i to WŁAŚNIE
+// ramię (TAIL_AC.z) zamienia tę siłę w moment obracający cały samolot.
+const WING_AC   = { x: 0, y: 0,   z: 0.4   }; // środek parcia skrzydła — bardzo blisko CG (było 1.2m — patrz NAPRAWA przy THRUST_PT, ten sam powod: zbyt duży moment pitch-up przy typowej sile nośnej ≈ciężarowi)
+const TAIL_AC   = { x: 0, y: 0.4, z: -17.5 }; // usterzenie poziome + ster wysokości — daleko za CG
+const FIN_AC    = { x: 0, y: 2.2, z: -17.0 }; // statecznik pionowy + ster kierunku — za CG, podniesiony (stąd sprzężenie z rollem)
+// NAPRAWA (zgłoszone: "samolot stale przechyla się do tyłu"): silnik pod CG
+// (THRUST_PT.y<0) daje moment pitch-up proporcjonalny do ciągu — realny
+// efekt ("power pitch coupling"), ale ramię 1.6m w połączeniu z 2.2× mnożnikiem
+// ciągu na ziemi (groundRunThrustBoost — czysto growplayowe wzmocnienie
+// przyspieszenia, NIE prawdziwy wzrost mocy silników) dawało moment zbliżający
+// się do granicy, jaką mogło skompensować przednie koło — przy większej
+// przepustnicy nos unosił się SAM, bez udziału pilota. Ramię zmniejszone, a
+// moment liczony teraz z NIEPODBITEGO ciągu (patrz physicsUpdate) — realne
+// "power pitch" zostaje, ale nie przytłacza już geometrii podwozia.
+const THRUST_PT = { x: 0, y: -0.4, z: 0    }; // silniki pod skrzydłami — poniżej CG (ramię zmniejszone z -1.6, patrz NAPRAWA wyżej)
+
+// Jak mocno wychylenie powierzchni sterowej wpływa na siłę aerodynamiczną —
+// prawdziwe (choć przybliżone) współczynniki aerodynamiczne, nie "krzywe
+// autorytetu" dopasowane pod konkretne odczucie sterowania.
+const ELEVATOR_MAX_RAD    = 0.35; // rad, ~20° maks. wychylenia steru wysokości
+const ELEVATOR_CL_PER_RAD = 3.0;  // dCL/dδe usterzenia poziomego
+const TAIL_AREA           = 31.0; // m² powierzchnia usterzenia poziomego
+// NAPRAWA (zgłoszone: "próbuję lecieć w dół, a samolot bardzo mocno chce
+// wrócić w górę — w powietrzu pitch nie powinien się prawie zmieniać sam"):
+// jeden wspólny TAIL_CL_ALPHA (3.3) był używany JEDNOCZEŚNIE do (a) siły
+// przywracającej kąt natarcia do wartowości trymu (statyczna stateczność —
+// to WŁAŚNIE to "samo wraca w górę") i (b) tłumienia PRĘDKOŚCI kątowej
+// pitch (przez człon z pitchRate w tailAlpha niżej). To DWIE różne rzeczy:
+// (a) to "sprężyna" ciągnąca kąt z powrotem do trymu (silny efekt =
+// realistyczne, ale tu niechciane "samoczynne" prostowanie pitch), a (b) to
+// "tłumik" gaszący oscylacje BEZ ciągnięcia do konkretnego kąta. Rozdzielone
+// na dwa niezależne współczynniki: STATIC drastycznie zmniejszony (słaba,
+// prawie neutralna stateczność — pchnięty w dół nos zostaje w dole zamiast
+// odbijać się z powrotem), RATE zostaje bez zmian (pełne tłumienie oscylacji,
+// plus PITCH_DAMPING_GAIN niżej — to nadal działa niezależnie od tej zmiany).
+// Zweryfikowane numerycznie: STATIC=0.7 daje ζ≈1.75 (przetłumiony, bez
+// oscylacji) i bardzo słabą, ale wciąż BEZPIECZNIE dodatnią (stabilną)
+// sztywność powrotu do trymu na każdej prędkości — poniżej ok. 0.3 układ
+// staje się niestabilny (nie zmniejszaj poniżej tej wartości bez ponownej
+// weryfikacji).
+const TAIL_CL_ALPHA_STATIC = 0.7;  // 1/rad — siła "powrotu do trymu" (świadomie słaba, patrz wyżej)
+const TAIL_CL_ALPHA_RATE   = 3.3;  // 1/rad — tłumienie prędkości pitch (jak wcześniej, bez zmian)
+
+const RUDDER_MAX_RAD    = 0.35;
+const RUDDER_CL_PER_RAD = 2.4;
+const FIN_AREA          = 21.0; // m²
+const FIN_CL_BETA       = 2.0;  // 1/rad — stateczność kierunkowa ("efekt chorągiewki")
+
+const AILERON_MAX_RAD    = 0.30;
+const AILERON_CL_PER_RAD = 0.09; // moment przechylający jako współczynnik bezwymiarowy (mnożony przez q·S·rozpiętość)
+const ROLL_DAMPING_GAIN  = 0.35; // tłumienie przechylenia (odpowiednik Clp)
+// Dodatkowe tłumienie pitch (odpowiednik Cmq spoza samego sprzężenia
+// kąt-natarcia-usterzenia-z-pitchRate, patrz tailAlpha niżej) — realne
+// samoloty mają więcej źródeł tłumienia pitch (kadłub, spóźnienie downwash,
+// same skrzydło), których nie modelujemy osobno. Bez tego członu układ był
+// wyraźnie niedotłumiony: zmierzone numerycznie ζ≈0.10 (stałe na każdej
+// prędkości) — oscylacje o okresie kilku-kilkunastu sekund gasnące bardzo
+// wolno, właśnie takie jak zgłoszone "dziwne oscylacje pitch". Wartość 1.0
+// podnosi ζ do ok. 0.5 (wygodne, zbliżone do typowych airlinierów) —
+// zweryfikowane numerycznie, stałe na każdej prędkości.
+const PITCH_DAMPING_GAIN = 1.0;
+const NOSEWHEEL_MAX_RAD  = 0.90; // maks. skręt przedniego koła (~50°) — skuteczność spada z prędkością, patrz groundSteerTrackFactor()
+
+// Podwozie: sztywność/tłumienie zawieszenia jako PRAWDZIWE siły sprężysto-
+// -tłumiące, liczone wprost z geometrycznej głębokości penetracji terenu przez
+// FAKTYCZNĄ pozycję/orientację bryły sztywnej (patrz komentarz przy
+// GEAR_SUSP_OMEGA_MAIN niżej). Klasyczna metoda projektowania zawieszeń
+// "quarter-car": k = m_narożnika·ω², c = 2ζω·m_narożnika, gdzie "masa
+// narożnika" to udział masy samolotu przypadający na daną goleń.
+const GEAR_LOAD_SHARE_NOSE = 0.08; // typowy udział przedniego koła w ciężarze samolotu
+const GEAR_LOAD_SHARE_MAIN = 0.46; // każde koło główne (2×0.46 + 0.08 = 1.0)
+const GEAR_K_NOSE = A321_PARAMS.mass * GEAR_LOAD_SHARE_NOSE * GEAR_SUSP_OMEGA_NOSE ** 2;
+const GEAR_C_NOSE = 2 * GEAR_SUSP_ZETA_NOSE * GEAR_SUSP_OMEGA_NOSE * A321_PARAMS.mass * GEAR_LOAD_SHARE_NOSE;
+const GEAR_K_MAIN = A321_PARAMS.mass * GEAR_LOAD_SHARE_MAIN * GEAR_SUSP_OMEGA_MAIN ** 2;
+const GEAR_C_MAIN = 2 * GEAR_SUSP_ZETA_MAIN * GEAR_SUSP_OMEGA_MAIN * A321_PARAMS.mass * GEAR_LOAD_SHARE_MAIN;
+const GEAR_HARDSTOP_K_MULT = 12; // dodatkowa sztywność po przekroczeniu GEAR_SUSPENSION_TRAVEL (twardy zderzak — nie odbicie, tylko szybkie "zatrzymanie")
+
+// Model opony: tarcie toczenia/hamowania wzdłuż kierunku jazdy + przyczepność
+// boczna (grip). "Sztywność" (TIRE_*_STIFF) to liniowy model opony (siła ~
+// prędkość poślizgu), odcięty na granicy tarcia Coulomba (mu·N) — standardowe,
+// stabilne numerycznie podejście z dynamiki pojazdów.
+const TIRE_ROLLING_MU  = 0.02;
+const TIRE_BRAKE_MU    = 0.45;
+const TIRE_LAT_GRIP_MU = 0.8;
+const TIRE_LONG_STIFF  = 2.2e5; // N/(m/s) przed odcięciem przez limit Coulomba
+const TIRE_LAT_STIFF   = 3.5e5; // N/(m/s)
+
+// Pomocnicze wzory na moment obrotowy z siły F={x,y,z} (składowe W LOKALNYM
+// układzie samolotu — patrz toLocal() w physicsUpdate) przyłożonej w punkcie
+// r={x,y,z} (lokalny offset od CG, np. TAIL_AC albo GEAR_LEFT). Wyprowadzone
+// wprost z geometrii tego kodu (lokalne osie X=prawo/wingRight, Y=góra/acUp,
+// Z=przód/noseDir) tak, by zgadzały się ze znakiem pitchRad/rollRad/yawRad już
+// używanym w reszcie pliku (np. dodatnie pitchRad = nos w górę, jak w
+// noseDir.y = sin(pitchRad) niżej) — nie są to wzory z podręcznika wklejone
+// bez sprawdzenia znaku.
+function _pitchTorque(r, F) { return r.z * F.y - r.y * F.z; }
+// NAPRAWA (zgłoszone: "przechyla się w lewo, ale skręca w prawo"): pierwotna
+// wersja tej funkcji (r.y*F.x - r.x*F.y) była wyprowadzona pod BŁĘDNY znak
+// rollQ (patrz wyżej) — składowa Y wingRight/acUp była wtedy DOKŁADNIE
+// PRZECIWNA do tego, co faktycznie pokazuje mesh.rotation.set(...,'YXZ') na
+// ekranie (zweryfikowane numerycznie w Node z biblioteką three.js). Skutek:
+// bank w lewą był poprawny WIZUALNIE (mesh nie zależy od tej funkcji), ale
+// siła nośna/reakcje podwozia liczyły skręt tak, jakby to był bank w prawą.
+// Ta wersja (r.x*F.y - r.y*F.x, standardowa formuła bez odwrócenia znaku) jest
+// spójna z poprawionym rollQ i zweryfikowana na 3 niezależnych przypadkach
+// (podwozie lewe/prawe, statecznik pionowy).
+function _rollTorque(r, F)  { return r.x * F.y - r.y * F.x; }
+function _yawTorque(r, F)   { return r.z * F.x - r.x * F.z; }
 
 // Środek między kołami głównymi (lewym i prawym) — najniższy, najbardziej
 // reprezentatywny pojedynczy punkt do TANIEGO sprawdzania odległości od ziemi,
@@ -317,27 +467,13 @@ function groundSteerTrackFactor(speedKt) {
   return 1.0 - (speedKt - 50) / 65;
 }
 
-// ── Autorytet steru wysokości (elevator authority) ─────────────────────────────
-//
-// Zamiast sztywnego progu "poniżej VR nic nie robi, od VR*0.98 pełen auto-rotate",
-// siła, z jaką ster wysokości potrafi obrócić samolot wokół kół głównych, rośnie
-// PŁYNNIE z ciśnieniem dynamicznym (q ~ prędkość²) — dokładnie tak jak w realnym
-// samolocie: skuteczność powierzchni sterowych zależy od naporu powietrza na nie,
-// więc rośnie z kwadratem prędkości, nie liniowo. Efekt: przy 10 kt praktycznie
-// nic nie da się zrobić (brak przepływu nad usterzeniem ogonowym), a im szybciej,
-// tym łatwiej unieść i UTRZYMAĆ nos w górze — bez sztucznego "pociągnięcia za sznurek"
-// przy jednej konkretnej prędkości.
-const ELEVATOR_MIN_KT  = 15;  // poniżej tej prędkości ster wysokości praktycznie nie działa (brak przepływu)
-const ELEVATOR_FULL_KT = 95;  // od tej prędkości pełna skuteczność steru (dalej już nie rośnie)
-
-function elevatorAuthority(speedKt) {
-  if (speedKt <= ELEVATOR_MIN_KT) return 0;
-  if (speedKt >= ELEVATOR_FULL_KT) return 1;
-  // Normalizowany zakres 0..1 w paśmie [MIN, FULL], podniesiony do kwadratu —
-  // odzwierciedla to, że siła aerodynamiczna na sterze ~ q ~ v², a nie samo v.
-  const t = (speedKt - ELEVATOR_MIN_KT) / (ELEVATOR_FULL_KT - ELEVATOR_MIN_KT);
-  return t * t;
-}
+// (Dawny elevatorAuthority()/ELEVATOR_MIN_KT/FULL_KT — sztuczna krzywa "siły
+// autorytetu steru" zależna od prędkości — został USUNIĘTY. W nowym modelu to
+// samo zjawisko (ster wysokości nic nie daje przy małej prędkości, coraz
+// więcej przy większej) wynika WPROST z fizyki: siła aerodynamiczna na
+// usterzeniu ~ q = ½ρV², więc naturalnie rośnie z KWADRATEM prędkości bez
+// żadnej dodatkowej, ręcznie dopasowanej krzywej — patrz ELEVATOR_CL_PER_RAD i
+// TAIL_AC w physicsUpdate.)
 
 // ── Odbicie sprężyste przy mocnym/nietypowym uderzeniu w teren ────────────────
 //
@@ -352,13 +488,23 @@ function elevatorAuthority(speedKt) {
 // odbicie, dokładnie jak przy zderzeniu sprężystym z tłumieniem.
 const BOUNCE_TRIGGER_VSPEED   = 7.2;  // m/s prędkości pionowej w dół — od tego uznajemy uderzenie za "twarde" (nie zwykłe osiadanie)
 const BOUNCE_TRIGGER_HSPEED_INTO_SLOPE = 8.5; // m/s składowej prędkości WCHODZĄCEJ w stromy teren (wzdłuż normalnej), przy locie w zbocze
+// NAPRAWA: `velIntoSlope` rośnie z CAŁKOWITą prędkością (≈ prędkość_pozioma
+// × sin(nachylenie)) — bez dolnego progu kąta, przy dużej prędkości naziemnej
+// (200+ kt) zwykłe, drobne pofałdowanie pasa (4-5°, normalny szum terenu)
+// wystarczało, żeby przekroczyć 8.5 m/s i wywołać "twarde odbicie od zbocza" —
+// mechanikę pomyślaną do RZECZYWISTEGO wlecenia w stok góry, nie do kolejnych
+// nierówności płyty. Stąd fałszywe mikro-odbicia właśnie przy dużych
+// prędkościach, które rozbijały próby czystej rotacji na starcie.
+const BOUNCE_INTO_SLOPE_MIN_DEG = 18; // ° — poniżej tego kąta to zwykły szum terenu, nie "zbocze", niezależnie od prędkości (podniesione z 12° — przy dużej prędkości rozbiegu drobne pofałdowanie DEM nadal dawało czasem >12° i wywoływało fałszywe odbicia)
 const BOUNCE_RESTITUTION      = 0.28; // ułamek prędkości normalnej odbitej z powrotem (0=brak odbicia/pochłonięte, 1=idealnie sprężyste)
 const BOUNCE_TANGENT_DAMPING  = 0.82; // ułamek prędkości stycznej zachowanej po uderzeniu (tarcie/poślizg podczas odbicia)
 const BOUNCE_MIN_UP_SPEED     = 1.8;  // m/s — minimalna prędkość "w górę" nadana przy odbiciu, żeby efekt był czytelny nawet przy uderzeniu prawie stycznym
-const BOUNCE_ON_GROUND_SLOPE_DEG = 20; //° — przy wejściu w zbocze o takim kącie lub większym, a przy dużej prędkości po ziemi, samolot odskakuje zamiast "przyklejać" się do terenu
-const BOUNCE_ON_GROUND_MIN_SPEED = 24.0; // m/s — minimalna prędkość po ziemi, przy której aktywujemy ten efekt
-const GROUND_SLOPE_ACCEL_GAIN = 0.55; // mnożnik przyspieszenia grawitacyjnego wzdłuż spadku terenu
-const GROUND_SLOPE_DAMPING = 0.99965; // lekki tłumik, żeby ruch po ziemi nie był zbyt sztywny
+// (Dawne BOUNCE_ON_GROUND_SLOPE_DEG/MIN_SPEED i GROUND_SLOPE_ACCEL_GAIN/DAMPING
+// zostały USUNIĘTE — to były ręczne "łatki" udające efekt zjeżdżania po zboczu
+// i odskakiwania od jego ściany. W nowym modelu obie rzeczy wynikają WPROST z
+// prawdziwych sił: niezrównoważona składowa grawitacji wzdłuż stoku naturalnie
+// przyspiesza samolot w dół zbocza, a reakcja normalna terenu pod kątem robi
+// swoje bez potrzeby osobnej "kary" za stromiznę.)
 
 const planeInput = {
   pitch: 0, roll: 0, yaw: 0,
@@ -393,14 +539,9 @@ class A321Entity extends Entity {
     this.gearDown = true;
     this.spoilers = false;
     this.onGround = true;
-    // Niezależny stan "wgniecenia" zawieszenia każdej goleni (m) + flaga, czy
-    // dana goleń aktualnie dotyka ziemi (do wykrywania chwili uderzenia) — patrz sampleGear()/settleOnGear().
-    this.gearSink = { nose: 0, left: 0, right: 0 };
-    this._gearTouch = { nose: false, left: false, right: false };
     // Tryb dokładnego sprawdzania podwozia (patrz GEAR_FAR_CHECK_* i sampleGearPoint/sampleGear).
     // Start jako "blisko ziemi" — bezpieczny domyślny stan tuż po starcie/spawnie.
     this._nearGroundZone = true;
-    this.autoRotateArmed = false;
     this.airspeed = 0;
     this.vs = 0;
     this._alpha = 0; this._cl = 0; this._isStalling = false;
@@ -484,23 +625,110 @@ class A321Entity extends Entity {
       // sceny, więc robienie tego co klatkę (jak wcześniej w renderUpdate) jest
       // niepotrzebnym kosztem. Wynik cache'ujemy raz, po wczytaniu modelu.
       this._parts = {
-        fanR:      this.mesh.getObjectByName('fan_R'),
-        fanL:      this.mesh.getObjectByName('fan_L'),
+        fanR:      this.mesh.getObjectByName('engines_blade_right'),
+        fanL:      this.mesh.getObjectByName('engines_blade_left'),
+        gearFL:    this.mesh.getObjectByName('gears_front'),
+        gearBL:    this.mesh.getObjectByName('gears_back_left'),
+        gearBR:    this.mesh.getObjectByName('gears_back_right'),
         beacon:    this.mesh.getObjectByName('beacon'),
         flapR:     this.mesh.getObjectByName('flap_R'),
         flapL:     this.mesh.getObjectByName('flap_L'),
         spoilerR:  this.mesh.getObjectByName('spoiler_R'),
         spoilerL:  this.mesh.getObjectByName('spoiler_L'),
-        elevatorR: this.mesh.getObjectByName('elevator_R'),
+        elevatorR: this.mesh.getObjectByName('elevator_R'), // Will override below
         elevatorL: this.mesh.getObjectByName('elevator_L'),
         rudder:    this.mesh.getObjectByName('rudder'),
       };
 
+      this.mesh.traverse(c => {
+        if (c.name && c.name.includes('elevator_left')) this._parts.elevatorL = c;
+        if (c.name && c.name.includes('elevator_right')) this._parts.elevatorR = c;
+      });
+
+      const centerPivot = (m) => {
+        if (!m || !m.geometry) return;
+        m.geometry.computeBoundingBox();
+        const center = new THREE.Vector3();
+        m.geometry.boundingBox.getCenter(center);
+        m.geometry.translate(-center.x, -center.y, -center.z);
+        // Jeśli obiekt miał już jakąś pozycję z pliku (np. nie zero), musimy dodać nowy środek
+        m.position.add(center);
+      };
+
+      const setupControlSurfaceHinge = (m) => {
+        if (!m || !m.geometry || !m.geometry.getAttribute) return;
+        m.geometry.computeBoundingBox();
+        const box = m.geometry.boundingBox;
+        const size = new THREE.Vector3();
+        box.getSize(size);
+        
+        let axes = [
+          { name: 'x', len: size.x },
+          { name: 'y', len: size.y },
+          { name: 'z', len: size.z }
+        ];
+        axes.sort((a, b) => b.len - a.len);
+        const spanAxis = axes[0].name;
+        const chordAxis = axes[1].name;
+        
+        const posAttribute = m.geometry.getAttribute('position');
+        const vCount = posAttribute.count;
+        let minSpan = box.min[spanAxis], maxSpan = box.max[spanAxis];
+        
+        let rootPoint = new THREE.Vector3();
+        let tipPoint = new THREE.Vector3();
+        let rootChordMin = Infinity, tipChordMin = Infinity;
+        
+        const spanThreshold = (maxSpan - minSpan) * 0.15;
+        const tempV = new THREE.Vector3();
+        
+        for (let i = 0; i < vCount; i++) {
+          tempV.fromBufferAttribute(posAttribute, i);
+          
+          if (Math.abs(tempV[spanAxis] - minSpan) < spanThreshold) {
+            if (tempV[chordAxis] < rootChordMin) {
+              rootChordMin = tempV[chordAxis];
+              rootPoint.copy(tempV);
+            }
+          }
+          if (Math.abs(tempV[spanAxis] - maxSpan) < spanThreshold) {
+            if (tempV[chordAxis] < tipChordMin) {
+              tipChordMin = tempV[chordAxis];
+              tipPoint.copy(tempV);
+            }
+          }
+        }
+        
+        const pivot = rootPoint.clone();
+        const hingeAxis = new THREE.Vector3().subVectors(tipPoint, rootPoint).normalize();
+        
+        m.geometry.translate(-pivot.x, -pivot.y, -pivot.z);
+        m.position.add(pivot);
+        m.userData.hingeAxis = hingeAxis;
+      };
+
+      centerPivot(this._parts.fanR);
+      centerPivot(this._parts.fanL);
+      centerPivot(this._parts.gearFL);
+      centerPivot(this._parts.gearBL);
+      centerPivot(this._parts.gearBR);
+      
+      setupControlSurfaceHinge(this._parts.elevatorL);
+      setupControlSurfaceHinge(this._parts.elevatorR);
+      // NAPRAWA (zgłoszone: "punkt obrotu ruddera jest za bardzo do przodu"):
+      // brakowało tego wywołania dla steru kierunku — obracał się więc wokół
+      // surowego originu z pliku .obj zamiast prawdziwej linii zawiasu
+      // wyliczonej z geometrii (tak jak elevatory powyżej).
+      setupControlSurfaceHinge(this._parts.rudder);
+
     }).catch(err => console.error('[A321] Błąd wczytywania modelu:', err));
 
     this.fanAngle = 0;
+    this.gearAngle = 0;
     this.beaconTimer = 0;
     this.prevFlapPos = 0;
+    this.elevPos = 0;
+    this.rudderPos = 0;
   }
 
   get headingDeg() {
@@ -529,10 +757,7 @@ class A321Entity extends Entity {
     this.gearDown = opts.gearDown ?? true;
     this.spoilers = false;
     this.onGround = opts.onGround ?? true;
-    this.gearSink = { nose: 0, left: 0, right: 0 };
-    this._gearTouch = { nose: false, left: false, right: false };
     this._nearGroundZone = opts.onGround ?? true;
-    this.autoRotateArmed = false;
     this.heading = this.headingDeg;
     this.pitch = this.pitchRad * 180 / Math.PI;
     this.roll = 0;
@@ -619,7 +844,17 @@ class A321Entity extends Entity {
   // Wywoływane raz, w chwili świeżego, twardego kontaktu — modyfikuje this.vel
   // bezpośrednio (odbija składową normalną, tłumi składową styczną). Zwraca true
   // jeśli faktycznie doszło do odbicia.
-  applyBounce(gear, opts = {}) {
+  //
+  // (Dawny trzeci wyzwalacz "hardGroundDrop" — odbicie przy zwykłej jeździe po
+  // ziemi w stronę stromizny — został USUNIĘTY: w nowym modelu każda z 3 goleni
+  // ma WŁASNĄ, prawdziwą siłę sprężysto-tłumiącą liczoną wzdłuż faktycznej
+  // normalnej terenu (patrz physicsUpdate), więc jazda po nierównym/pochłym
+  // terenie sama w sobie już nie potrzebuje osobnej "ucieczki" — samolot po
+  // prostu naturalnie podskakuje/przechyla się zgodnie z siłami z każdej goleni.
+  // Ta funkcja zostaje wyłącznie dla PRAWDZIWYCH zderzeń: twarde lądowanie
+  // (duża prędkość pionowa) albo wlecenie w stromą ścianę terenu przy dużej
+  // prędkości poziomej.)
+  applyBounce(gear) {
     if (this._bounceCooldown > 0) return false;
     const impactVy = Math.max(0, -this.vel.y);
     const best = this.bestGearPoint(gear);
@@ -628,24 +863,20 @@ class A321Entity extends Entity {
     const normal = this.terrainNormalAt(glat, glon);
     const slopeAngleDeg = Math.acos(Math.max(-1, Math.min(1, normal.y))) * 180 / Math.PI;
 
-    const velIntoSlope  = -this.vel.dot(normal);
-    const hardVertical   = impactVy >= BOUNCE_TRIGGER_VSPEED;
-    const hardIntoSlope  = velIntoSlope >= BOUNCE_TRIGGER_HSPEED_INTO_SLOPE;
-    const hardGroundDrop = !!opts.allowWhileOnGround && this.onGround && this.gearDown &&
-      this.vel.length() >= BOUNCE_ON_GROUND_MIN_SPEED &&
-      slopeAngleDeg >= BOUNCE_ON_GROUND_SLOPE_DEG &&
-      velIntoSlope >= 4.5;
-    if (!hardVertical && !hardIntoSlope && !hardGroundDrop) return false;
+    const velIntoSlope = -this.vel.dot(normal);
+    const hardVertical  = impactVy >= BOUNCE_TRIGGER_VSPEED;
+    const hardIntoSlope = velIntoSlope >= BOUNCE_TRIGGER_HSPEED_INTO_SLOPE && slopeAngleDeg >= BOUNCE_INTO_SLOPE_MIN_DEG;
+    if (!hardVertical && !hardIntoSlope) return false;
 
     const vNormal  = normal.clone().multiplyScalar(this.vel.dot(normal));
     const vTangent = this.vel.clone().sub(vNormal);
     const incomingNormalSpeed = Math.max(0, -this.vel.dot(normal));
     const flatGroundScale = slopeAngleDeg < 8 ? 0.35 : slopeAngleDeg < 16 ? 0.6 : 1.0;
-    const bounceSpeed = Math.max(incomingNormalSpeed * (hardGroundDrop ? 0.72 : BOUNCE_RESTITUTION * flatGroundScale), hardGroundDrop ? 5.5 : BOUNCE_MIN_UP_SPEED * flatGroundScale);
-    const newVel = vTangent.multiplyScalar(hardGroundDrop ? 0.45 : BOUNCE_TANGENT_DAMPING).addScaledVector(normal, bounceSpeed);
+    const bounceSpeed = Math.max(incomingNormalSpeed * BOUNCE_RESTITUTION * flatGroundScale, BOUNCE_MIN_UP_SPEED * flatGroundScale);
+    const newVel = vTangent.multiplyScalar(BOUNCE_TANGENT_DAMPING).addScaledVector(normal, bounceSpeed);
 
     this.vel.copy(newVel);
-    this._bounceCooldown = hardGroundDrop ? 0.24 : 0.35;
+    this._bounceCooldown = 0.35;
     this.onGround = false;
     this._nearGroundZone = true;
 
@@ -655,79 +886,12 @@ class A321Entity extends Entity {
     return true;
   }
 
-  // Osadza samolot na podwoziu na podstawie próbki z sampleGear(): aktualizuje
-  // "wgniecenie" zawieszenia każdej goleni (mocniejsze przy twardszym dotknięciu,
-  // potem wraca do niewielkiego ugięcia spoczynkowego — na razie czysto
-  // fizycznie, bez animacji samej goleni, to osobny krok na później), dociąga
-  // pitch/roll do kąta wynikającego z RZECZYWISTEGO terenu pod kołami (samolot
-  // nie może np. stać z uniesionym przednim kołem w powietrzu — musi ono opaść),
-  // i ustawia altM tak, by koło główne stało dokładnie na (obniżonym o wgniecenie) terenie.
-  settleOnGear(gear, dtCap, isRotating) {
-    const impactVy = Math.max(0, -this.vel.y); // prędkość opadania w chwili tej klatki
-    for (const k of ['nose', 'left', 'right']) {
-      const touching = gear[k].pen >= 0;
-      if (touching && !this._gearTouch[k]) {
-        // świeże dotknięcie tej goleni — "wbij" amortyzator proporcjonalnie do prędkości uderzenia
-        const baseImpact = Math.min(GEAR_SUSPENSION_TRAVEL - GEAR_STATIC_SAG, impactVy * GEAR_IMPACT_SINK_PER_MS);
-        const extraMainImpact = (k === 'left' || k === 'right') ? baseImpact * GEAR_IMPACT_MAIN_SINK_MULT : baseImpact;
-        this.gearSink[k] = Math.min(GEAR_SUSPENSION_TRAVEL, this.gearSink[k] + GEAR_STATIC_SAG + extraMainImpact);
-      }
-      this._gearTouch[k] = touching;
-      const target = touching ? GEAR_STATIC_SAG : 0;
-      const blend  = 1 - Math.exp(-dtCap / GEAR_SINK_SETTLE_TAU);
-      this.gearSink[k] += (target - this.gearSink[k]) * blend;
-    }
-
-    const gN = gear.nose.groundH  - this.gearSink.nose;
-    const gL = gear.left.groundH  - this.gearSink.left;
-    const gR = gear.right.groundH - this.gearSink.right;
-    const gMainAvg = (gL + gR) * 0.5;
-
-    // Przechył: samolot zawsze "ślizga się" do kąta wynikającego z terenu pod
-    // lewym/prawym kołem głównym — na kołach nie da się utrzymać banku samemu.
-    const rollTarget  = (gL - gR) / (GEAR_RIGHT.x - GEAR_LEFT.x);
-    // Pochylenie: kąt, przy którym i przednie, i główne koło dotykają swojego
-    // (już obniżonego o wgniecenie) terenu jednocześnie.
-    const pitchTarget = (gN - gMainAvg - (GEAR_NOSE.y - GEAR_LEFT.y)) / (GEAR_NOSE.z - GEAR_LEFT.z);
-
-    // Normalnie pitch/roll płynnie "dociąga się" do kąta spoczynkowego (efekt
-    // zawieszenia). Ale jeśli samolot jest już wyraźnie pod ziemią (patrz
-    // GEAR_EMERGENCY_PEN_M) — to sytuacja awaryjna, nie zwykłe lądowanie — wtedy
-    // ustawiamy pitch/roll (a więc i altM niżej) od razu, bez płynnego przejścia.
-    const maxPen = Math.max(gear.nose.pen, gear.left.pen, gear.right.pen);
-    const isEmergency = maxPen > GEAR_EMERGENCY_PEN_M;
-    if (isEmergency && window.DEBUG_GEAR) {
-      // DEBUG: throttlowany pełny zrzut stanu w chwili awaryjnego zanurzenia —
-      // pozwala sprawdzić m.in. czy to kwestia brakującego DEM (zoomUsed < 15
-      // na którejś goleni) czy czegoś innego. Wyłączane przez window.DEBUG_GEAR = false.
-      const now = performance.now();
-      if (!this._debugEmergencyLastLog || now - this._debugEmergencyLastLog > 300) {
-        this._debugEmergencyLastLog = now;
-        console.error(
-          `[GEAR DEBUG] AWARYJNE zanurzenie w ziemię! maxPen=${maxPen.toFixed(2)}m ` +
-          `lat=${this.lat.toFixed(6)} lon=${this.lon.toFixed(6)} altM=${this.altM.toFixed(1)} ` +
-          `vel=(${this.vel.x.toFixed(1)},${this.vel.y.toFixed(1)},${this.vel.z.toFixed(1)}) ` +
-          `onGround=${this.onGround} pitch=${(this.pitchRad * 180 / Math.PI).toFixed(1)}° roll=${(this.rollRad * 180 / Math.PI).toFixed(1)}°\n` +
-          `  nose:  pen=${gear.nose.pen.toFixed(2)}  groundH=${gear.nose.groundH.toFixed(1)}  zoom=Z${gear.nose.zoomUsed}\n` +
-          `  left:  pen=${gear.left.pen.toFixed(2)}  groundH=${gear.left.groundH.toFixed(1)}  zoom=Z${gear.left.zoomUsed}\n` +
-          `  right: pen=${gear.right.pen.toFixed(2)}  groundH=${gear.right.groundH.toFixed(1)}  zoom=Z${gear.right.zoomUsed}`
-        );
-      }
-    }
-    const attBlend = isEmergency
-      ? 1 - Math.exp(-dtCap / GEAR_EMERGENCY_SETTLE_TAU)
-      : 1 - Math.exp(-dtCap / GEAR_ATTITUDE_SETTLE_TAU);
-
-    this.rollRad += (rollTarget - this.rollRad) * attBlend;
-    // Podczas rotacji na starcie (isRotating=true, patrz isRotatingGround w
-    // physicsUpdate) pitchem steruje bezpośrednio pilot przez elevatorAuthority —
-    // tu go nie dotykamy, żeby nie "ściągać" dziobu z powrotem w trakcie odrywania koła.
-    if (!isRotating) this.pitchRad += (pitchTarget - this.pitchRad) * attBlend;
-
-    // Koło główne zawsze "przyklejone" do terenu pod nim, przy aktualnym pochyleniu.
-    this.altM = gMainAvg - (GEAR_LEFT.y + GEAR_LEFT.z * this.pitchRad);
-  }
-
+  // Cała integracja pozycji (lat/lon/altM) dzieje się wewnątrz physicsUpdate()
+  // (bo tam liczymy realne przyspieszenia z sił/momentów) — ten override MUSI
+  // zostać pusty, inaczej odziedziczony Entity.integrate() spróbowałby ruszyć
+  // samolotem przez nieużywane tu this.velNED (którego A321Entity nigdy nie
+  // ustawia), co albo nic by nie robiło, albo psuło pozycję w zależności od
+  // stanu velNED odziedziczonego z Entity.
   integrate(dt) {}
 
   get worldPos() {
@@ -743,69 +907,23 @@ class A321Entity extends Entity {
 
   physicsUpdate(dt, input) {
     const dtCap = Math.min(dt, 0.05);
-    const airspeed = this.vel.length();
     if (this._bounceCooldown > 0) this._bounceCooldown = Math.max(0, this._bounceCooldown - dtCap);
 
     if (input.throttleUp)   this.throttle = Math.min(1, this.throttle + dtCap * 0.6);
     if (input.throttleDown) this.throttle = Math.max(0, this.throttle - dtCap * 0.8);
 
+    const airspeed = this.vel.length();
     const speedKt = Units.msToKt(airspeed);
-    // Autorytet steru wysokości/lotek w powietrzu (jak wcześniej: rośnie z prędkością
-    // od 12 do 52 m/s) — używany TYLKO gdy samolot lata. Na ziemi rotacją (unoszeniem
-    // przedniego koła) rządzi teraz osobno elevatorAuthority(speedKt) niżej, bo
-    // fizyka steru wysokości przy kołowaniu/rozbiegu jest inna niż w locie (działa
-      // wokół kół głównych, nie wokół środka masy).
-    const ctrlEff = Math.max(0, Math.min(1.0, (airspeed - 12.0) / 40.0));
     const pitchInput = input.pitch;
     const rollInput  = input.roll;
     const yawInput   = input.yaw;
 
-    // ── Unoszenie przedniego koła (rotacja) na ziemi ────────────────────
-    // Realistyczny model: siła dostępna na sterze wysokości rośnie PŁYNNIE z
-    // ciśnieniem dynamicznym (prawie zero <15kt, pełna skuteczność >=95kt — patrz
-    // elevatorAuthority()). To ZASTĘPUJE dawny sztywny próg "autoRotateArmed" przy
-    // VR*0.98: teraz można zacząć delikatnie unosić nos już przy kilkudziesięciu
-    // węzłach, ale wymaga to trzymania drążka — im wolniej, tym słabszy efekt i
-    // łatwiej nos opadnie z powrotem, dokładnie jak w prawdziwym samolocie.
-    const groundElevAuth = this.onGround ? elevatorAuthority(speedKt) : 0;
-    // Rotacja aktywna, gdy pilot RZECZYWIŚCIE ciągnie drążek do siebie na ziemi z
-    // jakąkolwiek dostępną siłą steru — to zastępuje stary autoRotateArmed/VR i
-    // pozwala settleOnGear() nie "przyklejac" nosa, gdy pilot aktywnie ciągnie.
-    const isRotatingGround = this.onGround && pitchInput > 0.02 && groundElevAuth > 0.001;
-
-    if (this.onGround) {
-      // Na ziemi pitch rate reaguje na siłę steru wg elevatorAuthority — nos nie
-      // "skacze" przy jednej konkretnej prędkości, tylko płynnie łatwiej reaguje z
-      // prędkością. Pchnięcie drążka od siebie (pitchInput<0) zawsze działa z pełną
-      // siłą niezależnie od prędkości — opuszczenie przedniego koła z powrotem na
-      // ziemię nie wymaga przepływu nad usterzeniem, wystarczy grawitacja/moment.
-      const pushDown = pitchInput < 0 ? -pitchInput * 1.4 : 0;
-      const pullUp   = pitchInput > 0 ? pitchInput * 1.9 * groundElevAuth : 0;
-      this.pitchRate += (pullUp - pushDown) * dtCap;
-      this.pitchRate *= Math.pow(0.06, dtCap);
-      this.rollRate = 0; // na 3 kołach nie da się samemu przechylić — o kąt banku decyduje wyłącznie teren pod kołami (patrz settleOnGear)
-    } else {
-      this.pitchRate += pitchInput * 1.4 * ctrlEff * dtCap;
-      this.pitchRate *= Math.pow(0.05, dtCap);
-      this.rollRate  += rollInput * 1.6 * ctrlEff * dtCap;
-      this.rollRate  *= Math.pow(0.04, dtCap);
-    }
-
-    this.pitchRad += this.pitchRate * dtCap;
-    this.rollRad  += this.rollRate  * dtCap;
-    // Limit górny pitch na ziemi to kąt "tail strike" — dalej ogon zaryje w pas.
-    this.pitchRad  = Math.max(-0.45, Math.min(this.onGround ? 0.22 : 0.52, this.pitchRad));
-    this.rollRad   = Math.max(-1.40, Math.min(1.40, this.rollRad));
-
+    // ── Orientacja z POPRZEDNIEGO kroku — z niej liczymy WSZYSTKIE siły i momenty
+    // w tej klatce (kąty same zmienią się dopiero na końcu funkcji, gdy
+    // zintegrujemy przyspieszenia kątowe). To poprawna kolejność dla bryły
+    // sztywnej: siły zależą od aktualnego stanu, dopiero potem stan się
+    // aktualizuje na podstawie tych sił — a nie odwrotnie. ──────────────
     const forward = new THREE.Vector3(Math.sin(this.yawRad), 0, Math.cos(this.yawRad));
-    if (this.onGround) {
-      this.yawRad += (yawInput * 1.8 + rollInput * 0.3) * dtCap;
-      forward.set(Math.sin(this.yawRad), 0, Math.cos(this.yawRad));
-    } else if (airspeed > 8) {
-      this.yawRad -= (G_ACC * Math.tan(this.rollRad) / airspeed) * dtCap;
-      this.yawRad += yawInput * 0.4 * ctrlEff * dtCap;
-    }
-
     const noseDir = new THREE.Vector3(
       forward.x * Math.cos(this.pitchRad),
       Math.sin(this.pitchRad),
@@ -813,13 +931,34 @@ class A321Entity extends Entity {
     ).normalize();
     const worldUp  = new THREE.Vector3(0, 1, 0);
     const rightVec = new THREE.Vector3().crossVectors(worldUp, forward).normalize();
-    const rollQ    = new THREE.Quaternion().setFromAxisAngle(noseDir, -this.rollRad);
+    const rollQ    = new THREE.Quaternion().setFromAxisAngle(noseDir, this.rollRad);
     const wingRight = rightVec.clone().applyQuaternion(rollQ);
-    const acUp     = new THREE.Vector3().crossVectors(noseDir, wingRight).normalize();
+    const acUp      = new THREE.Vector3().crossVectors(noseDir, wingRight).normalize();
 
-    const fpa = airspeed > 2
-      ? Math.asin(Math.max(-1, Math.min(1, this.vel.y / airspeed)))
-      : 0;
+    // Prędkość kątowa bryły W ŚWIECIE, z aktualnych (skalarnych) pitchRate/
+    // rollRate/yawRate — oś pitch to -wingRight (patrz derywacja przy noseDir.y),
+    // oś roll to +noseDir (zgodnie ze standardową regułą prawej dłoni, bo
+    // rollQ powyżej już UżYWA +this.rollRad, nie -this.rollRad — NAPRAWA:
+    // zweryfikowane numerycznie, że ten znak zgadza się z mesh.rotation.set(...,
+    // rollRad, 'YXZ') używanym w syncMesh(); poprzednia wersja z minusem dawała
+    // wingRight/acUp DOKŁADNIE PRZECIWNE do tego co widział gracz na ekranie —
+    // stąd zgłoszony bug "przechyla się w lewo poprawnie, ale skręca w prawo").
+    const omegaWorld = wingRight.clone().multiplyScalar(-this.pitchRate)
+      .addScaledVector(noseDir, this.rollRate)
+      .addScaledVector(worldUp, this.yawRate);
+
+    // Rzutuje wektor siły ze świata na lokalne osie samolotu — wzory na moment
+    // (_pitchTorque/_rollTorque/_yawTorque) zakładają, że i ramię (r), i siła
+    // (F) są wyrażone w TYM SAMYM lokalnym układzie.
+    const toLocal = (v) => ({ x: v.dot(wingRight), y: v.dot(acUp), z: v.dot(noseDir) });
+
+    const totalForce = new THREE.Vector3(0, -A321_PARAMS.mass * G_ACC, 0); // grawitacja — działa w CG, nie daje momentu
+    let torquePitch = 0, torqueRoll = 0, torqueYaw = 0;
+
+    // ── Aerodynamika skrzydła: siła nośna + opór, jak wcześniej, ale teraz
+    // przyłożona w WING_AC (blisko CG) — daje więc też niewielki moment pitch,
+    // zamiast działać "w próżni" bez wpływu na obrót. ─────────────────
+    const fpa = airspeed > 2 ? Math.asin(Math.max(-1, Math.min(1, this.vel.y / airspeed))) : 0;
     const alpha = this.pitchRad - fpa;
 
     const flap = this.flaps;
@@ -850,157 +989,289 @@ class A321Entity extends Entity {
     const liftMag = q * A321_PARAMS.wingArea * cl;
     const dragMag = q * A321_PARAMS.wingArea * Math.max(0, cd);
 
-    const weightN   = A321_PARAMS.mass * G_ACC;
+    const liftVec = acUp.clone().multiplyScalar(liftMag);
+    const dragVec = airspeed > 0.1 ? this.vel.clone().normalize().multiplyScalar(-dragMag) : new THREE.Vector3();
+    totalForce.add(liftVec).add(dragVec);
+    { const Fl = toLocal(liftVec);
+      torquePitch += _pitchTorque(WING_AC, Fl);
+      torqueRoll  += _rollTorque(WING_AC, Fl); }
+
+    // ── Ciąg silników — przyłożony POD CG (THRUST_PT.y<0), więc zmiana mocy
+    // silników daje (mały, ale prawdziwy) moment pitch, dokładnie jak na
+    // realnym samolocie z silnikami podwieszonymi pod skrzydłami. ───────
     const thrustScale = groundRun ? A321_PARAMS.groundRunThrustBoost : 1.0;
     const thrustVec = noseDir.clone().multiplyScalar(this.throttle * A321_PARAMS.maxThrust * thrustScale);
-    const dragVec   = airspeed > 0.1 ? this.vel.clone().normalize().multiplyScalar(-dragMag) : new THREE.Vector3();
-    const liftVec   = acUp.clone().multiplyScalar(liftMag);
+    totalForce.add(thrustVec);
+    // Moment liczymy z NIEPODBITEGO ciągu (throttle*maxThrust, BEZ
+    // groundRunThrustBoost) — boost naziemny to umowne wzmocnienie
+    // przyspieszenia dla lepszego odczucia rozbiegu, nie prawdziwy wzrost mocy
+    // silników; użycie go też tutaj sztucznie potęgowałoby "power pitch" ×2.2,
+    // prowadząc do samoczynnego unoszenia przedniego koła przy większej
+    // przepustnicy, bez udziału pilota (patrz NAPRAWA przy THRUST_PT).
+    const thrustTorqueVec = noseDir.clone().multiplyScalar(this.throttle * A321_PARAMS.maxThrust);
+    { const Ft = toLocal(thrustTorqueVec);
+      torquePitch += _pitchTorque(THRUST_PT, Ft); }
 
-    // ── Kontakt z ziemią: 3 niezależne punkty (przednie koło + lewe/prawe
-    //    główne koło), każdy z własnym pomiarem terenu pod sobą — patrz
-    //    sampleGear(). Z dala od ziemi liczymy co klatkę tylko JEDEN, tani punkt
-    //    (środek kół głównych) zamiast wszystkich trzech; gdy to pokaże
-    //    zbliżanie się do ziemi, przełączamy się na dokładne sprawdzanie 3
-    //    punktów (this._nearGroundZone) aż do oddalenia się z zapasem. Dla
-    //    schowanego podwozia (lądowanie na kadłubie) zostaje stary,
-    //    jednopunktowy model (gearOffset) — patrz gałąź powietrzna niżej.
+    // ── Ster wysokości: PRAWDZIWA siła na usterzeniu ogonowym, zależna od
+    // lokalnego kąta natarcia usterzenia i od wychylenia steru — TO ZASTĘPUJE
+    // dawne bezpośrednie ustawianie pitchRate z inputu pilota. Teraz input
+    // steruje POWIERZCHNIĄ (elevatorDeflection), powierzchnia wytwarza siłę
+    // (tailForceVec), a siła × ramię (TAIL_AC.z, daleko za CG) daje moment,
+    // który dopiero na końcu funkcji zamienia się w obrót — dokładnie jak w
+    // prawdziwym samolocie.
+    //
+    // Lokalny kąt natarcia usterzenia = kąt natarcia skrzydła + wkład z
+    // prędkości kątowej pitch: punkt na ogonie (daleko za CG) fizycznie
+    // porusza się w górę/dół razem z obrotem samolotu (efekt "huśtawki" wokół
+    // CG), co zmienia LOKALNY względny wiatr odczuwany przez usterzenie. To
+    // jest PRAWDZIWE źródło aerodynamicznego tłumienia pitch (odpowiednik
+    // współczynnika Cmq z podręczników mechaniki lotu) — wynika wprost z
+    // geometrii (TAIL_AC.z), nie z żadnej wymyślonej stałej tłumienia.
+    //
+    // NAPRAWA (zgłoszone: "strzałka w dół robi że samolot leci w górę"): minus
+    // przed pitchInput jest tu CELOWY i KONIECZNY — "ciągnięcie za drążek"
+    // (pitchInput>0, strzałka w górę) musi wychylić ster tak, by usterzenie
+    // wytworzyło MNIEJSZĄ/ujemną siłę (działającą w dół, za CG) — to WŁAŚNIE
+    // podnosi nos (pchnięcie w dół za osią obrotu podnosi przednią część),
+    // dokładnie jak wychylenie steru wysokości w górę w prawdziwym samolocie.
+    // Bez tego minusa działało odwrotnie: strzałka w górę pochylała nos w dół.
+    const elevatorDeflection = -pitchInput * ELEVATOR_MAX_RAD;
+    // Rozdzielone na część STATYCZNĄ (kąt natarcia samolotu, mnożona przez
+    // słaby TAIL_CL_ALPHA_STATIC — to "ile pitch chce wrócić do trymu sam")
+    // i część RATE (wkład z prędkości kątowej pitch, mnożona przez pełny
+    // TAIL_CL_ALPHA_RATE — to czyste tłumienie oscylacji, patrz NAPRAWA przy
+    // TAIL_CL_ALPHA_STATIC/RATE wyżej).
+    const tailAlphaStatic = alpha;
+    const tailAlphaRateDamp = -(TAIL_AC.z * this.pitchRate) / Math.max(airspeed, 5);
+    const tailCl = TAIL_CL_ALPHA_STATIC * tailAlphaStatic + TAIL_CL_ALPHA_RATE * tailAlphaRateDamp
+                 + ELEVATOR_CL_PER_RAD * elevatorDeflection;
+    const tailForceVec = acUp.clone().multiplyScalar(q * TAIL_AREA * tailCl);
+    totalForce.add(tailForceVec);
+    { const Ft2 = toLocal(tailForceVec);
+      torquePitch += _pitchTorque(TAIL_AC, Ft2); }
+    // Dodatkowe tłumienie pitch (patrz PITCH_DAMPING_GAIN) — ta sama,
+    // standardowa forma co tłumienie roll niżej (q·S·L²·rate/(2V), tu z
+    // długością kadłuba zamiast rozpiętości skrzydeł jako charakterystyczną
+    // długością dla osi pitch).
+    torquePitch -= PITCH_DAMPING_GAIN * q * A321_PARAMS.wingArea * A321_FUSELAGE_LEN * A321_FUSELAGE_LEN
+                 * this.pitchRate / (2 * Math.max(airspeed, 5));
+
+    // ── Lotki: moment przechylający wprost ze standardowego wzoru
+    // aerodynamicznego (τ = q·S·rozpiętość·Cl_δa·δa) — ailerony nie mają jednego
+    // "ramienia" (działają różnicowo na całej rozpiętości skrzydeł), więc
+    // liczymy moment wprost zamiast punktowej siły. Plus tłumienie
+    // przechylenia (odpowiednik Clp) tą samą, standardową metodą. ───────
+    const aileronDeflection = rollInput * AILERON_MAX_RAD;
+    torqueRoll += q * A321_PARAMS.wingArea * A321_PARAMS.span * AILERON_CL_PER_RAD * aileronDeflection;
+    torqueRoll -= ROLL_DAMPING_GAIN * q * A321_PARAMS.wingArea * A321_PARAMS.span * A321_PARAMS.span
+                * this.rollRate / (2 * Math.max(airspeed, 5));
+
+    // ── Statecznik pionowy + ster kierunku: analogicznie do usterzenia
+    // poziomego — prawdziwa siła boczna zależna od kąta ślizgu (beta) + wkładu
+    // z yawRate (tłumienie odchylenia, ten sam mechanizm "huśtawki" co przy
+    // pitch) i od wychylenia steru kierunku. Siła × ramię (FIN_AC.z) daje
+    // moment yaw; FIN_AC jest dodatkowo PODNIESIONY nad oś przechylenia
+    // (FIN_AC.y > 0), więc ta sama siła naturalnie sprzęga się też z rollem —
+    // to prawdziwy, znany efekt uboczny sterowania kierunkiem (nie coś
+    // dodanego sztucznie na siłę). ─────────────────────────────
+    const beta = Math.atan2(this.vel.dot(wingRight), Math.max(airspeed, 0.5));
+    // NAPRAWA (zgłoszone: "samolot sam bez controls sie buja lewo prawo w
+    // locie — heading, nie roll"): wkład yawRate do finBeta musi mieć
+    // PRZECIWNY znak względem tego, jak wchodzi do finForceVec, niż wkład
+    // samego beta (skąd ta asymetria: kierunek "dodatniego" Cl dla statecznika
+    // pionowego względem wingRight okazuje się przeciwny do kierunku "dodatniego"
+    // Cl dla usterzenia poziomego względem acUp, mimo analogicznej geometrii).
+    // Ze STARYM znakiem (jak dla pitch: `beta - FIN_AC.z*yawRate/V`) statyczna
+    // stateczność kierunkowa (ślizg → moment przywracający) wychodziła poprawnie,
+    // ale tłumienie yaw wychodziło Z PRZECIWNYM znakiem — DODATNIE sprzężenie
+    // zwrotne zamiast tłumienia, czyli samopodtrzymujące/narastające kołysanie
+    // w yaw bez żadnego inputu. Zweryfikowane numerycznie (Node, konkretne
+    // wartości): stary wzór dawał torqueYaw=+121380 dla yawRate=+0.01·V (powinno
+    // być ujemne — tłumienie), ten (z plusem) daje -121380 (poprawnie), a
+    // statyczny ślizg beta=+0.1 nadal daje poprawne +71400 w OBU wersjach.
+    const finBeta = beta + (FIN_AC.z * this.yawRate) / Math.max(airspeed, 5);
+    const rudderDeflection = yawInput * RUDDER_MAX_RAD;
+    const finCl = FIN_CL_BETA * finBeta + RUDDER_CL_PER_RAD * rudderDeflection;
+    const finForceVec = wingRight.clone().multiplyScalar(-q * FIN_AREA * finCl);
+    totalForce.add(finForceVec);
+    { const Ff = toLocal(finForceVec);
+      torqueYaw  += _yawTorque(FIN_AC, Ff);
+      torqueRoll += _rollTorque(FIN_AC, Ff); }
+
+    // ── Kontakt z ziemią: 3 niezależne punkty (przednie koło, lewe/prawe
+    // główne), każdy z WŁASNĄ, w pełni fizyczną siłą sprężysto-tłumiącą
+    // (wzdłuż PRAWDZIWEJ normalnej terenu — obsługuje zbocza bez osobnej
+    // logiki) + siłą tarcia opony (toczenie/hamowanie + przyczepność boczna,
+    // w tym skręt przedniego koła). To CAŁKOWICIE zastępuje dawne
+    // settleOnGear() (które sztucznie "dociągało" pitch/roll do kąta terenu
+    // przez blendowanie) — teraz kąt samolotu na ziemi jest CZYSTYM WYNIKIEM
+    // momentów z tych sił, dokładnie jak w prawdziwym samolocie: jeśli
+    // przednie koło naciska mocniej niż główne, to WŁAŚNIE ta różnica sił
+    // (nie żaden "target kąta") obraca samolot. ───────────────────────
     if (this.gearDown && !this.onGround && !this._nearGroundZone) {
       const mid = this.sampleGearPoint(GEAR_MAIN_MID, noseDir, wingRight, acUp, 'mid');
       if (-mid.pen < GEAR_FAR_CHECK_ENTER_AGL) this._nearGroundZone = true;
     }
-
     let gear = null;
     if (this.gearDown && (this.onGround || this._nearGroundZone)) {
       gear = this.sampleGear(noseDir, wingRight, acUp);
     }
-    const gearContact = !!gear && Math.max(gear.nose.pen, gear.left.pen, gear.right.pen) >= 0;
-
     if (this.gearDown && !this.onGround && this._nearGroundZone && gear) {
       const mainAgl = -((gear.left.pen + gear.right.pen) / 2);
       if (mainAgl > GEAR_FAR_CHECK_EXIT_AGL) this._nearGroundZone = false;
     }
 
-    // ── Odbicie sprężyste przy świeżym, TWARDYM kontakcie ────────────────
-    // Wykrywane nie tylko przy pierwszym kontakcie z ziemią, ale też wtedy, gdy
-    // samolot jedzie po ziemi w stronę stromego spadku i nagle wpada w jego
-    // ścianę — wtedy zamiast bezwładnie "przyklejać" się do terenu, powinien
-    // odskoczyć. Jeśli applyBounce() uzna uderzenie za wystarczająco twarde,
-    // ustawia this.onGround=false i modyfikuje vel — wtedy POMIJAMY settleOnGear
-    // w tej samej klatce (samolot już "odskakuje").
     let bounced = false;
-    if (gearContact && this.gearDown && gear) {
-      bounced = this.applyBounce(gear, { allowWhileOnGround: this.onGround });
+    if (gear) {
+      const gearContact = Math.max(gear.nose.pen, gear.left.pen, gear.right.pen) >= 0;
+      // Twarde uderzenie (lądowanie z dużą prędkością pionową, albo wlecenie w
+      // strome zbocze przy dużej prędkości) to prawdziwe zderzenie, nie zwykłe
+      // osiadanie na zawieszeniu — patrz applyBounce().
+      if (gearContact) bounced = this.applyBounce(gear);
+
+      if (!bounced) {
+        for (const k of ['nose', 'left', 'right']) {
+          const gp = gear[k];
+          if (gp.pen < 0) continue; // koło w powietrzu — brak siły z tej goleni
+          const localOff = k === 'nose' ? GEAR_NOSE : k === 'left' ? GEAR_LEFT : GEAR_RIGHT;
+          const isMain = k !== 'nose';
+          const kSpring = isMain ? GEAR_K_MAIN : GEAR_K_NOSE;
+          const cDamp   = isMain ? GEAR_C_MAIN : GEAR_C_NOSE;
+
+          const { lat: glat, lon: glon } = offsetGeo(this.lat, this.lon, gp.offset.x, -gp.offset.z);
+          const normal = this.terrainNormalAt(glat, glon);
+          // Prędkość TEGO PUNKTU (nie środka masy!) — bryła sztywna się obraca,
+          // więc np. przednie koło porusza się szybciej pionowo niż CG podczas
+          // rotacji. v = v_cg + ω × r.
+          const vPoint = this.vel.clone().add(omegaWorld.clone().cross(gp.offset));
+          const closingSpeed = -vPoint.dot(normal); // dodatnie = dalej się zagłębia w teren
+
+          let fN = kSpring * gp.pen + cDamp * closingSpeed;
+          if (gp.pen > GEAR_SUSPENSION_TRAVEL) {
+            fN += kSpring * GEAR_HARDSTOP_K_MULT * (gp.pen - GEAR_SUSPENSION_TRAVEL);
+          }
+          fN = Math.max(0, fN); // goleń może tylko PCHAĆ, nigdy "ciągnąć" w dół
+
+          const normalForceVec = normal.clone().multiplyScalar(fN);
+
+          // Tarcie opony: rozkładamy prędkość punktu na składową w płaszczyźnie
+          // stycznej do terenu, dalej na kierunek "toczenia" (wzdłuż samolotu)
+          // i "boczny" (poślizg/skręt).
+          const vTangent = vPoint.clone().sub(normal.clone().multiplyScalar(vPoint.dot(normal)));
+          const noseFlat = noseDir.clone().sub(normal.clone().multiplyScalar(noseDir.dot(normal)));
+          if (noseFlat.lengthSq() > 1e-6) noseFlat.normalize();
+          const rightFlat = wingRight.clone().sub(normal.clone().multiplyScalar(wingRight.dot(normal)));
+          if (rightFlat.lengthSq() > 1e-6) rightFlat.normalize();
+          const rollSpeed = vTangent.dot(noseFlat);
+          const latSpeed  = vTangent.dot(rightFlat);
+
+          const muRoll = input.brakes ? TIRE_BRAKE_MU : TIRE_ROLLING_MU;
+          const fRoll = -Math.max(-muRoll * fN, Math.min(muRoll * fN, TIRE_LONG_STIFF * rollSpeed));
+
+          // Tylko przednie koło ma komenderowany kąt skrętu (nosewheel
+          // steering) — koła główne zawsze po prostu "trzymają się" kierunku
+          // jazdy (czysta przyczepność boczna, docelowa prędkość boczna = 0).
+          let latTarget = 0;
+          if (k === 'nose') {
+            latTarget = Math.tan(yawInput * NOSEWHEEL_MAX_RAD) * Math.max(rollSpeed, 0)
+                      * groundSteerTrackFactor(speedKt);
+          }
+          const fLat = -Math.max(-TIRE_LAT_GRIP_MU * fN, Math.min(TIRE_LAT_GRIP_MU * fN,
+                        TIRE_LAT_STIFF * (latSpeed - latTarget)));
+
+          const gearForceVec = normalForceVec
+            .add(noseFlat.clone().multiplyScalar(fRoll))
+            .add(rightFlat.clone().multiplyScalar(fLat));
+
+          totalForce.add(gearForceVec);
+          const Fg = toLocal(gearForceVec);
+          torquePitch += _pitchTorque(localOff, Fg);
+          torqueRoll  += _rollTorque(localOff, Fg);
+          torqueYaw   += _yawTorque(localOff, Fg);
+        }
+      }
+    } else if (!this.gearDown) {
+      // Lądowanie na kadłubie (podwozie schowane) — uproszczony, POJEDYNCZY
+      // punkt kontaktu w miejscu CG (nie 3 osobne punkty jak z wysuniętym
+      // podwoziem), ale wciąż PRAWDZIWA siła sprężysto-tłumiąca, nie tylko
+      // "przyklejenie".
+      const penCg = groundH + gearOffset - this.altM;
+      if (penCg > 0) {
+        const kBelly = A321_PARAMS.mass * GEAR_SUSP_OMEGA_MAIN ** 2;
+        const cBelly = 2 * GEAR_SUSP_ZETA_MAIN * GEAR_SUSP_OMEGA_MAIN * A321_PARAMS.mass;
+        const fN = Math.max(0, kBelly * penCg - cBelly * this.vel.y);
+        totalForce.y += fN;
+        totalForce.x += -this.vel.x * A321_PARAMS.mass * 0.4;
+        totalForce.z += -this.vel.z * A321_PARAMS.mass * 0.4;
+      }
     }
 
-    if (bounced) {
-      // nic więcej do zrobienia w tej klatce — vel już ustawiony przez applyBounce,
-      // samolot przechodzi do gałęzi "w powietrzu" niżej w NASTĘPNEJ klatce.
-    } else if (this.onGround || gearContact) {
-      if (gearContact) this.onGround = true;
+    // ── Integracja: F=ma i τ=I·α, w PEŁNI fizycznie — bez żadnych sztucznych
+    // timerów oderwania, limitów pitch czy blendowania kąta do terenu. ─────
+    if (!bounced) {
+      const accel = totalForce.clone().divideScalar(A321_PARAMS.mass);
+      this.vel.add(accel.multiplyScalar(dtCap));
 
-      // Zawsze koryguj pozycję/pochylenie na podwoziu, gdy wykryto kontakt —
-      // NIEZALEŻNIE od tego, czy zaraz potem samolot odklei się od ziemi dzięki
-      // wystarczającej sile nośnej. Bez tego (dawny błąd): jeśli samolot miał
-      // dość siły nośnej żeby "chcieć" lecieć, korekta w ogóle się nie
-      // wykonywała (bo `onGround` od razu wracało na false niżej) i samolot mógł
-      // zostać zamurowany pod terenem na długi czas, choć formalnie "miał dosyć
-      // siły nośnej, żeby lecieć".
-      if (this.gearDown && gear) {
-        this.settleOnGear(gear, dtCap, isRotatingGround);
-      } else if (!this.gearDown) {
-        this.altM = groundH + gearOffset; // lądowanie na kadłubie (gear w górze) — bez zmian
-      }
+      this.pitchRate += (torquePitch / A321_IYY) * dtCap;
+      this.rollRate  += (torqueRoll  / A321_IXX) * dtCap;
+      this.yawRate   += (torqueYaw   / A321_IZZ) * dtCap;
 
-      if (liftVec.y >= weightN) {
-        this.onGround = false;
-      } else {
-        const hs = Math.sqrt(this.vel.x ** 2 + this.vel.z ** 2);
-        const brake = input.brakes ? 5.0 : 0.06;
-        const spoilerBrake = this.spoilers ? 8.0 : 0;
-        const totalBrake = brake + spoilerBrake;
+      // Uproszczenie kinematyczne (świadome, udokumentowane): przy umiarkowanych,
+      // niesprzężonych kątach (loty liniowe, bez akrobacji) tempo zmiany kątów
+      // Eulera ≈ prędkości kątowe bryły wokół własnych osi. Różnica pojawia się
+      // dopiero przy dużych, jednoczesnych pitch+roll (poza normalnym zakresem
+      // lotu liniowego A321) — pełne równania kinematyczne Eulera (z sin/cos/tan
+      // kątów i ryzykiem "gimbal lock" przy pitch=90°) to możliwe, ale odrębne,
+      // większe rozszerzenie, którego ten samolot w normalnej eksploatacji nie
+      // potrzebuje.
+      this.pitchRad += this.pitchRate * dtCap;
+      this.rollRad  += this.rollRate  * dtCap;
+      this.yawRad   += this.yawRate   * dtCap;
+      this.rollRad   = Math.max(-1.40, Math.min(1.40, this.rollRad));
+      // Miękkie zabezpieczenie przed skrajnościami (np. błąd w innej części
+      // kodu, albo naprawdę ekstremalny manewr) — to NIE jest "tail-strike cap"
+      // sterujący normalnym zachowaniem: samo unikanie tail-strike wynika teraz
+      // z fizyki podwozia (moment z gear force), nie z tego limitu. Na ziemi
+      // zaciśnięty bardziej (margines bezpieczeństwa), w locie znacznie luźniej.
+      const pitchClampMax = this.onGround ? 0.35 : 0.75;
+      this.pitchRad = Math.max(-0.45, Math.min(pitchClampMax, this.pitchRad));
 
-        // Przyspieszenie po stromym terenie: gdy koła są na ziemi i samolot
-        // zjeżdża po zboczu, dodatkowo „ciągnie” go w dół po powierzchni, co
-        // daje bardziej naturalne przyspieszenie i poczucie „staczania się z góry".
-        const best = this.bestGearPoint(gear);
-        const off = best.point.offset;
-        const { lat: glat, lon: glon } = offsetGeo(this.lat, this.lon, off.x, -off.z);
-        const normal = this.terrainNormalAt(glat, glon);
-        const tangent = new THREE.Vector3(0, -1, 0).sub(normal.clone().multiplyScalar(normal.y));
-        let slopeAngleDeg = 0;
-        if (tangent.lengthSq() > 1e-6) {
-          tangent.normalize();
-          const slopeAngle = Math.acos(Math.max(-1, Math.min(1, normal.y)));
-          slopeAngleDeg = slopeAngle * 180 / Math.PI;
-          const slopeAccel = slopeAngleDeg > 8 && hs > 10
-            ? G_ACC * Math.sin(slopeAngle) * GROUND_SLOPE_ACCEL_GAIN * Math.min(1.0, Math.max(0.2, hs / 35.0))
-            : 0;
-          this.vel.x += tangent.x * slopeAccel * dtCap;
-          this.vel.z += tangent.z * slopeAccel * dtCap;
-        }
-
-        this.vel.x += ((thrustVec.x + dragVec.x) / A321_PARAMS.mass - (hs > 0.05 ? this.vel.x / hs * totalBrake : 0)) * dtCap;
-        this.vel.z += ((thrustVec.z + dragVec.z) / A321_PARAMS.mass - (hs > 0.05 ? this.vel.z / hs * totalBrake : 0)) * dtCap;
-        const turnDemand = Math.min(1, Math.abs(yawInput) + Math.abs(rollInput) * 0.35);
-        if (turnDemand > 0.01) {
-          const horizSpeed = Math.sqrt(this.vel.x ** 2 + this.vel.z ** 2);
-          const steerFactor = groundSteerTrackFactor(Units.msToKt(horizSpeed));
-          if (horizSpeed > 0.5 && steerFactor > 0) {
-            const trackDir = new THREE.Vector3(this.vel.x, 0, this.vel.z).normalize();
-            const align = 1.0 - Math.exp(-5.2 * steerFactor * turnDemand * dtCap);
-            const newTrackDir = trackDir.lerp(forward, align).normalize();
-            this.vel.x = newTrackDir.x * horizSpeed;
-            this.vel.z = newTrackDir.z * horizSpeed;
-          }
-        }
-        const groundFriction = slopeAngleDeg > 3 ? GROUND_SLOPE_DAMPING : 0.99992;
-        this.vel.x *= groundFriction;
-        this.vel.z *= groundFriction;
-        this.vel.y = 0;
-      }
-    } else {
-      const ax = (thrustVec.x + dragVec.x + liftVec.x) / A321_PARAMS.mass;
-      const ay = (thrustVec.y + dragVec.y + liftVec.y) / A321_PARAMS.mass - G_ACC;
-      const az = (thrustVec.z + dragVec.z + liftVec.z) / A321_PARAMS.mass;
-      this.vel.x += ax * dtCap;
-      this.vel.y += ay * dtCap;
-      this.vel.z += az * dtCap;
-
-      const newAirspeed = this.vel.length();
-      if (newAirspeed > 5) {
-        const horizVel = new THREE.Vector3(this.vel.x, 0, this.vel.z);
-        const horizSpeed = horizVel.length();
-        if (horizSpeed > 0.5) {
-          const noseDirXZ = new THREE.Vector3(noseDir.x, 0, noseDir.z).normalize();
-          const steer = Math.min(0.12, (q * A321_PARAMS.wingArea * 0.8 / A321_PARAMS.mass) * dtCap);
-          const newHorizDir = horizVel.clone().normalize().lerp(noseDirXZ, steer).normalize();
-          this.vel.x = newHorizDir.x * horizSpeed;
-          this.vel.z = newHorizDir.z * horizSpeed;
-        }
-      }
-
-      // Fallback wyłącznie dla schowanego podwozia (kadłub) — gear w dole
-      // zawsze przechodzi przez gałąź wyżej dzięki wcześniejszemu wykryciu (gearContact).
-      if (!this.gearDown && (this.altM - (groundH + gearOffset)) <= 0) {
-        this.vel.y = this.vel.y < -3 ? this.vel.y * -0.1 : 0;
-        this.altM = groundH + gearOffset;
-        this.onGround = true;
-      }
+      const eastVel  = this.vel.x;
+      const northVel = -this.vel.z;
+      const cosLat = Math.cos(Units.degToRad(this.lat));
+      this.lat  += (northVel / EARTH_RADIUS) * (180 / Math.PI) * dtCap;
+      this.lon  += (eastVel  / (EARTH_RADIUS * cosLat)) * (180 / Math.PI) * dtCap;
+      this.altM += this.vel.y * dtCap;
     }
 
     if (this.vel.length() > A321_PARAMS.VMO) this.vel.setLength(A321_PARAMS.VMO);
 
-    const eastVel  = this.vel.x;
-    const northVel = -this.vel.z;
-    const cosLat = Math.cos(Units.degToRad(this.lat));
-    this.lat += (northVel / EARTH_RADIUS) * (180 / Math.PI) * dtCap;
-    this.lon += (eastVel  / (EARTH_RADIUS * cosLat)) * (180 / Math.PI) * dtCap;
-    this.altM += this.vel.y * dtCap;
+    // ── Stan po integracji: świeża próbka podwozia z NOWEJ pozycji — do tego
+    // służy onGround/agl/markery, i zabezpieczenie awaryjne przed "zamurowaniem"
+    // pod terenem w jednej klatce (duża prędkość × duży dtCap, spawn, teleport). ─
+    let gearFinal = gear;
+    if (this.gearDown && (this.onGround || this._nearGroundZone || bounced)) {
+      gearFinal = this.sampleGear(noseDir, wingRight, acUp);
+      const maxPen = Math.max(gearFinal.nose.pen, gearFinal.left.pen, gearFinal.right.pen);
+      if (maxPen > GEAR_EMERGENCY_PEN_M) {
+        // Zabezpieczenie awaryjne — NIE normalny mechanizm gry, tylko siatka
+        // bezpieczeństwa przed utknięciem pod mapą.
+        const push = 1 - Math.exp(-dtCap / GEAR_EMERGENCY_SETTLE_TAU);
+        this.altM += maxPen * push;
+        if (this.vel.y < 0) this.vel.y *= (1 - push);
+        if (window.DEBUG_GEAR) {
+          console.error(`[GEAR DEBUG] AWARYJNE zanurzenie w ziemię! maxPen=${maxPen.toFixed(2)}m lat=${this.lat.toFixed(6)} lon=${this.lon.toFixed(6)} altM=${this.altM.toFixed(1)}`);
+        }
+      }
+      this.onGround = maxPen >= 0 && !bounced;
+    } else {
+      this.onGround = false;
+    }
 
     this.airspeed = this.vel.length();
     this.terrainM = groundH;
-    this.agl = gear
-      ? Math.max(0, -Math.max(gear.nose.pen, gear.left.pen, gear.right.pen))
+    this.agl = gearFinal
+      ? Math.max(0, -Math.max(gearFinal.nose.pen, gearFinal.left.pen, gearFinal.right.pen))
       : Math.max(0, this.altM - groundH - gearOffset);
     this.vs = this.vel.y;
     this._alpha = alpha; this._cl = cl; this._isStalling = isStalling;
@@ -1009,26 +1280,29 @@ class A321Entity extends Entity {
     this.roll  = this.rollRad  * 180 / Math.PI;
     this._noseDir = noseDir; this._wingRight = wingRight; this._acUp = acUp;
 
-    // DEBUG: co GEAR_DEBUG_HEARTBEAT_SEC sekund wypisz obecny stan, niezależnie
-    // od tego, czy dzieje się coś nietypowego — żeby widać było na bieżąco
-    // wysokość samolotu vs teren, nawet jeśli żadne z powyższych zabezpieczeń nie
-    // zadziałało. Wyłączane przez window.DEBUG_GEAR = false w konsoli.
+    // DEBUG: co GEAR_DEBUG_HEARTBEAT_SEC sekund wypisz obecny stan — widok
+    // wysokości samolotu vs teren i wartości sił/momentów pitch, nawet jeśli
+    // żadne zabezpieczenie nie zadziałało. Wyłączane przez window.DEBUG_GEAR = false.
     if (window.DEBUG_GEAR) {
       this._debugHeartbeat = (this._debugHeartbeat || 0) + dtCap;
       if (this._debugHeartbeat >= GEAR_DEBUG_HEARTBEAT_SEC) {
         this._debugHeartbeat = 0;
-        const gearInfo = gear
-          ? ` | nose:${gear.nose.pen.toFixed(2)}(Z${gear.nose.zoomUsed}) left:${gear.left.pen.toFixed(2)}(Z${gear.left.zoomUsed}) right:${gear.right.pen.toFixed(2)}(Z${gear.right.zoomUsed})`
-          : ' | (daleko od ziemi — sprawdzany tylko 1 punkt co klatkę)';
+        const gi = gearFinal
+          ? ` | nose:${gearFinal.nose.pen.toFixed(2)} left:${gearFinal.left.pen.toFixed(2)} right:${gearFinal.right.pen.toFixed(2)}`
+          : ' | (daleko od ziemi)';
         console.warn(
-          `[GEAR DEBUG] altM=${this.altM.toFixed(1)} groundH(CG)=${groundH.toFixed(1)} agl=${this.agl.toFixed(1)} ` +
-          `vel.y=${this.vel.y.toFixed(1)} onGround=${this.onGround} gearDown=${this.gearDown} nearGroundZone=${this._nearGroundZone} ` +
-          `lat=${this.lat.toFixed(6)} lon=${this.lon.toFixed(6)}${gearInfo}`
+          `[GEAR DEBUG] altM=${this.altM.toFixed(1)} agl=${this.agl.toFixed(1)} vel.y=${this.vel.y.toFixed(1)} ` +
+          `onGround=${this.onGround} gearDown=${this.gearDown}${gi}`
+        );
+        console.warn(
+          `[PHYSICS DEBUG] speedKt=${speedKt.toFixed(1)} pitchDeg=${(this.pitchRad*180/Math.PI).toFixed(2)} ` +
+          `pitchRateDeg=${(this.pitchRate*180/Math.PI).toFixed(2)} torquePitch=${torquePitch.toFixed(0)} Nm ` +
+          `liftN=${liftMag.toFixed(0)} weightN=${(A321_PARAMS.mass*G_ACC).toFixed(0)} elevDefDeg=${(elevatorDeflection*180/Math.PI).toFixed(1)}`
         );
       }
     }
 
-    this._updateGearMarkers(gear);
+    this._updateGearMarkers(gearFinal);
   }
 
   // Aktualizuje pozycję/widoczność/kolor 3 kulek-markerów kolizji podwozia
@@ -1063,6 +1337,16 @@ class A321Entity extends Entity {
     const p = this._parts;
     if (p.fanR) p.fanR.rotation.x = this.fanAngle;
     if (p.fanL) p.fanL.rotation.x = this.fanAngle;
+    
+    if (this.gearDown && this.onGround) {
+      const horizSpeed = Math.sqrt(this.vel.x ** 2 + this.vel.z ** 2);
+      const wheelRadius = 0.5;
+      this.gearAngle += (horizSpeed * dt) / wheelRadius;
+    }
+    if (p.gearFL) p.gearFL.rotation.z = this.gearAngle;
+    if (p.gearBL) p.gearBL.rotation.z = this.gearAngle;
+    if (p.gearBR) p.gearBR.rotation.z = this.gearAngle;
+
     this.beaconTimer += dt;
     if (p.beacon) p.beacon.visible = Math.sin(this.beaconTimer * 6) > 0;
     const flapTarget = this.flaps * 12 * Math.PI / 180;
@@ -1072,10 +1356,30 @@ class A321Entity extends Entity {
     const spoilerTarget = this.spoilers ? 35 * Math.PI / 180 : 0;
     if (p.spoilerR) p.spoilerR.rotation.x = -spoilerTarget;
     if (p.spoilerL) p.spoilerL.rotation.x = -spoilerTarget;
-    const elevDefl = -this.pitchRate * 0.8;
-    if (p.elevatorR) p.elevatorR.rotation.x = elevDefl;
-    if (p.elevatorL) p.elevatorL.rotation.x = elevDefl;
-    if (p.rudder) p.rudder.rotation.y = this.yawRate * 2;
+    
+    // Ster wysokości zależy bezpośrednio od wychylenia wolantu (inputu),
+    // a nie od wynikowego obrotu samolotu. Max ok 25 stopni (0.43 radiana).
+    const elevTarget = (typeof planeInput !== 'undefined' ? planeInput.pitch : 0) * 0.43;
+    this.elevPos += (elevTarget - this.elevPos) * Math.min(1, dt * 10); // LERP dla płynnego ruchu hydrauliki
+    
+    if (p.elevatorR && p.elevatorR.userData.hingeAxis) p.elevatorR.quaternion.setFromAxisAngle(p.elevatorR.userData.hingeAxis, this.elevPos);
+    if (p.elevatorL && p.elevatorL.userData.hingeAxis) p.elevatorL.quaternion.setFromAxisAngle(p.elevatorL.userData.hingeAxis, this.elevPos);
+
+    // NAPRAWA (zgłoszone: "rudder obraca się sam"): poprzednio wizualny obrót
+    // steru kierunku był ustawiany na podstawie this.yawRate — czyli
+    // WYNIKOWEJ prędkości kątowej odchylenia CAŁEGO samolotu, nie wychylenia
+    // pedałów pilota. Teraz gdy yaw jest napędzany prawdziwą fizyką
+    // (stateczność kierunkowa, reakcje podwozia), samolot ma naturalne,
+    // niewielkie korekty yaw nawet gdy pilot nic nie robi — i ster kierunku
+    // "sam" się poruszał w ich takt. Tak jak elevator wyżej: ster wizualnie
+    // reaguje na WYCHYLENIE PEDAŁÓW (inputu), nie na wynik ruchu samolotu.
+    const rudderTarget = (typeof planeInput !== 'undefined' ? planeInput.yaw : 0) * RUDDER_MAX_RAD;
+    this.rudderPos += (rudderTarget - this.rudderPos) * Math.min(1, dt * 10);
+    if (p.rudder && p.rudder.userData.hingeAxis) {
+      p.rudder.quaternion.setFromAxisAngle(p.rudder.userData.hingeAxis, this.rudderPos);
+    } else if (p.rudder) {
+      p.rudder.rotation.y = this.rudderPos;
+    }
 
     this._updateShadow();
   }
