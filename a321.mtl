@@ -1,299 +1,292 @@
-# Blender MTL File: 'None'
-# Material Count: 27
+# Blender 3.4.1 MTL File: 'None'
+# www.blender.org
 
-newmtl Blades1Mtl.001
+newmtl Blades1Mtl.003
 Ns 0.000000
 Ka 1.000000 1.000000 1.000000
-Kd 0.800000 0.800000 0.800000
 Ks 0.000000 0.000000 0.000000
 Ke 0.000000 0.000000 0.000000
 Ni 1.450000
 d 1.000000
 illum 1
-map_Kd a321textures\\engines_blade_left.png
+map_Kd a321textures/engines_blade_left.png
 
-newmtl Blades1Mtl.002
+newmtl Blades1Mtl.004
 Ns 0.000000
 Ka 1.000000 1.000000 1.000000
-Kd 0.800000 0.800000 0.800000
 Ks 0.000000 0.000000 0.000000
 Ke 0.000000 0.000000 0.000000
 Ni 1.450000
 d 1.000000
 illum 1
-map_Kd a321textures\\engines_blade_right.png
+map_Kd a321textures/engines_blade_right.png
 
-newmtl Cabine1Mtl.001
+newmtl Cabine1Mtl.005
 Ns 0.000000
 Ka 1.000000 1.000000 1.000000
-Kd 0.800000 0.800000 0.800000
 Ks 0.000000 0.000000 0.000000
 Ke 0.000000 0.000000 0.000000
 Ni 1.450000
 d 1.000000
 illum 1
-map_Kd a321textures\\cockpit_inside.png
+map_Kd a321textures/cockpit_inside.png
 
-newmtl Cabine1Mtl.002
+newmtl Cabine1Mtl.006
 Ns 0.000000
 Ka 1.000000 1.000000 1.000000
-Kd 0.800000 0.800000 0.800000
 Ks 0.000000 0.000000 0.000000
 Ke 0.000000 0.000000 0.000000
 Ni 1.450000
 d 1.000000
 illum 1
-map_Kd a321textures\\cockpit_interface1.png
+map_Kd a321textures/cockpit_interface1.png
 
-newmtl Cabine1Mtl.003
+newmtl Cabine1Mtl.007
 Ns 0.000000
 Ka 1.000000 1.000000 1.000000
-Kd 0.800000 0.800000 0.800000
 Ks 0.000000 0.000000 0.000000
 Ke 0.000000 0.000000 0.000000
 Ni 1.450000
 d 1.000000
 illum 1
-map_Kd a321textures\\cockpit_interface2.png
+map_Kd a321textures/cockpit_interface2.png
 
-newmtl Cabine1Mtl.004
+newmtl Cabine1Mtl.008
 Ns 0.000000
 Ka 1.000000 1.000000 1.000000
-Kd 0.800000 0.800000 0.800000
 Ks 0.000000 0.000000 0.000000
 Ke 0.000000 0.000000 0.000000
 Ni 1.450000
 d 1.000000
 illum 1
-map_Kd a321textures\\cockpit_interface3.png
+map_Kd a321textures/cockpit_interface3.png
 
-newmtl Color1Mtl.001
+newmtl Color1Mtl.010
 Ns 0.000000
 Ka 1.000000 1.000000 1.000000
-Kd 0.800000 0.800000 0.800000
 Ks 0.000000 0.000000 0.000000
 Ke 0.000000 0.000000 0.000000
 Ni 1.450000
 d 1.000000
 illum 1
-map_Kd a321textures\\doors_back.png
+map_Kd a321textures/doors_back.png
 
-newmtl Color1Mtl.002
+newmtl Color1Mtl.011
 Ns 0.000000
 Ka 1.000000 1.000000 1.000000
-Kd 0.800000 0.800000 0.800000
 Ks 0.000000 0.000000 0.000000
 Ke 0.000000 0.000000 0.000000
 Ni 1.450000
 d 1.000000
 illum 1
-map_Kd a321textures\\doors_front+doors_cargo.png
+map_Kd a321textures/doors_front+doors_cargo.png
 
-newmtl Color1Mtl.003
+newmtl Color1Mtl.012
 Ns 0.000000
 Ka 1.000000 1.000000 1.000000
-Kd 0.800000 0.800000 0.800000
 Ks 0.000000 0.000000 0.000000
 Ke 0.000000 0.000000 0.000000
 Ni 1.450000
 d 1.000000
 illum 1
-map_Kd a321textures\\engines.png
+map_Kd a321textures/engines.png
 
-newmtl Color1Mtl.004
+newmtl Color1Mtl.013
 Ns 0.000000
 Ka 1.000000 1.000000 1.000000
-Kd 0.800000 0.800000 0.800000
 Ks 0.000000 0.000000 0.000000
 Ke 0.000000 0.000000 0.000000
 Ni 1.450000
 d 1.000000
 illum 1
-map_Kd a321textures\\engines_cover.png
+map_Kd a321textures/engines_cover.png
 
-newmtl Color1Mtl.005
+newmtl Color1Mtl.014
 Ns 0.000000
 Ka 1.000000 1.000000 1.000000
-Kd 0.800000 0.800000 0.800000
 Ks 0.000000 0.000000 0.000000
 Ke 0.000000 0.000000 0.000000
 Ni 1.450000
 d 1.000000
 illum 1
-map_Kd a321textures\\fuselage_back.png
+map_Kd a321textures/fuselage_back.png
 
-newmtl Color1Mtl.006
+newmtl Color1Mtl.015
 Ns 0.000000
 Ka 1.000000 1.000000 1.000000
-Kd 0.800000 0.800000 0.800000
 Ks 0.000000 0.000000 0.000000
 Ke 0.000000 0.000000 0.000000
 Ni 1.450000
 d 1.000000
 illum 1
-map_Kd a321textures\\fuselage_front.png
+map_Kd a321textures/fuselage_front.png
 
-newmtl Color1Mtl.007
+newmtl Color1Mtl.016
 Ns 0.000000
 Ka 1.000000 1.000000 1.000000
-Kd 0.800000 0.800000 0.800000
 Ks 0.000000 0.000000 0.000000
 Ke 0.000000 0.000000 0.000000
 Ni 1.450000
 d 1.000000
 illum 1
-map_Kd a321textures\\fuselage_middle.png
+map_Kd a321textures/fuselage_middle.png
 
-newmtl Color1Mtl.008
+newmtl Color1Mtl.017
 Ns 0.000000
 Ka 1.000000 1.000000 1.000000
-Kd 0.800000 0.800000 0.800000
 Ks 0.000000 0.000000 0.000000
 Ke 0.000000 0.000000 0.000000
 Ni 1.450000
 d 1.000000
 illum 1
-map_Kd a321textures\\fuselage_middle_out.png
+map_Kd a321textures/fuselage_middle_out.png
 
-newmtl Color1Mtl.009
+newmtl Color1Mtl.018
 Ns 0.000000
 Ka 1.000000 1.000000 1.000000
-Kd 0.800000 0.800000 0.800000
 Ks 0.000000 0.000000 0.000000
 Ke 0.000000 0.000000 0.000000
 Ni 1.450000
 d 1.000000
 illum 1
-map_Kd a321textures\\gears_covers.png
+map_Kd a321textures/gears_covers.png
 
-newmtl Meshpart1Mtl.001
+newmtl Elevatorleft0011Mtl.001
 Ns 0.000000
 Ka 1.000000 1.000000 1.000000
-Kd 0.800000 0.800000 0.800000
+Ks 0.023550 0.023550 0.023550
+Ke 0.000000 0.000000 0.000000
+Ni 1.450000
+d 1.000000
+illum 2
+map_Kd a321textures/stabiliser+engine_part.png
+
+newmtl Elevatorright0011Mtl
+Ns 0.000000
+Ka 1.000000 1.000000 1.000000
+Ks 0.023550 0.023550 0.023550
+Ke 0.000000 0.000000 0.000000
+Ni 1.450000
+d 1.000000
+illum 2
+map_Kd a321textures/stabiliser+engine_part.png
+
+newmtl Meshpart1Mtl.013
+Ns 0.000000
+Ka 1.000000 1.000000 1.000000
 Ks 0.000000 0.000000 0.000000
 Ke 0.000000 0.000000 0.000000
 Ni 1.450000
 d 1.000000
 illum 1
-map_Kd a321textures\\back_wall+cargo+front_wall.png
+map_Kd a321textures/back_wall+cargo+front_wall.png
 
-newmtl Meshpart1Mtl.002
+newmtl Meshpart1Mtl.014
 Ns 0.000000
 Ka 1.000000 1.000000 1.000000
-Kd 0.800000 0.800000 0.800000
 Ks 0.000000 0.000000 0.000000
 Ke 0.000000 0.000000 0.000000
 Ni 1.450000
 d 1.000000
 illum 1
-map_Kd a321textures\\cockpit_windows_cover_out.png
+map_Kd a321textures/cockpit_windows_cover_out.png
 
-newmtl Meshpart1Mtl.003
+newmtl Meshpart1Mtl.015
 Ns 0.000000
 Ka 1.000000 1.000000 1.000000
-Kd 0.800000 0.800000 0.800000
 Ks 0.000000 0.000000 0.000000
 Ke 0.000000 0.000000 0.000000
 Ni 1.450000
 d 1.000000
 illum 1
-map_Kd a321textures\\gears_back_tires.png
+map_Kd a321textures/stabiliser+engine_part.png
 
-newmtl Meshpart1Mtl.004
+newmtl Meshpart1Mtl.016
 Ns 0.000000
 Ka 1.000000 1.000000 1.000000
-Kd 0.800000 0.800000 0.800000
 Ks 0.000000 0.000000 0.000000
 Ke 0.000000 0.000000 0.000000
 Ni 1.450000
 d 1.000000
 illum 1
-map_Kd a321textures\\gears_front_tire.png
+map_Kd a321textures/gears_back_tires.png
 
-newmtl Meshpart1Mtl.005
+newmtl Meshpart1Mtl.017
 Ns 0.000000
 Ka 1.000000 1.000000 1.000000
-Kd 0.800000 0.800000 0.800000
 Ks 0.000000 0.000000 0.000000
 Ke 0.000000 0.000000 0.000000
 Ni 1.450000
 d 1.000000
 illum 1
-map_Kd a321textures\\gears_holder_front.png
+map_Kd a321textures/gears_front_tire.png
 
-newmtl Meshpart1Mtl.006
+newmtl Meshpart1Mtl.018
 Ns 0.000000
 Ka 1.000000 1.000000 1.000000
-Kd 0.800000 0.800000 0.800000
 Ks 0.000000 0.000000 0.000000
 Ke 0.000000 0.000000 0.000000
 Ni 1.450000
 d 1.000000
 illum 1
-map_Kd a321textures\\gears_holder_left.png
+map_Kd a321textures/gears_holder_front.png
 
-newmtl Meshpart1Mtl.007
+newmtl Meshpart1Mtl.019
 Ns 0.000000
 Ka 1.000000 1.000000 1.000000
-Kd 0.800000 0.800000 0.800000
 Ks 0.000000 0.000000 0.000000
 Ke 0.000000 0.000000 0.000000
 Ni 1.450000
 d 1.000000
 illum 1
-map_Kd a321textures\\gears_holder_right.png
+map_Kd a321textures/gears_holder_left.png
 
-newmtl Meshpart1Mtl.008
+newmtl Meshpart1Mtl.020
 Ns 0.000000
 Ka 1.000000 1.000000 1.000000
-Kd 0.800000 0.800000 0.800000
 Ks 0.000000 0.000000 0.000000
 Ke 0.000000 0.000000 0.000000
 Ni 1.450000
 d 1.000000
 illum 1
-map_Kd a321textures\\stabiliser+engine_part.png
+map_Kd a321textures/gears_holder_right.png
 
-newmtl Meshpart1Mtl.009
+newmtl Meshpart1Mtl.021
 Ns 0.000000
 Ka 1.000000 1.000000 1.000000
-Kd 0.800000 0.800000 0.800000
 Ks 0.000000 0.000000 0.000000
 Ke 0.000000 0.000000 0.000000
 Ni 1.450000
 d 1.000000
 illum 1
-map_Kd a321textures\\wing_left_middle.png
+map_Kd a321textures/wing_left_out.png
 
-newmtl Meshpart1Mtl.010
+newmtl Meshpart1Mtl.022
 Ns 0.000000
 Ka 1.000000 1.000000 1.000000
-Kd 0.800000 0.800000 0.800000
 Ks 0.000000 0.000000 0.000000
 Ke 0.000000 0.000000 0.000000
 Ni 1.450000
 d 1.000000
 illum 1
-map_Kd a321textures\\wing_left_out.png
+map_Kd a321textures/wing_left_middle.png
 
-newmtl Meshpart1Mtl.011
+newmtl Meshpart1Mtl.023
 Ns 0.000000
 Ka 1.000000 1.000000 1.000000
-Kd 0.800000 0.800000 0.800000
 Ks 0.000000 0.000000 0.000000
 Ke 0.000000 0.000000 0.000000
 Ni 1.450000
 d 1.000000
 illum 1
-map_Kd a321textures\\wing_right_middle.png
+map_Kd a321textures/wing_right_out.png
 
-newmtl Meshpart1Mtl.012
+newmtl Meshpart1Mtl.024
 Ns 0.000000
 Ka 1.000000 1.000000 1.000000
-Kd 0.800000 0.800000 0.800000
 Ks 0.000000 0.000000 0.000000
 Ke 0.000000 0.000000 0.000000
 Ni 1.450000
 d 1.000000
 illum 1
-map_Kd a321textures\\wing_right_out.png
+map_Kd a321textures/wing_right_middle.png
