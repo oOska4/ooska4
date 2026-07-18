@@ -7,17 +7,24 @@ let contrails = null;
 
 function animate(t) {
   requestAnimationFrame(animate);
-  const dt = Math.min(0.05, (t - lastRenderT) / 1000);
+  const frameDt = Math.min(0.1, (t - lastRenderT) / 1000); // cap at 100ms
   lastRenderT = t; fc++;
 
+  // NAPRAWA: updatePlaneInput() musi iść PRZED physicsTick() — inaczej fizyka
+  // w tej klatce liczyła się na podstawie sterowania SPRZED klatki (input
+  // odczytany dopiero PO physicsTick trałał dopiero do NASTĘPNEGO kroku
+  // fizyki), co dawało stałe opóźnienie ~1 klatki między ruchem
+  // drążka/pedałów a rzeczywistą reakcją samolotu.
   updatePlaneInput();
+
+  // Advance physics
   physicsTick(t);
 
-  updateOrbitKeyboard(dt);
-  applyJoystick(dt);
-  applyZoomButtons(dt);
+  updateOrbitKeyboard(frameDt);
+  applyJoystick(frameDt);
+  applyZoomButtons(frameDt);
 
-  applyCamera(dt);
+  applyCamera(frameDt);
 
   const trackLat  = activeEntity ? activeEntity.lat : orb.lat;
   const trackLon  = activeEntity ? activeEntity.lon : orb.lon;
@@ -28,21 +35,21 @@ function animate(t) {
 
   for (const e of entities.values()) {
     e.syncMesh();
-    e.renderUpdate(dt);
+    e.renderUpdate(frameDt);
   }
 
   if (fc % 3 === 0) updateHUD();
-  if (fc % 2 === 0 && weather) weather.update(dt, camera.position, activeEntity ? activeEntity.altM : 0);
+  if (fc % 2 === 0 && weather) weather.update(frameDt, camera.position, activeEntity ? activeEntity.altM : 0);
 
   // Niebo (Słońce/Księżyc/gwiazdy, atmosfera, chmury wolumetryczne, deszcz)
   // aktualizowane co klatkę dla płynności animacji czasu i smug deszczu.
-  updateSky(dt);
+  updateSky(frameDt);
 
   // Smugi kondensacyjne silników A321 — emisja + aktualizacja czasu życia
   // cząsteczek, co klatkę dla płynności (patrz sim-contrails.js).
   if (contrails) {
     const ct = t / 1000;
-    contrails.emit(ct, dt);
+    contrails.emit(ct, frameDt);
     contrails.update(ct);
   }
 

@@ -68,28 +68,21 @@ function removeEntity(id) {
   if (activeEntity === e) activeEntity = null;
 }
 
-// ── Stały krok fizyki (fixed timestep) ────────────────────────────────────────
+// ── Krok fizyki (zmienny dt, liczony co klatkę renderowania) ──────────────────
+// Każda encja sama ogranicza swój dt do rozsądnego maksimum wewnątrz własnego
+// physicsUpdate() (patrz np. dtCap w A321Entity), więc nie ma tu osobnego,
+// stałego kroku fizyki ani bufora nadrabiania zaległości — to był dodatek
+// spoza tej sesji (razem z interpolacją syncMesh(alpha) powyżej), który
+// został wycofany na prośbę użytkownika.
 
-const PHYS_DT    = 1 / 60;
-const PHYS_DT_MS = PHYS_DT * 1000;
-let   physAccum    = 0;
-let   physLastTime = performance.now();
+let physLastTime = performance.now();
 
 function physicsTick(now) {
-  const elapsed = now - physLastTime;
-  physLastTime  = now;
-  physAccum    += elapsed;
-  // Zabezpieczenie przed "spiralą śmierci": po dłuższym zacięciu (GC, zmiana
-  // karty, skok przy ładowaniu) physAccum mógłby urosnąć do setek ms i kazać
-  // wykonać dziesiątki iteracji fizyki w jednej klatce, co tylko wydłużałoby
-  // kolejne zacięcie. Ograniczamy nadrabianie do max. 5 kroków.
-  physAccum = Math.min(physAccum, PHYS_DT_MS * 5);
-  while (physAccum >= PHYS_DT_MS) {
-    physAccum -= PHYS_DT_MS;
-    for (const entity of entities.values()) {
-      if (!entity.active) continue;
-      entity.physicsUpdate(PHYS_DT, planeInput);
-      entity.integrate(PHYS_DT);
-    }
+  const dt = Math.min(0.1, (now - physLastTime) / 1000);
+  physLastTime = now;
+  for (const entity of entities.values()) {
+    if (!entity.active) continue;
+    entity.physicsUpdate(dt, planeInput);
+    entity.integrate(dt);
   }
 }

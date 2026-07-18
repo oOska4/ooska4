@@ -244,6 +244,16 @@ const RUDDER_MAX_RAD    = 0.35;
 const RUDDER_CL_PER_RAD = 2.4;
 const FIN_AREA          = 21.0; // m²
 const FIN_CL_BETA       = 2.0;  // 1/rad — stateczność kierunkowa ("efekt chorągiewki")
+// NAPRAWA (zgłoszone: "po skręcaniu lub użyciu ruddera heading zaczyna
+// oscylować — samolot sie cały czas obraca lewo prawo, heading bez roll"):
+// naturalne tłumienie yaw (z samego członu rate w finBeta) okazało się zbyt
+// słabe — dawało bardzo wolno gasnący "dutch roll" (klasyczny, sprzężony
+// tryb yaw+roll w samolotach) trwający 50+ sekund po każdym skręcie/ruderze.
+// Ten sam pomysł co PITCH_DAMPING_GAIN wyżej: dodatkowy, jawny człon
+// tłumiący niezależny od statecznika kierunkowego. Zweryfikowane
+// symulacyjnie (Node, impuls rudder + puszczenie): bez tego heading osiada
+// poniżej 1° dopiero po ~50s, z tym — po ~20s.
+const YAW_DAMPING_GAIN  = 0.4;
 
 const AILERON_MAX_RAD    = 0.30;
 const AILERON_CL_PER_RAD = 0.09; // moment przechylający jako współczynnik bezwymiarowy (mnożony przez q·S·rozpiętość)
@@ -258,6 +268,19 @@ const ROLL_DAMPING_GAIN  = 0.35; // tłumienie przechylenia (odpowiednik Clp)
 // podnosi ζ do ok. 0.5 (wygodne, zbliżone do typowych airlinierów) —
 // zweryfikowane numerycznie, stałe na każdej prędkości.
 const PITCH_DAMPING_GAIN = 1.0;
+// NAPRAWA (zgłoszone: "samolot sam cały czas zwiększa pitch"): bez żadnego
+// trymu, "puszczenie drązka" oznaczało elevatorDeflection=0 na sztywno — ale
+// przy zerowym wychyleniu steru moment obrotowy z reguły NIE wychodzi na
+// zero (równowaga wymaga równoczesnego zbilansowania siły pionowej, poziomej
+// I momentu — trzy warunki, a bez trymu mamy do dyspozycji tylko dwa: kąt
+// natarcia i throttle). W prawdziwym samolocie do tego służy fizyczny trymer
+// (osobny od drążka) — tu, zamiast budować osobny interfejs, trym dostraja
+// się sam, POWOLI, tylko gdy pilot NIE trzyma wyraźnego inputu pitch,
+// dążąc do wyzerowania prędkości kątowej pitch. To świadome uproszczenie
+// growplayowe (real trim tab działa inaczej), zweryfikowane symulacyjnie
+// (Node, 120s różnych scenariuszy) — bez tego samolot potrafił dryfować o
+// kilkanaście stopni w locie prostym "hands-off".
+const PITCH_TRIM_RATE = 0.025; // rad wychylenia trymu na sekundę, na jednostkę pitchRate (rad/s)
 const NOSEWHEEL_MAX_RAD  = 0.90; // maks. skręt przedniego koła (~50°) — skuteczność spada z prędkością, patrz groundSteerTrackFactor()
 
 // Podwozie: sztywność/tłumienie zawieszenia jako PRAWDZIWE siły sprężysto-
@@ -729,6 +752,7 @@ class A321Entity extends Entity {
     this.prevFlapPos = 0;
     this.elevPos = 0;
     this.rudderPos = 0;
+    this.pitchTrim = 0; // patrz PITCH_TRIM_RATE
   }
 
   get headingDeg() {
@@ -758,6 +782,7 @@ class A321Entity extends Entity {
     this.spoilers = false;
     this.onGround = opts.onGround ?? true;
     this._nearGroundZone = opts.onGround ?? true;
+    this.pitchTrim = 0;
     this.heading = this.headingDeg;
     this.pitch = this.pitchRad * 180 / Math.PI;
     this.roll = 0;
@@ -1035,7 +1060,10 @@ class A321Entity extends Entity {
     // podnosi nos (pchnięcie w dół za osią obrotu podnosi przednią część),
     // dokładnie jak wychylenie steru wysokości w górę w prawdziwym samolocie.
     // Bez tego minusa działało odwrotnie: strzałka w górę pochylała nos w dół.
-    const elevatorDeflection = -pitchInput * ELEVATOR_MAX_RAD;
+    // Doliczamy też powolny auto-trym (patrz PITCH_TRIM_RATE) — tak jak w
+    // prawdziwym samolocie, "zerowe" wychylenie steru to trym, nie zawsze
+    // dosłownie zero stopni.
+    const elevatorDeflection = -pitchInput * ELEVATOR_MAX_RAD + this.pitchTrim;
     // Rozdzielone na część STATYCZNĄ (kąt natarcia samolotu, mnożona przez
     // słaby TAIL_CL_ALPHA_STATIC — to "ile pitch chce wrócić do trymu sam")
     // i część RATE (wkład z prędkości kątowej pitch, mnożona przez pełny
@@ -1097,6 +1125,11 @@ class A321Entity extends Entity {
     { const Ff = toLocal(finForceVec);
       torqueYaw  += _yawTorque(FIN_AC, Ff);
       torqueRoll += _rollTorque(FIN_AC, Ff); }
+    // Dodatkowe tłumienie yaw (patrz YAW_DAMPING_GAIN) — ta sama, standardowa
+    // forma co PITCH_DAMPING_GAIN/ROLL_DAMPING_GAIN (q·S·L²·rate/(2V), tu z
+    // długością kadłuba jako charakterystyczną długością dla osi yaw).
+    torqueYaw -= YAW_DAMPING_GAIN * q * A321_PARAMS.wingArea * A321_FUSELAGE_LEN * A321_FUSELAGE_LEN
+               * this.yawRate / (2 * Math.max(airspeed, 5));
 
     // ── Kontakt z ziemią: 3 niezależne punkty (przednie koło, lewe/prawe
     // główne), każdy z WŁASNĄ, w pełni fizyczną siłą sprężysto-tłumiącą
@@ -1227,14 +1260,30 @@ class A321Entity extends Entity {
       this.pitchRad += this.pitchRate * dtCap;
       this.rollRad  += this.rollRate  * dtCap;
       this.yawRad   += this.yawRate   * dtCap;
-      this.rollRad   = Math.max(-1.40, Math.min(1.40, this.rollRad));
+      // NAPRAWA: przy trafieniu na limit zerujemy TEŻ prędkość kątową (jeśli
+      // dalej "pcha" w tę samą stronę) — inaczej samolot był "przyklejony" do
+      // ściany limitu z rosnącym, niewidocznym "napięciem" (rate dalej rosło),
+      // które potem gwałtownie się rozladowywało przy odblokowaniu.
+      if (this.rollRad > 1.40) { this.rollRad = 1.40; if (this.rollRate > 0) this.rollRate = 0; }
+      if (this.rollRad < -1.40) { this.rollRad = -1.40; if (this.rollRate < 0) this.rollRate = 0; }
       // Miękkie zabezpieczenie przed skrajnościami (np. błąd w innej części
       // kodu, albo naprawdę ekstremalny manewr) — to NIE jest "tail-strike cap"
       // sterujący normalnym zachowaniem: samo unikanie tail-strike wynika teraz
       // z fizyki podwozia (moment z gear force), nie z tego limitu. Na ziemi
       // zaciśnięty bardziej (margines bezpieczeństwa), w locie znacznie luźniej.
       const pitchClampMax = this.onGround ? 0.35 : 0.75;
-      this.pitchRad = Math.max(-0.45, Math.min(pitchClampMax, this.pitchRad));
+      if (this.pitchRad > pitchClampMax) { this.pitchRad = pitchClampMax; if (this.pitchRate > 0) this.pitchRate = 0; }
+      if (this.pitchRad < -0.45) { this.pitchRad = -0.45; if (this.pitchRate < 0) this.pitchRate = 0; }
+
+      // Powolny auto-trym: TYLKO gdy pilot nie trzyma wyraźnego inputu pitch,
+      // powoli koryguje trym tak, by prędkość kątowa pitch dążyła do zera —
+      // patrz PITCH_TRIM_RATE. Dzięki temu "puszczenie drążka" naprawdę
+      // zostawia samolot w miarę spokojnie tam, gdzie był, zamiast dryfować w
+      // stronę dowolnego kąta, przy którym moment akurat wychodzi na zero.
+      if (Math.abs(pitchInput) < 0.05) {
+        this.pitchTrim += this.pitchRate * PITCH_TRIM_RATE * dtCap;
+        this.pitchTrim = Math.max(-ELEVATOR_MAX_RAD, Math.min(ELEVATOR_MAX_RAD, this.pitchTrim));
+      }
 
       const eastVel  = this.vel.x;
       const northVel = -this.vel.z;
@@ -1332,8 +1381,8 @@ class A321Entity extends Entity {
     }
   }
 
-  renderUpdate(dt) {
-    this.fanAngle += this.throttle * dt * 30;
+  renderUpdate(frameDt) {
+    this.fanAngle += this.throttle * frameDt * 30;
     const p = this._parts;
     if (p.fanR) p.fanR.rotation.x = this.fanAngle;
     if (p.fanL) p.fanL.rotation.x = this.fanAngle;
@@ -1341,16 +1390,16 @@ class A321Entity extends Entity {
     if (this.gearDown && this.onGround) {
       const horizSpeed = Math.sqrt(this.vel.x ** 2 + this.vel.z ** 2);
       const wheelRadius = 0.5;
-      this.gearAngle += (horizSpeed * dt) / wheelRadius;
+      this.gearAngle += (horizSpeed * frameDt) / wheelRadius;
     }
     if (p.gearFL) p.gearFL.rotation.z = this.gearAngle;
     if (p.gearBL) p.gearBL.rotation.z = this.gearAngle;
     if (p.gearBR) p.gearBR.rotation.z = this.gearAngle;
 
-    this.beaconTimer += dt;
+    this.beaconTimer += frameDt;
     if (p.beacon) p.beacon.visible = Math.sin(this.beaconTimer * 6) > 0;
     const flapTarget = this.flaps * 12 * Math.PI / 180;
-    this.prevFlapPos += (flapTarget - this.prevFlapPos) * Math.min(1, dt * 4);
+    this.prevFlapPos += (flapTarget - this.prevFlapPos) * Math.min(1, frameDt * 4);
     if (p.flapR) p.flapR.rotation.x = this.prevFlapPos;
     if (p.flapL) p.flapL.rotation.x = this.prevFlapPos;
     const spoilerTarget = this.spoilers ? 35 * Math.PI / 180 : 0;
@@ -1360,7 +1409,7 @@ class A321Entity extends Entity {
     // Ster wysokości zależy bezpośrednio od wychylenia wolantu (inputu),
     // a nie od wynikowego obrotu samolotu. Max ok 25 stopni (0.43 radiana).
     const elevTarget = (typeof planeInput !== 'undefined' ? planeInput.pitch : 0) * 0.43;
-    this.elevPos += (elevTarget - this.elevPos) * Math.min(1, dt * 10); // LERP dla płynnego ruchu hydrauliki
+    this.elevPos += (elevTarget - this.elevPos) * Math.min(1, frameDt * 10); // LERP dla płynnego ruchu hydrauliki
     
     if (p.elevatorR && p.elevatorR.userData.hingeAxis) p.elevatorR.quaternion.setFromAxisAngle(p.elevatorR.userData.hingeAxis, this.elevPos);
     if (p.elevatorL && p.elevatorL.userData.hingeAxis) p.elevatorL.quaternion.setFromAxisAngle(p.elevatorL.userData.hingeAxis, this.elevPos);
@@ -1374,7 +1423,7 @@ class A321Entity extends Entity {
     // "sam" się poruszał w ich takt. Tak jak elevator wyżej: ster wizualnie
     // reaguje na WYCHYLENIE PEDAŁÓW (inputu), nie na wynik ruchu samolotu.
     const rudderTarget = (typeof planeInput !== 'undefined' ? planeInput.yaw : 0) * RUDDER_MAX_RAD;
-    this.rudderPos += (rudderTarget - this.rudderPos) * Math.min(1, dt * 10);
+    this.rudderPos += (rudderTarget - this.rudderPos) * Math.min(1, frameDt * 10);
     if (p.rudder && p.rudder.userData.hingeAxis) {
       p.rudder.quaternion.setFromAxisAngle(p.rudder.userData.hingeAxis, this.rudderPos);
     } else if (p.rudder) {
