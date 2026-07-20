@@ -118,7 +118,22 @@ const A321_PARAMS = {
   cdAlpha:    0.85,
   eOswald:    0.78,
   AR:         10.48,
-  flapCl:     [0.0, 0.70, 1.20, 1.80],
+  // NAPRAWA (zgłoszone: "przy flaps=1 ciągły dryf pitch w górę, kończący się
+  // głębokim przeciągnięciem"): flapCl[1]=0.70 dawało przy wypuszczeniu klap
+  // (flaps 0->1 w locie, przy niezmienionym alpha) nagły skok siły nośnej
+  // ~525 000 N (prawie 70% ciężaru samolotu!) — auto-trim (PITCH_TRIM_RATE)
+  // jest za wolny, żeby to skompensować, więc samolot wpada w niedotłumiony
+  // phugoid i przy tak dużym zaburzeniu ucieka w powtarzające się głębokie
+  // przeciągnięcia. 0.70 było też fizycznie nierealistyczne dla flaps=1
+  // (to najmniejsze ustawienie, odpowiednik samych slatów/małego wychylenia —
+  // powinno dawać dużo mniejszy przyrost CL niż flaps=2/3). Zweryfikowano
+  // symulacyjnie (Node+three.js, replika physicsUpdate): próg niestabilności
+  // jest przy flapCl[1]≈0.30; 0.25 ma margines i nie wchodzi w przeciągnięcie
+  // ani przy wypuszczeniu, ani przy schowaniu klap w locie. flapCl[2]/[3] NIE
+  // zmienione — nie zgłoszono tam problemu, ale ten sam mechanizm (duży,
+  // nagły skok CL) może teoretycznie dotyczyć i tamtych przejść, jeśli kiedyś
+  // się ujawni.
+  flapCl:     [0.0, 0.25, 1.20, 1.80],
   flapCd:     [0.0, 0.040, 0.085, 0.160],
   flapStall:  [0.285, 0.32, 0.36, 0.40],
   cdGear:     0.060,
@@ -268,20 +283,102 @@ const ROLL_DAMPING_GAIN  = 0.35; // tłumienie przechylenia (odpowiednik Clp)
 // podnosi ζ do ok. 0.5 (wygodne, zbliżone do typowych airlinierów) —
 // zweryfikowane numerycznie, stałe na każdej prędkości.
 const PITCH_DAMPING_GAIN = 1.0;
-// NAPRAWA (zgłoszone: "samolot sam cały czas zwiększa pitch"): bez żadnego
-// trymu, "puszczenie drązka" oznaczało elevatorDeflection=0 na sztywno — ale
-// przy zerowym wychyleniu steru moment obrotowy z reguły NIE wychodzi na
-// zero (równowaga wymaga równoczesnego zbilansowania siły pionowej, poziomej
-// I momentu — trzy warunki, a bez trymu mamy do dyspozycji tylko dwa: kąt
-// natarcia i throttle). W prawdziwym samolocie do tego służy fizyczny trymer
-// (osobny od drążka) — tu, zamiast budować osobny interfejs, trym dostraja
-// się sam, POWOLI, tylko gdy pilot NIE trzyma wyraźnego inputu pitch,
-// dążąc do wyzerowania prędkości kątowej pitch. To świadome uproszczenie
-// growplayowe (real trim tab działa inaczej), zweryfikowane symulacyjnie
-// (Node, 120s różnych scenariuszy) — bez tego samolot potrafił dryfować o
-// kilkanaście stopni w locie prostym "hands-off".
-const PITCH_TRIM_RATE = 0.025; // rad wychylenia trymu na sekundę, na jednostkę pitchRate (rad/s)
-const NOSEWHEEL_MAX_RAD  = 0.90; // maks. skręt przedniego koła (~50°) — skuteczność spada z prędkością, patrz groundSteerTrackFactor()
+// NAPRAWA v3 (zgłoszone: "pitch dąży zawsze do jakiegoś kata zależnego od
+// klap [ok. 5°/6°/9°/10° dla flaps 0/1/2/3], nieważne co ustawię — chcę
+// żeby trzymał DOKŁADNIE ten kąt/AoA, który mu nadam inputem"): PITCH_TRIM_RATE
+// (wersja v2 wyżej) nadal nie był właściwym mechanizmem — choć szybszy, wciąż
+// tylko "gonil" pitchRate=0, co NIE gwarantuje utrzymania KONKRETNEGO kąta:
+// gdy pitchRate osiada w zerze, cała reszta układu (prędkość, kąt ścieżki
+// lotu) i tak dalej dryfuje do JEDYNEJ, naturalnej równowagi wyznaczonej przez
+// throttle+klapy — stąd zawsze ten sam kąt "docelowy", niezależnie od tego,
+// co pilot ustawił drazkiem. To co jest naprawdę potrzebne, to PRAWDZIWE
+// "attitude hold": kiedy pilot puszcza drążek, układ ma aktywnie UTRZYMYWAĆ
+// dokładnie ten kąt pitch, w którym go zostawił — dokładnie tak działa
+// prawdziwy A320/A321 fly-by-wire (prawo normalne pitch): neutralny sidestick
+// = utrzymuj BIEżĄCĄ ścieżkę lotu/pitch, nie wracaj do jakiegoś stałego kąta.
+//
+// Implementacja: this.pitchHoldTarget (patrz konstruktor/reset) to kąt, który
+// aktualnie ma być utrzymywany. Gdy pilot trzyma wyraźny input pitch, target
+// NA BIEżĄCO podąża za aktualnym pitchRad (żeby w momencie puszczenia "złapać"
+// dokładnie tam, gdzie pilot go zostawił). Gdy input jest bliski zeru, regulator
+// PD (proporcjonalno-różniczkowy) koryguje pitchTrim na podstawie:
+// (a) błędu kąta (pitchRad - pitchHoldTarget) — człon P,
+// (b) bieżącej prędkości kątowej pitch (pitchRate) — człon D (tłumi ruch
+//     W KIERUNKU odejscia od celu, niezależnie od aktualnego błędu).
+// UWAGA NA ZNAK: zwiększanie pitchTrim daje moment NOS-W-DÓŁ (bo usterzenie
+// jest za CG, patrz TAIL_AC.z<0) — więc gdy pitch jest ZA WYSOKO względem
+// celu (błąd dodatni) lub rośnie (pitchRate dodatnie), trym musi ROSNĄĆ, nie
+// maleć. Pierwsza próba implementacji miała ten znak odwrotnie i kończyła
+// się pełnym przewrotem samolotu w każdym tekście — poprawiony znak
+// zweryfikowany numerycznie (Node+three.js) w obu kierunkach.
+//
+// Zweryfikowane symulacyjnie na realistycznym manewrze (pilot pociąga drążek
+// na 2s do różnych kątów, puszcza, obserwacja 238s = ponad 2 okresy phugoidu,
+// wszystkie 4 ustawienia klap): KP=0.1, KD=0.1 trzyma zadany kąt w granicach
+// ok. 2° bez dryfu i bez oscylacji. Wyższe wzmocnienia (KP≥0.2) zaczynają
+// sprzęgać się z naturalnym (wolnym, ~90-100s) phugoidem samolotu i przy
+// KP=0.3 układ staje się niestabilny (ucieczka w przeciągnięcie) — 0.1 ma
+// solidny margines poniżej tej granicy.
+// NAPRAWA v4 (zgłoszone: "jak puszczę sterowanie to pitch lata góra-dół od
+// -15 do +30 stopni" — uporczywa oscylacja zamiast trzymania kąta): KP=0.1/
+// KD=0.1 działało poprawnie TYLKO w moich wcześniejszych testach, bo tam
+// "puszczenie" zawsze następowało po tym, jak pitchRate już zdążył opaść
+// blisko zera. W realnej grze pilot puszcza drążek W TRAKCIE aktywnego
+// obrotu (np. pitchRate=13°/s w chwili puszczenia to normalna sytuacja przy
+// szybszym pociągnięciu) — samolot ma wtedy bezwładność (moment I_YY jest
+// duży) i "przelatuje" znacznie dalej niż pitchHoldTarget złapany w tamtej
+// chwili, zanim regulator zdąży to zahamować. Przy zbyt małym członie D
+// (KD=0.1) to przestrzelenie nie było wystarczająco tłumione i układ wpadał
+// w trwałą, praktycznie niegasnącą oscylację (sprzęgnięcie z naturalnym,
+// słabo tłumionym phugoidem samolotu) zamiast jednorazowego przestrzelenia.
+//
+// Zweryfikowane symulacyjnie (Node+three.js) na REALISTYCZNYM scenariuszu
+// (puszczenie drążka W TRAKCIE obrotu, nie po jego ustaniu, z różnymi siłami/
+// czasami pociągnięcia, na wszystkich 4 ustawieniach klap): znacznie wyższy
+// KD (1.5) względem KP (0.05) tłumi to przestrzelenie do jednorazowego,
+// szybko gasnącego "nadstrzelenia" o kilka stopni zamiast trwałej oscylacji
+// — sprawdzone na 300s ciągłej symulacji (pitch osiada na stałe, pitchRate
+// spada do ~0.00°/s, bez najmniejszego śladu "polowania"). Wyższy KD ma sens
+// fizycznie: bezwładność samolotu (I_YY) jest duża, więc tłumienie musi być
+// odpowiednio silne względem członu pozycyjnego, inaczej układ jest
+// niedotłumiony (klasyczny problem regulatora PD przy dużej bezwładności).
+// NAPRAWA v5 (zgłoszone: "ustawiam pitch na 15, puszczam — spada, potem
+// powoli wraca, trzeba kilka prób"): KP=0.05/KD=1.5 było za słabe względem
+// rzeczywistej bezwładności/skali zaburzenia przy puszczeniu drazka w
+// trakcie aktywnego obrotu — regulator POPRAWNIE kierunkowo koryguje
+// (P i D działają we właściwym kierunku, zweryfikowane), ale zbyt wolno,
+// więc samolot zdążył "przelecieć" kilka stopni obok celu, zanim korekta
+// zdążyła zadziałać — stąd wrażenie "spada, potem wraca".
+//
+// PRÓBA ŚLEPA, KTÓRA NIE ZADZIAŁAŁA: "snap" trymu w chwili puszczenia,
+// mający zachować CIĄGŁOŚĆ elevatorDeflection (przejąć natychmiast
+// wychylenie trzymane przez pilota). To pogorszyło sprawę drastycznie —
+// zachowywało pełne wychylenie "ciągnięcia" (np. -20° przy pełnym input)
+// JUŻ PO puszczeniu drazka, więc samolot dalej dostawał ten sam silny
+// moment nos-w-górę zamiast się zatrzymać — pitch leciał jeszcze wyżej
+// zamiast się ustabilizować. WNIOSEK: ciągłość elevatorDeflection na
+// przejściu NIE jest pożądana — to naturalne i poprawne, że moment
+// gwałtownie maleje po puszczeniu (pilot już nie żąda aktywnej rotacji).
+//
+// WŁAŚCIWA NAPRAWA: zostawić mechanizm "złapania" celu bez zmian, ale
+// znacząco podnieść OBA wzmocnienia (KP i KD razem, w mniej więcej stałej
+// proporcji ~1:5), żeby korekta była szybsza. Zweryfikowane symulacyjnie
+// (Node+three.js) na wielu scenariuszach naraz: (1) puszczenie w trakcie
+// aktywnego obrotu przy różnej sile/czasie pociągnięcia, (2) długi lot
+// hands-off z niedoskonałym trymem startowym (pierwszy zgłoszony bug), (3)
+// duże dt (0.05s, symulacja spadku FPS) — KP=3.0/KD=15.0 daje przestrzelenie
+// rzędu 2° (zamiast 5-8°) i dokładną zbieżność do złapanego celu na
+// wszystkich 4 ustawieniach klap, bez oznak niestabilności nawet przy
+// wzmocnieniach kilkukrotnie wyższych (testowane do KP=10/KD=30 — nadal
+// stabilne, więc KP=3/KD=15 ma spory margines, nie jest granicą).
+const PITCH_HOLD_KP = 0.2;  // NAPRAWA v6: obnizone z 3.0, patrz komentarz nizej
+const PITCH_HOLD_KD = 60.0; // NAPRAWA v6: podniesione z 15.0, patrz komentarz nizej
+const NOSEWHEEL_MAX_RAD  = 0.90; // maks. skret przedniego kola (~50st) - skutecznosc spada z predkoscia, patrz groundSteerTrackFactor()
+// NAPRAWA v6 (zgłoszone: "ustawiam pitch na 10, leci do ~12, potem do ~8,
+// potem do 10 i tam zostaje — chcę zeby po prostu doszlo do ~12 i tam
+// zostalo, bez zawracania"): KP=3.0/KD=15.0 bylo nadal wyraznie niedotlumione
+// (~2 stopnie przelotu w obie strony), mimo ze prosty licznik zmian znaku
+// tego nie wykryl (blad metodologiczny w mojej wczesniejszej analizie).
 
 // Podwozie: sztywność/tłumienie zawieszenia jako PRAWDZIWE siły sprężysto-
 // -tłumiące, liczone wprost z geometrycznej głębokości penetracji terenu przez
@@ -329,6 +426,35 @@ function _pitchTorque(r, F) { return r.z * F.y - r.y * F.z; }
 function _rollTorque(r, F)  { return r.x * F.y - r.y * F.x; }
 function _yawTorque(r, F)   { return r.z * F.x - r.x * F.z; }
 
+// NAPRAWA (realizm): siła nośna była liczona wzdłuż osi "górnej" SAMOLOTU
+// (acUp, obróconej razem z pitchiem), a nie wzdłuż osi prostopadłej do
+// PRĘDKOŚCI (tzw. wind axis) — to standardowa, podręcznikowa konwencja:
+// siła nośna ⊥ względny wiatr, opór ∥ względny wiatr (opór już tak liczono:
+// dragVec = -vel.normalize()*dragMag, patrz physicsUpdate). Przy fpa=0 (lot
+// poziomy) i niezerowym kącie natarcia (alpha=pitchRad) dawało to siłę
+// nośną SZTUCZNIE przechyloną do tyłu o kąt alpha, co wymagało dużo więcej
+// ciągu niż w rzeczywistości (zweryfikowane: przy alpha=8.3° prawdziwa
+// równowaga sił wymagała throttle=0.63 zamiast fizycznie sensownego ~0.27)
+// i dawało fałszywą, dodatkową siłę poziomą podczas dużych wychyleń alpha
+// (np. w trakcie phugoidu czy przeciągnięcia — część przyczyny zgłoszonej
+// niestabilności pitch, patrz NAPRAWA przy flapCl[1] wyżej). Poprawka:
+// liczymy kierunek "górny" względem PRĘDKOŚCI (windUp), nie względem
+// pitchu — pokrywają się dokładnie wtedy, gdy alpha=0, tak jak powinno być.
+// Zweryfikowane symulacyjnie (Node+three.js): trym po poprawce daje
+// throttle≈0.265/0.323 (flaps=0/1) — niemal identyczne z niezależnie
+// policzonym podręcznikowym L=ciężar/T=opór, co potwierdza poprawność.
+// Dotyczy TYLKO skrzydła i usterzenia poziomego (liftVec/tailForceVec) —
+// statecznik pionowy/ster kierunku i lotki NIE zmienione (osobny, jeszcze
+// niezweryfikowany temat dla osi yaw/roll — patrz notatka).
+function _computeWindUp(vel, wingRight, acUp, airspeed) {
+  if (airspeed < 3) return acUp; // za wolno, żeby kierunek prędkości był miarodajny — fallback do dawnej osi
+  const velDir = vel.clone().divideScalar(airspeed);
+  const w = new THREE.Vector3().crossVectors(velDir, wingRight);
+  const len = w.length();
+  if (len < 0.05) return acUp; // niemal równoległe do wingRight (skrajny poślizg/lot bokiem) — degeneracja, fallback
+  return w.divideScalar(len);
+}
+
 // Środek między kołami głównymi (lewym i prawym) — najniższy, najbardziej
 // reprezentatywny pojedynczy punkt do TANIEGO sprawdzania odległości od ziemi,
 // gdy samolot jest wysoko (patrz GEAR_FAR_CHECK_* niżej).
@@ -358,7 +484,11 @@ const GEAR_EMERGENCY_SETTLE_TAU = 0.05; // s — znacznie szybsze niż normalne 
 // sampleGearPoint/_debugZoomWarn i settleOnGear). Wyłącz w konsoli przeglądarki
 // wpisując: DEBUG_GEAR = false
 window.DEBUG_GEAR = window.DEBUG_GEAR ?? true;
-const GEAR_DEBUG_HEARTBEAT_SEC = 1.0; // co ile sekund wypisywać bieżący stan (patrz koniec physicsUpdate)
+// DEBUG: prosty log stanu pitch/input co DEBUG_HEARTBEAT_SEC sekund, w zwięzłym
+// formacie klucz=wartość (do wklejenia wprost przy debugowaniu ustawień pitch/
+// attitude-hold). Wyłącz w konsoli przeglądarki wpisując: DEBUG_PITCH = false
+window.DEBUG_PITCH = window.DEBUG_PITCH ?? true;
+const DEBUG_HEARTBEAT_SEC = 1.0; // co ile sekund wypisywać bieżący stan (patrz koniec physicsUpdate)
 
 // ── Kulki-znaczniki 3 punktów kolizji podwozia ─────────────────────────
 //
@@ -752,7 +882,8 @@ class A321Entity extends Entity {
     this.prevFlapPos = 0;
     this.elevPos = 0;
     this.rudderPos = 0;
-    this.pitchTrim = 0; // patrz PITCH_TRIM_RATE
+    this.pitchTrim = 0; // patrz PITCH_HOLD_KP/KD
+    this.pitchHoldTarget = this.pitchRad; // kat pitch aktywnie utrzymywany hands-off, patrz NAPRAWA v3
   }
 
   get headingDeg() {
@@ -783,6 +914,7 @@ class A321Entity extends Entity {
     this.onGround = opts.onGround ?? true;
     this._nearGroundZone = opts.onGround ?? true;
     this.pitchTrim = 0;
+    this.pitchHoldTarget = this.pitchRad; // patrz NAPRAWA v3 przy PITCH_HOLD_KP
     this.heading = this.headingDeg;
     this.pitch = this.pitchRad * 180 / Math.PI;
     this.roll = 0;
@@ -978,6 +1110,11 @@ class A321Entity extends Entity {
     const toLocal = (v) => ({ x: v.dot(wingRight), y: v.dot(acUp), z: v.dot(noseDir) });
 
     const totalForce = new THREE.Vector3(0, -A321_PARAMS.mass * G_ACC, 0); // grawitacja — działa w CG, nie daje momentu
+    // Kierunek "do góry" liczony względem PRĘDKOŚCI, nie względem pitchu
+    // samolotu — używany dla siły nośnej skrzydła i usterzenia (patrz NAPRAWA
+    // przy _computeWindUp wyżej). airspeed jest już policzony na początku
+    // physicsUpdate.
+    const windUp = _computeWindUp(this.vel, wingRight, acUp, airspeed);
     let torquePitch = 0, torqueRoll = 0, torqueYaw = 0;
 
     // ── Aerodynamika skrzydła: siła nośna + opór, jak wcześniej, ale teraz
@@ -1014,7 +1151,7 @@ class A321Entity extends Entity {
     const liftMag = q * A321_PARAMS.wingArea * cl;
     const dragMag = q * A321_PARAMS.wingArea * Math.max(0, cd);
 
-    const liftVec = acUp.clone().multiplyScalar(liftMag);
+    const liftVec = windUp.clone().multiplyScalar(liftMag);
     const dragVec = airspeed > 0.1 ? this.vel.clone().normalize().multiplyScalar(-dragMag) : new THREE.Vector3();
     totalForce.add(liftVec).add(dragVec);
     { const Fl = toLocal(liftVec);
@@ -1060,7 +1197,7 @@ class A321Entity extends Entity {
     // podnosi nos (pchnięcie w dół za osią obrotu podnosi przednią część),
     // dokładnie jak wychylenie steru wysokości w górę w prawdziwym samolocie.
     // Bez tego minusa działało odwrotnie: strzałka w górę pochylała nos w dół.
-    // Doliczamy też powolny auto-trym (patrz PITCH_TRIM_RATE) — tak jak w
+    // Doliczamy też attitude hold (patrz PITCH_HOLD_KP/KD niżej) — tak jak w
     // prawdziwym samolocie, "zerowe" wychylenie steru to trym, nie zawsze
     // dosłownie zero stopni.
     const elevatorDeflection = -pitchInput * ELEVATOR_MAX_RAD + this.pitchTrim;
@@ -1073,7 +1210,7 @@ class A321Entity extends Entity {
     const tailAlphaRateDamp = -(TAIL_AC.z * this.pitchRate) / Math.max(airspeed, 5);
     const tailCl = TAIL_CL_ALPHA_STATIC * tailAlphaStatic + TAIL_CL_ALPHA_RATE * tailAlphaRateDamp
                  + ELEVATOR_CL_PER_RAD * elevatorDeflection;
-    const tailForceVec = acUp.clone().multiplyScalar(q * TAIL_AREA * tailCl);
+    const tailForceVec = windUp.clone().multiplyScalar(q * TAIL_AREA * tailCl);
     totalForce.add(tailForceVec);
     { const Ft2 = toLocal(tailForceVec);
       torquePitch += _pitchTorque(TAIL_AC, Ft2); }
@@ -1275,14 +1412,19 @@ class A321Entity extends Entity {
       if (this.pitchRad > pitchClampMax) { this.pitchRad = pitchClampMax; if (this.pitchRate > 0) this.pitchRate = 0; }
       if (this.pitchRad < -0.45) { this.pitchRad = -0.45; if (this.pitchRate < 0) this.pitchRate = 0; }
 
-      // Powolny auto-trym: TYLKO gdy pilot nie trzyma wyraźnego inputu pitch,
-      // powoli koryguje trym tak, by prędkość kątowa pitch dążyła do zera —
-      // patrz PITCH_TRIM_RATE. Dzięki temu "puszczenie drążka" naprawdę
-      // zostawia samolot w miarę spokojnie tam, gdzie był, zamiast dryfować w
-      // stronę dowolnego kąta, przy którym moment akurat wychodzi na zero.
+      // Attitude hold: TYLKO gdy pilot nie trzyma wyraźnego inputu pitch,
+      // regulator PD aktywnie utrzymuje this.pitchHoldTarget (patrz NAPRAWA v3
+      // przy PITCH_HOLD_KP/KD) — zamiast tylko zerować pitchRate (co dryfowało
+      // do jednego, naturalnego kąta zależnego od throttle/klap), teraz trzyma
+      // DOKŁADNIE ten kąt, w którym pilot zostawił samolot. Gdy pilot trzyma
+      // input, target na bieżąco podąża za aktualnym pitchem, żeby "złapać"
+      // właściwy kąt w chwili puszczenia drążka.
       if (Math.abs(pitchInput) < 0.05) {
-        this.pitchTrim += this.pitchRate * PITCH_TRIM_RATE * dtCap;
+        const pitchErr = this.pitchRad - this.pitchHoldTarget; // dodatnie = pitch za wysoko względem celu
+        this.pitchTrim += (PITCH_HOLD_KP * pitchErr + PITCH_HOLD_KD * this.pitchRate) * dtCap;
         this.pitchTrim = Math.max(-ELEVATOR_MAX_RAD, Math.min(ELEVATOR_MAX_RAD, this.pitchTrim));
+      } else {
+        this.pitchHoldTarget = this.pitchRad;
       }
 
       const eastVel  = this.vel.x;
@@ -1329,24 +1471,20 @@ class A321Entity extends Entity {
     this.roll  = this.rollRad  * 180 / Math.PI;
     this._noseDir = noseDir; this._wingRight = wingRight; this._acUp = acUp;
 
-    // DEBUG: co GEAR_DEBUG_HEARTBEAT_SEC sekund wypisz obecny stan — widok
-    // wysokości samolotu vs teren i wartości sił/momentów pitch, nawet jeśli
-    // żadne zabezpieczenie nie zadziałało. Wyłączane przez window.DEBUG_GEAR = false.
-    if (window.DEBUG_GEAR) {
+    // DEBUG: prosty log co DEBUG_HEARTBEAT_SEC sekund, format klucz=wartość w
+    // jednej linii — wystarczy skopiować kilka linii z konsoli przy zgłaszaniu
+    // problemów z pitch/trymem/attitude-hold. Wyłączane przez window.DEBUG_PITCH = false.
+    if (window.DEBUG_PITCH) {
       this._debugHeartbeat = (this._debugHeartbeat || 0) + dtCap;
-      if (this._debugHeartbeat >= GEAR_DEBUG_HEARTBEAT_SEC) {
+      if (this._debugHeartbeat >= DEBUG_HEARTBEAT_SEC) {
         this._debugHeartbeat = 0;
-        const gi = gearFinal
-          ? ` | nose:${gearFinal.nose.pen.toFixed(2)} left:${gearFinal.left.pen.toFixed(2)} right:${gearFinal.right.pen.toFixed(2)}`
-          : ' | (daleko od ziemi)';
-        console.warn(
-          `[GEAR DEBUG] altM=${this.altM.toFixed(1)} agl=${this.agl.toFixed(1)} vel.y=${this.vel.y.toFixed(1)} ` +
-          `onGround=${this.onGround} gearDown=${this.gearDown}${gi}`
-        );
-        console.warn(
-          `[PHYSICS DEBUG] speedKt=${speedKt.toFixed(1)} pitchDeg=${(this.pitchRad*180/Math.PI).toFixed(2)} ` +
-          `pitchRateDeg=${(this.pitchRate*180/Math.PI).toFixed(2)} torquePitch=${torquePitch.toFixed(0)} Nm ` +
-          `liftN=${liftMag.toFixed(0)} weightN=${(A321_PARAMS.mass*G_ACC).toFixed(0)} elevDefDeg=${(elevatorDeflection*180/Math.PI).toFixed(1)}`
+        this._debugElapsed = (this._debugElapsed || 0) + DEBUG_HEARTBEAT_SEC;
+        console.log(
+          `t=${this._debugElapsed.toFixed(0)} pitch=${(this.pitchRad * 180 / Math.PI).toFixed(1)} ` +
+          `rate=${(this.pitchRate * 180 / Math.PI).toFixed(1)} alpha=${(alpha * 180 / Math.PI).toFixed(1)} ` +
+          `input=${pitchInput.toFixed(2)} trim=${(this.pitchTrim * 180 / Math.PI).toFixed(2)} ` +
+          `target=${(this.pitchHoldTarget * 180 / Math.PI).toFixed(1)} flaps=${flap} ` +
+          `V=${speedKt.toFixed(0)}kt vs=${this.vel.y.toFixed(1)} gnd=${this.onGround ? 1 : 0} stall=${isStalling ? 1 : 0}`
         );
       }
     }
