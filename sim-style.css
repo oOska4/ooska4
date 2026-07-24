@@ -33,7 +33,7 @@ canvas { display: block; }
   display: flex; flex-direction: column;
   align-items: center; justify-content: center; text-align: center;
   opacity: 0; visibility: hidden;
-  transition: opacity 0.9s ease;
+  transition: opacity 0.9s ease, visibility 0.9s ease;
   pointer-events: none;
 }
 .boot-phase.show { opacity: 1; visibility: visible; }
