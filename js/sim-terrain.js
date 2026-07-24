@@ -603,10 +603,17 @@ function updateTiles(lat, lon, camGroundDist) {
   // Załaduj brakujące (wyższy zoom = wyższy priorytet)
   const missing = [...wantTiles.keys()].filter(k => !tileMeshes.has(k) && !loadingTiles.has(k));
   missing.sort((a, b) => parseInt(b) - parseInt(a));
+  const pending = [];
   for (const key of missing) {
     const parts = key.split('_');
-    loadTile(+parts[1], +parts[2], +parts[0], wantTiles.get(key));
+    pending.push(loadTile(+parts[1], +parts[2], +parts[0], wantTiles.get(key)));
   }
 
-  return activeTileZoom;
+  // UWAGA: zwracaliśmy tu wcześniej `activeTileZoom` (nikt tego nie odczytywał —
+  // sprawdzone we wszystkich wywołaniach). Teraz zwracamy tablicę obietnic
+  // kafelków WŁAŚNIE uruchomionych w tym wywołaniu — ekran ładowania
+  // (sim-main.js) czeka na nią przy starcie, żeby pasek postępu odzwierciedlał
+  // realne wczytywanie zdjęć satelitarnych, a nie sztuczny czas. `activeTileZoom`
+  // dalej jest dostępne jako zmienna modułowa (patrz sim-buildings.js).
+  return pending;
 }
