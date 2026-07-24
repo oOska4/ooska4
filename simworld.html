@@ -4,15 +4,35 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <title>A321 Flight Sim</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="sim-style.css">
 </head>
 <body>
 
-<!-- ══ LOADING ══════════════════════════════════════════════════════════════ -->
+<!-- ══ BOOT / LOADING ═══════════════════════════════════════════════════════
+     Sekwencja: czarny ekran → logo studia (WKR GAMES) → autor (oOska4) →
+     właściwy ekran ładowania z realnym statusem wczytywanych zasobów.
+     Sterowanie fazami: sim-main.js (klasa .show przełącza fade in/out). ═════ -->
 <div id="loading">
-  <h1>A321</h1>
-  <p>WORLD FLIGHT SIMULATOR<br><span id="loading-text">ŁADOWANIE TERENU EPWR · WROCŁAW</span></p>
-  <div class="load-bar-bg"><div class="load-bar" id="loadbar"></div></div>
+
+  <div class="boot-phase" id="phase-studio">
+    <div class="boot-logotype">WKR&nbsp;<span>GAMES</span></div>
+  </div>
+
+  <div class="boot-phase" id="phase-author">
+    <div class="boot-handle">oOska4</div>
+    <div class="boot-tagline">FLIGHT&nbsp;SIMULATION</div>
+  </div>
+
+  <div class="boot-phase" id="phase-load">
+    <h1>A321</h1>
+    <p class="boot-sub">WORLD FLIGHT SIMULATOR</p>
+    <div class="load-bar-bg"><div class="load-bar" id="loadbar"></div></div>
+    <p class="boot-status" id="loading-text">Inicjalizacja…</p>
+  </div>
+
 </div>
 
 <!-- ══ CANVAS ═══════════════════════════════════════════════════════════════ -->
