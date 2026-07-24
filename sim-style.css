@@ -17,16 +17,86 @@ canvas { display: block; }
 #c { width: 100vw; height: 100vh; }
 #hud { position: fixed; inset: 0; pointer-events: none; z-index: 10; }
 
-/* ── Loading ──────────────────────────────────────────────────── */
+/* ── Boot / Loading ───────────────────────────────────────────────
+   3 fazy nakładające się na siebie w jednym czarnym kontenerze (#loading):
+   1) phase-studio  — logo "WKR GAMES"
+   2) phase-author  — nick "oOska4"
+   3) phase-load    — właściwy pasek + status wczytywania
+   sim-main.js przełącza .show na każdej fazie po kolei (fade in → hold →
+   fade out), więc tło zawsze zostaje czystą czernią, bez przebłysków. ──── */
 #loading {
-  position: fixed; inset: 0; background: #050810; z-index: 200;
-  display: flex; flex-direction: column;
-  align-items: center; justify-content: center; color: #c8e8ff;
+  position: fixed; inset: 0; background: #000; z-index: 200;
+  overflow: hidden; color: #c8e8ff;
 }
-#loading h1 { font-size: 32px; letter-spacing: 8px; color: #fff; margin-bottom: 6px; }
-#loading p  { font-size: 11px; letter-spacing: 3px; color: #4a8fbf; margin-bottom: 36px; text-align: center; line-height: 1.8; }
-.load-bar-bg { width: 280px; height: 3px; background: #1a2a3a; border-radius: 2px; }
-.load-bar    { height: 100%; background: linear-gradient(90deg,#1a7aff,#44ccff); border-radius: 2px; width: 0%; transition: width .3s; }
+.boot-phase {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center; text-align: center;
+  opacity: 0; visibility: hidden;
+  transition: opacity 0.9s ease;
+  pointer-events: none;
+}
+.boot-phase.show { opacity: 1; visibility: visible; }
+
+/* Faza 1 — logo studia */
+.boot-logotype {
+  font-family: 'Orbitron', 'Courier New', monospace;
+  font-weight: 900; font-size: 40px; color: #eaf6ff;
+  text-shadow: 0 0 18px rgba(80,180,255,.55), 0 0 46px rgba(40,120,220,.28);
+}
+.boot-logotype span { color: #44ccff; }
+.boot-phase.show .boot-logotype { animation: bootTrackInWide 1.1s cubic-bezier(.16,.84,.44,1) both; }
+
+/* Faza 2 — autor */
+.boot-handle {
+  font-family: 'Orbitron', 'Courier New', monospace;
+  font-weight: 500; font-size: 28px; letter-spacing: 6px; color: #cfe9ff;
+  text-shadow: 0 0 14px rgba(80,180,255,.4);
+}
+.boot-tagline {
+  margin-top: 10px; font-size: 10px; letter-spacing: 5px; color: #4a8fbf;
+  font-family: 'Courier New', monospace;
+  opacity: 0;
+}
+.boot-phase.show .boot-handle  { animation: bootTrackInMed 1.1s cubic-bezier(.16,.84,.44,1) both; }
+.boot-phase.show .boot-tagline { animation: bootFadeIn 0.8s ease 0.5s both; }
+
+/* Logo studia: docelowo letter-spacing 10px (szeroki, monumentalny odstęp) */
+@keyframes bootTrackInWide {
+  from { letter-spacing: -2px; opacity: 0; }
+  to   { letter-spacing: 10px; opacity: 1; }
+}
+/* Nick autora: docelowo 6px, zgodnie z bazowym stylem .boot-handle */
+@keyframes bootTrackInMed {
+  from { letter-spacing: -2px; opacity: 0; }
+  to   { letter-spacing: 6px; opacity: 1; }
+}
+@keyframes bootFadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* Faza 3 — ekran ładowania właściwego */
+#phase-load h1 {
+  font-family: 'Orbitron', 'Courier New', monospace;
+  font-size: 32px; letter-spacing: 9px; color: #fff; margin-bottom: 6px;
+  text-shadow: 0 0 16px rgba(80,180,255,.3);
+}
+.boot-sub {
+  font-size: 11px; letter-spacing: 3px; color: #4a8fbf; margin-bottom: 30px;
+}
+.load-bar-bg { width: 280px; height: 3px; background: #1a2a3a; border-radius: 2px; overflow: hidden; }
+.load-bar    {
+  height: 100%; width: 0%; border-radius: 2px;
+  background: linear-gradient(90deg,#1a7aff,#44ccff);
+  box-shadow: 0 0 8px rgba(70,180,255,.6);
+  transition: width .35s ease;
+}
+.boot-status {
+  margin-top: 16px; min-height: 14px;
+  font-size: 10px; letter-spacing: 2px; color: #7fb8e6;
+  font-family: 'Courier New', monospace;
+}
 
 /* ── Panel bazowy ─────────────────────────────────────────────── */
 .panel {
