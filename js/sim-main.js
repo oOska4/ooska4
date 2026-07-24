@@ -60,12 +60,63 @@ function animate(t) {
 
 // ── Start ────────────────────────────────────────────────────────────────────
 
-const loadbar = document.getElementById('loadbar');
-let loadProg = 0;
-const loadInterval = setInterval(() => {
-  loadProg = Math.min(95, loadProg + Math.random() * 14 + 5);
-  loadbar.style.width = loadProg + '%';
-}, 150);
+const bootStudio = document.getElementById('phase-studio');
+const bootAuthor = document.getElementById('phase-author');
+const bootLoad   = document.getElementById('phase-load');
+const loadbar     = document.getElementById('loadbar');
+const loadingText = document.getElementById('loading-text');
+
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// ── Sekwencja intro: czarny ekran → logo studia → nick autora → loading ──────
+// Czas trwania fade in/fade out (900ms) MUSI zgadzać się z `transition: opacity`
+// na .boot-phase w sim-style.css — zmieniaj oba razem.
+(async function bootIntro() {
+  await sleep(200);                 // chwila czystej czerni na starcie
+  bootStudio.classList.add('show');
+  await sleep(1600);                // "WKR GAMES" trzyma się w pełni widoczne
+  bootStudio.classList.remove('show');
+  await sleep(900);                 // fade-out studia
+
+  bootAuthor.classList.add('show');
+  await sleep(1500);                // "oOska4" trzyma się w pełni widoczne
+  bootAuthor.classList.remove('show');
+  await sleep(900);                 // fade-out autora
+
+  bootLoad.classList.add('show');   // od teraz widoczny prawdziwy pasek postępu
+})();
+
+// ── Realny postęp ładowania ───────────────────────────────────────────────────
+// Zamiast losowego paska "na oko" — każdy etap ma wagę i zapala się dopiero
+// gdy odpowiadająca mu prawdziwa operacja (sieć/parsowanie/inicjalizacja)
+// faktycznie się zakończy. Tekst statusu przewija etykiety etapów wciąż
+// trwających, więc widać co realnie się dzieje, nawet gdy kilka rzeczy
+// ładuje się jednocześnie.
+const LOAD_STAGES = [
+  { key: 'dem',   label: 'Ładowanie danych wysokościowych terenu (DEM)…', weight: 25, done: false },
+  { key: 'model', label: 'Wczytywanie modelu samolotu A321…',             weight: 30, done: false },
+  { key: 'sat',   label: 'Ładowanie zdjęć satelitarnych terenu…',         weight: 25, done: false },
+  { key: 'osm',   label: 'Wyszukiwanie budynków (OpenStreetMap)…',        weight: 12, done: false },
+  { key: 'wx',    label: 'Inicjalizacja atmosfery i pogody…',             weight: 8,  done: false },
+];
+const LOAD_TOTAL_WEIGHT = LOAD_STAGES.reduce((s, x) => s + x.weight, 0);
+
+function completeStage(key) {
+  const stage = LOAD_STAGES.find(s => s.key === key);
+  if (!stage || stage.done) return;
+  stage.done = true;
+  const doneWeight = LOAD_STAGES.filter(s => s.done).reduce((s, x) => s + x.weight, 0);
+  loadbar.style.width = Math.min(100, Math.round(doneWeight / LOAD_TOTAL_WEIGHT * 100)) + '%';
+}
+
+let statusRotIdx = 0;
+loadingText.textContent = LOAD_STAGES[0].label;
+const statusTimer = setInterval(() => {
+  const pending = LOAD_STAGES.filter(s => !s.done);
+  if (!pending.length) return;
+  loadingText.textContent = pending[statusRotIdx % pending.length].label;
+  statusRotIdx++;
+}, 900);
 
 (async function init() {
   try {
@@ -77,6 +128,7 @@ const loadInterval = setInterval(() => {
       prefetchDEM(SPAWN_LAT, SPAWN_LON, 6,  9),
     ]);
   } catch (e) { console.error('[init] DEM prefetch failed', e); }
+  completeStage('dem');
 
   const plane = new A321Entity({ id: 'a321' });
   plane.reset({});
@@ -89,12 +141,31 @@ const loadInterval = setInterval(() => {
 
   applyCamera(0);
   const initialGroundDist = cameraGroundDistanceM(orb.dist);
-  updateTiles(SPAWN_LAT, SPAWN_LON, initialGroundDist);
-  loadBuildings(SPAWN_LAT, SPAWN_LON, initialGroundDist);
+
+  // updateTiles() zwraca teraz obietnice kafelków satelitarnych właśnie
+  // uruchomionych (patrz sim-terrain.js) — czekamy na pierwszy komplet, żeby
+  // pasek odzwierciedlał realne wczytanie terenu wokół miejsca startu.
+  const satTilesP = Promise.allSettled(updateTiles(SPAWN_LAT, SPAWN_LON, initialGroundDist))
+    .then(() => completeStage('sat'));
+
+  const buildingsP = loadBuildings(SPAWN_LAT, SPAWN_LON, initialGroundDist)
+    .then(() => completeStage('osm'))
+    .catch(e => { console.error('[init] loadBuildings failed', e); completeStage('osm'); });
+
+  // Model A321 (obj+mtl) ładuje się w tle od razu w konstruktorze encji —
+  // modelReadyPromise (patrz sim-physics.js) pozwala tu na niego poczekać.
+  const modelP = (plane.modelReadyPromise || Promise.resolve())
+    .then(() => completeStage('model'))
+    .catch(() => completeStage('model')); // błąd już zalogowany w loadA321Model()
+
   updateCameraHUD();
 
-  clearInterval(loadInterval);
+  await Promise.allSettled([satTilesP, buildingsP, modelP]);
+
+  clearInterval(statusTimer);
   loadbar.style.width = '100%';
+  loadingText.textContent = 'Gotowe do startu.';
+
   setTimeout(() => {
     document.getElementById('loading').style.display = 'none';
     document.getElementById('hud').style.display = 'block';
@@ -116,10 +187,12 @@ const loadInterval = setInterval(() => {
         prefetchDEM(la, lo, 5, 11);
       }
     }, 800);
-    // Inicjalizacja pogody
+    // Inicjalizacja pogody — proceduralna (bez sieci), ale liczona jako osobny
+    // etap dla czytelności UI; zamykamy go od razu po synchronicznej inicjalizacji.
     weather = new WeatherSystem();
     weatherUI.init();
     weatherUI.syncUI();
+    completeStage('wx');
 
     lastRenderT = performance.now();
     animate(lastRenderT);
