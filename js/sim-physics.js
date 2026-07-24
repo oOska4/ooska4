@@ -731,7 +731,10 @@ class A321Entity extends Entity {
     // klatkach, zanim samolot zdąży się realnie oddalić od terenu.
     this._bounceCooldown = 0;
 
-    loadA321Model().then(model => {
+    // Zapisujemy promise na encji (bez zmiany zachowania — .then/.catch działają
+    // jak wcześniej) tak, by init() w sim-main.js mógł na niego poczekać i
+    // zgłosić realny postęp na ekranie ładowania zamiast pokazywać go "na oko".
+    this.modelReadyPromise = loadA321Model().then(model => {
       model.rotation.y = A321_MODEL_ROT_Y;
       model.scale.setScalar(A321_MODEL_SCALE);
       model.translateY(A321_MODEL_TRANSLATE_Y);
