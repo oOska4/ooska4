@@ -71,7 +71,13 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 // ── Sekwencja intro: czarny ekran → logo studia → nick autora → loading ──────
 // Czas trwania fade in/fade out (900ms) MUSI zgadzać się z `transition: opacity`
 // na .boot-phase w sim-style.css — zmieniaj oba razem.
-(async function bootIntro() {
+// WAŻNE: zwracamy tu promise (bootIntroDone) i init() na niego czeka przed
+// ukryciem #loading — inaczej, gdy realne zasoby wczytają się błyskawicznie
+// (np. kafelki terenu/model samolotu już w cache przeglądarki po
+// wcześniejszych testach), init() chowałby cały ekran startowy ZANIM intro
+// zdążyłoby pokazać logo — dokładnie to, co się właśnie stało (czarny ekran
+// na sekundę i od razu gra, bez żadnych animacji).
+const bootIntroDone = (async function bootIntro() {
   await sleep(200);                 // chwila czystej czerni na starcie
   bootStudio.classList.add('show');
   await sleep(1600);                // "WKR GAMES" trzyma się w pełni widoczne
@@ -161,6 +167,7 @@ const statusTimer = setInterval(() => {
   updateCameraHUD();
 
   await Promise.allSettled([satTilesP, buildingsP, modelP]);
+  await bootIntroDone; // patrz komentarz przy bootIntro() — nie chowamy ekranu przed czasem
 
   clearInterval(statusTimer);
   loadbar.style.width = '100%';
