@@ -84,6 +84,7 @@
     <div class="sb-row">TERR <b id="terr-val">0 m</b></div>
     <div class="sb-row">AoA  <b id="aoa-val">0°</b></div>
     <div class="sb-row">FLAPS <b id="flaps-val">1</b> · GEAR <b id="gear-val">DN</b> · SPLR <b id="spoilers-val">OFF</b></div>
+    <div class="sb-row">BRK <b id="brakes-val">OFF</b> · PRK <b id="park-val">OFF</b> · A/BRK <b id="autobrake-val">OFF</b></div>
     <div class="sb-row dim" id="h-tiles">–</div>
     <div id="cam-pos-val"   style="display:none"></div>
     <div id="cam-rot-val"   style="display:none"></div>
@@ -207,6 +208,8 @@
 <div id="thr-wrap">
   <div class="thr-title">THR</div>
   <div id="thr-track">
+    <div id="thr-idle-mark"></div>
+    <div id="thr-fill-rev"></div>
     <div id="thr-fill"></div>
     <div id="thr-thumb"></div>
     <div id="thr-pct">0%</div>
@@ -271,6 +274,12 @@
   </div>
   <div class="popup-row">
     <button id="mpop-weight">⚖ Waga i paliwo</button>
+  </div>
+  <div class="popup-row">
+    <button id="mpop-park">🅿 Parking brake: <span id="mpop-park-val">OFF</span></button>
+  </div>
+  <div class="popup-row">
+    <button id="mpop-autobrake">A/BRK: <span id="mpop-autobrake-val">OFF</span></button>
   </div>
   <div class="popup-divider"></div>
   <button id="mpop-close">✕ Zamknij</button>
