@@ -1782,4 +1782,91 @@ class A321Entity extends Entity {
     const rudderTarget = (typeof planeInput !== 'undefined' ? planeInput.yaw : 0) * RUDDER_MAX_RAD;
     this.rudderPos += (rudderTarget - this.rudderPos) * Math.min(1, frameDt * 10);
     if (p.rudder && p.rudder.userData.hingeAxis) {
-      p.rud
+      p.rudder.quaternion.setFromAxisAngle(p.rudder.userData.hingeAxis, this.rudderPos);
+    } else if (p.rudder) {
+      p.rudder.rotation.y = this.rudderPos;
+    }
+
+    this._updateShadow();
+  }
+
+  // Prawdziwy cień 3D: liczy pozycję KAŻDEGO punktu obrysu samolotu osobno
+  // (nie jednej figury sztywno przeskalowanej) — obraca obrys pełną orientacją
+  // samolotu, przesuwa do jego pozycji w świecie, a potem rzutuje każdy punkt
+  // na teren WZDŁUŻ kierunku promieni słonecznych (z doprecyzowaniem wysokości
+  // terenu w miejscu trafienia w kilku iteracjach, bo teren pod cieniem nie musi
+  // być płaski — np. na zboczu albo przy krawędzi pasa). Bez Słońca nad
+  // horyzontem (noc) cień jest po prostu ukryty.
+  _updateShadow() {
+    if (!this._shadow || !this._shadowHull) return;
+    const sunDir = typeof sunWorldDir !== 'undefined' ? sunWorldDir : null;
+    if (!sunDir || sunDir.y <= 0.006) {
+      this._shadow.visible = false;
+      return;
+    }
+
+    const outline = this._shadowHull;
+    const n = outline.length;
+    const planePos = this.worldPos;
+    // Kierunek W KTÓRYM PADAJĄ promienie (od Słońca w dół/na zewnątrz) —
+    // dokładnie przeciwny do wektora "do Słońca" używanego przez reszę sceny.
+    const lightDir = _shadowLightDir.copy(sunDir).negate().normalize();
+    const invLy = 1 / Math.max(-lightDir.y, 0.035); // ograniczone, żeby cień nie "uciekał" w nieskończoność tuż przy horyzoncie
+
+    // Ta sama macierz orientacji, której używa syncMesh() (kolejność 'YXZ':
+    // najpierw pitch wokół X, potem yaw wokół Y, na końcu roll wokół Z) — dzięki
+    // temu cień zawsze odpowiada RZECZYWISTEJ, aktualnej pozie samolotu.
+    _shadowEuler.set(-this.pitchRad, this.yawRad, this.rollRad, 'YXZ');
+    _shadowQuat.setFromEuler(_shadowEuler);
+
+    let cx = 0, cz = 0, cy = 0;
+
+    for (let i = 0; i < n; i++) {
+      const local = outline[i];
+      _shadowLocalVec.set(local.x, 0, local.z).applyQuaternion(_shadowQuat);
+      _shadowWorldVec.set(
+        planePos.x + _shadowLocalVec.x,
+        planePos.y + _shadowLocalVec.y,
+        planePos.z + _shadowLocalVec.z
+      );
+
+      // Rzut wzdłuż promienia słonecznego na teren: zaczynamy od przybliżenia
+      // wysokością terenu z poprzedniej klatki, potem doprecyzowujemy 2x
+      // wysokością terenu FAKTYCZNIE pod punktem trafienia — wystarczająco
+      // dokładne dla cienia (rzędy metrów błędu przy stromym terenie znikają po
+      // 2 iteracjach), dużo tańsze niż prawdziwy raymarching przez DEM.
+      let groundY = _shadowLastGroundY;
+      for (let iter = 0; iter < 3; iter++) {
+        const travel = (_shadowWorldVec.y - groundY) * invLy;
+        _shadowHitVec.set(
+          _shadowWorldVec.x + lightDir.x * travel,
+          _shadowWorldVec.y + lightDir.y * travel,
+          _shadowWorldVec.z + lightDir.z * travel
+        );
+        const geo = worldToGeo(_shadowHitVec);
+        groundY = terrainHeightBest(geo.lat, geo.lon) * DEM_EXAG * Y_SCALE;
+      }
+      _shadowLastGroundY = groundY;
+
+      const hitY = groundY + 0.05; // mały offset, żeby cień nie migotał (z-fighting) z terenem
+      this._shadowPos[(i + 1) * 3 + 0] = _shadowHitVec.x;
+      this._shadowPos[(i + 1) * 3 + 1] = hitY;
+      this._shadowPos[(i + 1) * 3 + 2] = _shadowHitVec.z;
+      cx += _shadowHitVec.x; cy += hitY; cz += _shadowHitVec.z;
+    }
+
+    // Centroid (indeks 0 w buforze) — środek triangulacji typu "fan".
+    this._shadowPos[0] = cx / n;
+    this._shadowPos[1] = cy / n;
+    this._shadowPos[2] = cz / n;
+
+    this._shadow.geometry.attributes.position.needsUpdate = true;
+
+    // Słońce nisko nad horyzontem → kontakt cienia z ziemią jest w rzeczywistości
+    // słabszy/bardziej rozmyty — lekko przyciemniamy cień przy wysokim słońcu
+    // (ostry cień w południe) i rozjaśniamy przy niskim (słabszy o świcie/zmierzchu).
+    const sunElevFactor = _clamp01(sunDir.y / 0.5);
+    this._shadow.material.opacity = 0.20 + 0.30 * sunElevFactor;
+    this._shadow.visible = true;
+  }
+}
