@@ -167,6 +167,9 @@ const hudEl = {
   phase:      document.getElementById('phase-disp'),
   stall:      document.getElementById('stall-disp'),
   overspeed:  document.getElementById('overspeed-disp'),
+  brakes:     document.getElementById('brakes-val'),
+  park:       document.getElementById('park-val'),
+  autobrake:  document.getElementById('autobrake-val'),
 };
 
 function updateHUD() {
@@ -223,10 +226,33 @@ function updateHUD() {
   const activeZooms = [...new Set([...tileMeshes.keys()].map(k => k.split('_')[0]))].sort((a, b) => b - a).join('/');
   hudEl.satZ.textContent     = activeZooms ? `Z=${activeZooms}` : '–';
 
-  const tPct = (plane.throttle * 100).toFixed(0);
-  hudEl.throttleBar.style.width   = tPct + '%';
-  hudEl.throttlePct.textContent   = tPct + '%';
-  hudEl.throttlePct.style.color   = plane.throttle > 0.85 ? '#ff8800' : '#44ff88';
+  // N1/throttle: throttle<0 = reverse thrust (patrz reverserDeployFrac w
+  // sim-physics.js) — pasek pokazuje wartość bezwzględną, ale w kolorze
+  // ostrzegawczym i z etykietą "REV", żeby było jasne że silniki ciągną do tyłu.
+  const revActive = plane.throttle < 0;
+  const tPctAbs = Math.round(Math.abs(plane.throttle) * 100);
+  hudEl.throttleBar.style.width   = tPctAbs + '%';
+  hudEl.throttlePct.textContent   = (revActive ? 'REV ' : '') + tPctAbs + '%';
+  hudEl.throttleBar.style.background = revActive
+    ? 'linear-gradient(90deg,#5a1a0a,#ff5a30)'
+    : 'linear-gradient(90deg,#0a5a22,#44ff88)';
+  hudEl.throttlePct.style.color = revActive ? '#ff5a30' : (plane.throttle > 0.85 ? '#ff8800' : '#44ff88');
+
+  // Hamulce / parking brake / autobrake — patrz sim-physics.js (input.brakes
+  // odczytany co klatkę w physicsUpdate, tu tylko pokazujemy stan z encji;
+  // brakesActiveDisplay ustawiane co klatkę w physicsUpdate, patrz tam).
+  if (hudEl.brakes) {
+    hudEl.brakes.textContent = plane.brakesActiveDisplay ? 'ON' : 'OFF';
+    hudEl.brakes.style.color = plane.brakesActiveDisplay ? '#ff8800' : '#c8e8ff';
+  }
+  if (hudEl.park) {
+    hudEl.park.textContent = plane.parkingBrake ? 'ON' : 'OFF';
+    hudEl.park.style.color = plane.parkingBrake ? '#ff5a30' : '#c8e8ff';
+  }
+  if (hudEl.autobrake) {
+    hudEl.autobrake.textContent = plane.autobrakeLevel;
+    hudEl.autobrake.style.color = plane.autobrakeLevel !== 'OFF' ? '#44ccff' : '#c8e8ff';
+  }
 
   let phase = 'ON GROUND';
   if (!plane.onGround) {
