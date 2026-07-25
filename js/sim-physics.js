@@ -205,9 +205,12 @@ const GEAR_SUSP_ZETA_NOSE      = 0.9;
 // wymiaru samolotu (kadłub dla pitch/yaw, rozpiętość dla roll). To
 // przybliżenie, ale oparte na prawdziwej geometrii A321, nie na zgadywaniu.
 const A321_FUSELAGE_LEN = 44.5; // m
-const A321_IYY = A321_PARAMS.mass * (0.25 * A321_FUSELAGE_LEN) ** 2; // pitch, ok. 9.3M kg·m²
-const A321_IXX = A321_PARAMS.mass * (0.23 * A321_PARAMS.span) ** 2;  // roll,  ok. 5.1M kg·m²
-const A321_IZZ = A321_PARAMS.mass * (0.27 * A321_FUSELAGE_LEN) ** 2; // yaw,   ok. 12.2M kg·m² (obejmuje i długość, i rozstaw mas)
+// UWAGA: było `const` — teraz `let`, bo masa (a więc i bezwładność) może się
+// zmienić po Reset z nowym paliwem/payloadem (patrz recomputeInertia() i
+// applyAircraftWeight() dalej w tym pliku). Wzór bez zmian.
+let A321_IYY = A321_PARAMS.mass * (0.25 * A321_FUSELAGE_LEN) ** 2; // pitch, ok. 9.3M kg·m²
+let A321_IXX = A321_PARAMS.mass * (0.23 * A321_PARAMS.span) ** 2;  // roll,  ok. 5.1M kg·m²
+let A321_IZZ = A321_PARAMS.mass * (0.27 * A321_FUSELAGE_LEN) ** 2; // yaw,   ok. 12.2M kg·m² (obejmuje i długość, i rozstaw mas)
 
 // Gdzie faktycznie działają siły aerodynamiczne, w LOKALNYM układzie samolotu
 // (ten sam co GEAR_NOSE/LEFT/RIGHT: +X prawe skrzydło, +Y góra, +Z dziób). To
@@ -227,6 +230,17 @@ const FIN_AC    = { x: 0, y: 2.2, z: -17.0 }; // statecznik pionowy + ster kieru
 // moment liczony teraz z NIEPODBITEGO ciągu (patrz physicsUpdate) — realne
 // "power pitch" zostaje, ale nie przytłacza już geometrii podwozia.
 const THRUST_PT = { x: 0, y: -0.4, z: 0    }; // silniki pod skrzydłami — poniżej CG (ramię zmniejszone z -1.6, patrz NAPRAWA wyżej)
+
+// Bazowe (fabryczne, przy DOMYŚLNYM załadowaniu — patrz A321_DEFAULT_FUEL_KG/
+// A321_DEFAULT_PAYLOAD_KG niżej) pozycje Z powyższych punktów, zanim CG się
+// przesunie. applyAircraftWeight() mutuje WING_AC.z/TAIL_AC.z/FIN_AC.z/
+// THRUST_PT.z WZGLĘDEM tych baz — same obiekty zostają te same (przez
+// referencję), więc każde miejsce w pliku, które czyta np. TAIL_AC.z, widzi
+// automatycznie aktualną, przesuniętą wartość bez żadnych dodatkowych zmian.
+const WING_AC_BASE_Z   = WING_AC.z;
+const TAIL_AC_BASE_Z   = TAIL_AC.z;
+const FIN_AC_BASE_Z    = FIN_AC.z;
+const THRUST_PT_BASE_Z = THRUST_PT.z;
 
 // Jak mocno wychylenie powierzchni sterowej wpływa na siłę aerodynamiczną —
 // prawdziwe (choć przybliżone) współczynniki aerodynamiczne, nie "krzywe
@@ -388,10 +402,138 @@ const NOSEWHEEL_MAX_RAD  = 0.90; // maks. skret przedniego kola (~50st) - skutec
 // narożnika" to udział masy samolotu przypadający na daną goleń.
 const GEAR_LOAD_SHARE_NOSE = 0.08; // typowy udział przedniego koła w ciężarze samolotu
 const GEAR_LOAD_SHARE_MAIN = 0.46; // każde koło główne (2×0.46 + 0.08 = 1.0)
-const GEAR_K_NOSE = A321_PARAMS.mass * GEAR_LOAD_SHARE_NOSE * GEAR_SUSP_OMEGA_NOSE ** 2;
-const GEAR_C_NOSE = 2 * GEAR_SUSP_ZETA_NOSE * GEAR_SUSP_OMEGA_NOSE * A321_PARAMS.mass * GEAR_LOAD_SHARE_NOSE;
-const GEAR_K_MAIN = A321_PARAMS.mass * GEAR_LOAD_SHARE_MAIN * GEAR_SUSP_OMEGA_MAIN ** 2;
-const GEAR_C_MAIN = 2 * GEAR_SUSP_ZETA_MAIN * GEAR_SUSP_OMEGA_MAIN * A321_PARAMS.mass * GEAR_LOAD_SHARE_MAIN;
+// UWAGA: było `const` — teraz `let`, przeliczane w recomputeGearStiffness()
+// gdy zmieni się masa (patrz applyAircraftWeight() niżej). Wzory bez zmian.
+let GEAR_K_NOSE = A321_PARAMS.mass * GEAR_LOAD_SHARE_NOSE * GEAR_SUSP_OMEGA_NOSE ** 2;
+let GEAR_C_NOSE = 2 * GEAR_SUSP_ZETA_NOSE * GEAR_SUSP_OMEGA_NOSE * A321_PARAMS.mass * GEAR_LOAD_SHARE_NOSE;
+let GEAR_K_MAIN = A321_PARAMS.mass * GEAR_LOAD_SHARE_MAIN * GEAR_SUSP_OMEGA_MAIN ** 2;
+let GEAR_C_MAIN = 2 * GEAR_SUSP_ZETA_MAIN * GEAR_SUSP_OMEGA_MAIN * A321_PARAMS.mass * GEAR_LOAD_SHARE_MAIN;
+
+// ── Waga samolotu: paliwo + payload ─────────────────────────────────────────
+// Realistyczne wartości dla A321-200 (silniki CFM56). Źródło: publicznie znane
+// dane producenta/operatorów, zaokrąglone do rozsądnych wartości gry:
+//   OEW (Operating Empty Weight, samolot pusty)         ≈ 48 500 kg
+//   Max paliwo (zbiorniki skrzydłowe + centralny)        ≈ 23 700 kg
+//   Max payload (pasażerowie + bagaż + cargo)            ≈ 22 000 kg
+//   MTOW (Max Takeoff Weight)                            ≈ 93 500 kg
+// UWAGA: OEW + max_paliwo + max_payload = 94 200 kg > MTOW — czyli da się
+// wybrać suwakami kombinację przekraczającą MTOW (tak jak w prawdziwym
+// samolocie — dlatego loadsheet/dyspozytor w ogóle sprawdza tę sumę). Patrz
+// applyAircraftWeight(): masa jest wtedy TWARDO ograniczona do MTOW.
+//
+// Domyślne fuel/payload dobrane tak, że OEW+fuel+payload = DOKŁADNIE
+// dotychczasowa masa (75 000 kg) — przy ustawieniach domyślnych fizyka
+// zachowuje się identycznie jak przed dodaniem tej funkcji (zero regresji).
+const A321_OEW_KG         = 48500;
+const A321_MAX_FUEL_KG    = 23700;
+const A321_MAX_PAYLOAD_KG = 22000;
+const A321_MTOW_KG        = 93500;
+const A321_DEFAULT_FUEL_KG    = 14500;
+const A321_DEFAULT_PAYLOAD_KG = 12000; // 48500 + 14500 + 12000 = 75000 kg
+
+// Ramiona przesunięcia CG (metry, oś Z lokalna — dziób dodatni) WZGLĘDEM
+// domyślnego załadowania powyżej, per kg odchylenia od wartości domyślnej.
+// Paliwo siedzi w skrzydłach — bardzo blisko CG z założenia konstrukcyjnego
+// (samoloty tak się projektuje, żeby zużycie paliwa w locie nie psuło
+// wyważenia) — stąd malutkie ramię. Payload (kabina + ładownie) rozkłada się
+// głównie ZA skrzydłem (długi tylny kadłub, tylna ładownia) — jego ramię jest
+// wyraźnie ujemne: więcej payloadu ciągnie CG do tyłu, mniej payloadu (bliżej
+// samego OEW) — CG do przodu. To zgodne z realną praktyką linii lotniczych
+// (doładowanie tylnej ładowni bywa świadomie używane do przesunięcia CG do
+// tyłu i zmniejszenia oporu wywołanego wyważeniem).
+const A321_FUEL_ARM_Z    = 0.3;
+const A321_PAYLOAD_ARM_Z = -3.5;
+
+// Stan czytany/zapisywany przez UI (sim-weight-ui.js). `pending*` to to, co
+// aktualnie pokazują suwaki — NIE wpływa na fizykę, dopóki nie wywoła się
+// applyAircraftWeight() (co dzieje się WYŁĄCZNIE z A321Entity.reset(), zgodnie
+// z decyzją: tankowanie/załadunek liczy się przed startem, nie w locie).
+// `applied*` to to, co faktycznie działa w fizyce od ostatniego reset() — UI
+// pokazuje oba, żeby było widać czy suwak "czeka" na Reset.
+const AircraftWeight = {
+  pendingFuelKg:    A321_DEFAULT_FUEL_KG,
+  pendingPayloadKg: A321_DEFAULT_PAYLOAD_KG,
+  appliedFuelKg:    A321_DEFAULT_FUEL_KG,
+  appliedPayloadKg: A321_DEFAULT_PAYLOAD_KG,
+  appliedTotalMassKg: A321_OEW_KG + A321_DEFAULT_FUEL_KG + A321_DEFAULT_PAYLOAD_KG,
+  appliedCgShiftM:    0,
+  mtowExceededByKg:   0, // >0 gdy WYBRANA kombinacja przekraczała MTOW (masa i tak ograniczona do MTOW — patrz niżej)
+};
+
+// Przelicza bezwładność (patrz A321_IYY/IXX/IZZ) z aktualnej A321_PARAMS.mass.
+// Sam kadłub/rozpiętość się nie zmieniają (promień żyracji zależy od
+// geometrii, nie od załadowania) — zmienia się tylko masa we wzorze.
+function recomputeInertia() {
+  A321_IYY = A321_PARAMS.mass * (0.25 * A321_FUSELAGE_LEN) ** 2;
+  A321_IXX = A321_PARAMS.mass * (0.23 * A321_PARAMS.span) ** 2;
+  A321_IZZ = A321_PARAMS.mass * (0.27 * A321_FUSELAGE_LEN) ** 2;
+}
+
+// Przelicza sztywność/tłumienie zawieszenia (patrz GEAR_K/C_NOSE/MAIN) z
+// aktualnej A321_PARAMS.mass — częstość własna (OMEGA) i tłumienie (ZETA)
+// zostają te same (to własności amortyzatora, nie ładunku), zmienia się tylko
+// obciążenie statyczne, które skaluje sztywność/tłumienie w tych wzorach.
+function recomputeGearStiffness() {
+  GEAR_K_NOSE = A321_PARAMS.mass * GEAR_LOAD_SHARE_NOSE * GEAR_SUSP_OMEGA_NOSE ** 2;
+  GEAR_C_NOSE = 2 * GEAR_SUSP_ZETA_NOSE * GEAR_SUSP_OMEGA_NOSE * A321_PARAMS.mass * GEAR_LOAD_SHARE_NOSE;
+  GEAR_K_MAIN = A321_PARAMS.mass * GEAR_LOAD_SHARE_MAIN * GEAR_SUSP_OMEGA_MAIN ** 2;
+  GEAR_C_MAIN = 2 * GEAR_SUSP_ZETA_MAIN * GEAR_SUSP_OMEGA_MAIN * A321_PARAMS.mass * GEAR_LOAD_SHARE_MAIN;
+}
+
+// Czyste przeliczenie (BEZ efektów ubocznych — nie rusza A321_PARAMS.mass ani
+// żadnej stałej fizyki) — używane w dwóch miejscach:
+//  1) UI (sim-weight-ui.js) do podglądu na żywo podczas przesuwania suwaka,
+//     ZANIM cokolwiek zostanie zastosowane do fizyki;
+//  2) applyAircraftWeight() niżej, jako pierwszy krok przed efektami ubocznymi.
+// Dzięki temu logika limitu MTOW/CG istnieje w jednym miejscu, a suwak może
+// pokazywać "co by było gdyby" bez ryzyka przypadkowego dotknięcia fizyki
+// w locie.
+function computeAircraftWeight(fuelKg, payloadKg) {
+  const fuel    = Math.max(0, Math.min(A321_MAX_FUEL_KG, fuelKg));
+  const payload = Math.max(0, Math.min(A321_MAX_PAYLOAD_KG, payloadKg));
+  const rawTotal = A321_OEW_KG + fuel + payload;
+
+  // Limit MTOW + ostrzeżenie (decyzja): sam limit to twarde ograniczenie masy
+  // użytej w fizyce; ostrzeżenie (exceededBy > 0) UI pokazuje osobno.
+  const exceededBy = Math.max(0, rawTotal - A321_MTOW_KG);
+  const total = exceededBy > 0 ? A321_MTOW_KG : rawTotal;
+
+  // Przesunięcie CG liczone WZGLĘDEM domyślnego załadowania (patrz komentarz
+  // przy A321_FUEL_ARM_Z) — przy fuel=domyślne i payload=domyślne zawsze da
+  // dokładnie 0, niezależnie od tego czy total został przycięty do MTOW.
+  const dFuel    = fuel    - A321_DEFAULT_FUEL_KG;
+  const dPayload = payload - A321_DEFAULT_PAYLOAD_KG;
+  const cgShiftZ = (dFuel * A321_FUEL_ARM_Z + dPayload * A321_PAYLOAD_ARM_Z) / total;
+
+  return { fuel, payload, total, cgShiftZ, exceededBy };
+}
+
+// Punkt wejścia wywoływany WYŁĄCZNIE z A321Entity.reset() (patrz tam) — bierze
+// pendingFuelKg/pendingPayloadKg (ustawione przez suwaki UI) i faktycznie
+// przelicza masę, bezwładność, zawieszenie i przesunięcie CG. Bez zmiany
+// wartości domyślnych ta funkcja zawsze da dokładnie taki sam wynik jak przed
+// jej dodaniem (mass=75000, cgShiftZ=0) — zero regresji dla obecnego czucia
+// lotu.
+function applyAircraftWeight(fuelKg, payloadKg) {
+  const { fuel, payload, total, cgShiftZ, exceededBy } = computeAircraftWeight(fuelKg, payloadKg);
+
+  A321_PARAMS.mass = total;
+  recomputeInertia();
+  recomputeGearStiffness();
+
+  WING_AC.z   = WING_AC_BASE_Z   - cgShiftZ;
+  TAIL_AC.z   = TAIL_AC_BASE_Z   - cgShiftZ;
+  FIN_AC.z    = FIN_AC_BASE_Z    - cgShiftZ;
+  THRUST_PT.z = THRUST_PT_BASE_Z - cgShiftZ;
+
+  AircraftWeight.appliedFuelKg      = fuel;
+  AircraftWeight.appliedPayloadKg   = payload;
+  AircraftWeight.appliedTotalMassKg = total;
+  AircraftWeight.appliedCgShiftM    = cgShiftZ;
+  AircraftWeight.mtowExceededByKg   = exceededBy;
+
+  return { total, cgShiftZ, exceededBy };
+}
 const GEAR_HARDSTOP_K_MULT = 12; // dodatkowa sztywność po przekroczeniu GEAR_SUSPENSION_TRAVEL (twardy zderzak — nie odbicie, tylko szybkie "zatrzymanie")
 
 // Model opony: tarcie toczenia/hamowania wzdłuż kierunku jazdy + przyczepność
@@ -901,6 +1043,12 @@ class A321Entity extends Entity {
   }
 
   reset(opts = {}) {
+    // Zastosuj aktualne ustawienia paliwa/payloadu z suwaków UI (patrz
+    // AircraftWeight/applyAircraftWeight w sekcji "Waga samolotu" wyżej w tym
+    // pliku) — zgodnie z decyzją, tankowanie/załadunek liczy się TYLKO tutaj,
+    // przy reset/starcie, nigdy na żywo w trakcie lotu.
+    applyAircraftWeight(AircraftWeight.pendingFuelKg, AircraftWeight.pendingPayloadKg);
+
     this.lat = opts.lat ?? SPAWN_LAT;
     this.lon = opts.lon ?? SPAWN_LON;
     const groundH = this.groundHeight();
