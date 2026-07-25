@@ -164,6 +164,27 @@
         <button data-qual="high">Wysoka</button>
       </div>
     </div>
+
+    <div class="ctrl-divider"></div>
+    <div class="hint-row" style="display:flex;justify-content:space-between;align-items:center">
+      <span class="dim">WAGA I PALIWO</span>
+      <button id="btn-weight-toggle" style="width:auto;padding:1px 6px;font-size:9px">▼</button>
+    </div>
+    <div id="weight-panel">
+      <div class="w-row"><label>Paliwo</label><input type="range" id="dg-fuel" min="0" max="23700" step="100" value="14500"><span class="w-lbl" id="dg-fuel-lbl">14500 kg</span></div>
+      <div class="w-row"><label>Payload</label><input type="range" id="dg-payload" min="0" max="22000" step="100" value="12000"><span class="w-lbl" id="dg-payload-lbl">12000 kg</span></div>
+      <div class="ctrl-divider"></div>
+      <div class="w-row"><label>Masa całk.</label><span class="w-lbl" id="dg-total-lbl" style="flex:1">75000 kg</span></div>
+      <div class="w-row"><label>MTOW</label><span class="w-lbl" style="flex:1">93500 kg</span></div>
+      <div class="w-row"><label>Przesunięcie CG</label><span class="w-lbl" id="dg-cg-lbl" style="flex:1">0.0 m</span></div>
+      <div class="hint-row" id="dg-mtow-warn" style="display:none;color:#ff5a4a">⚠ MTOW przekroczone — masa ograniczona</div>
+      <div class="w-presets">
+        <button data-wpreset="empty">Pusty</button>
+        <button data-wpreset="default" class="active">Domyślny</button>
+        <button data-wpreset="full">Pełny</button>
+      </div>
+      <div class="hint-row dim" style="font-style:italic">Zastosowane przy najbliższym Reset</div>
+    </div>
   </div>
 
 </div><!-- /#hud -->
@@ -248,6 +269,9 @@
     <button id="mpop-cam">📷 Kamera</button>
     <button id="mpop-map">🌍 Wolna mapa</button>
   </div>
+  <div class="popup-row">
+    <button id="mpop-weight">⚖ Waga i paliwo</button>
+  </div>
   <div class="popup-divider"></div>
   <button id="mpop-close">✕ Zamknij</button>
 </div>
@@ -296,6 +320,26 @@
   <button id="wpop-close">✕ Zamknij</button>
 </div>
 
+<!-- Weight popup (mobile) -->
+<div id="weight-popup">
+  <div class="wpop-title">⚖ WAGA I PALIWO</div>
+  <div class="wpop-row"><label>Paliwo</label><input type="range" id="mw-fuel" min="0" max="23700" step="100" value="14500"><span class="wlbl" id="mw-fuel-lbl">14500 kg</span></div>
+  <div class="wpop-row"><label>Payload</label><input type="range" id="mw-payload" min="0" max="22000" step="100" value="12000"><span class="wlbl" id="mw-payload-lbl">12000 kg</span></div>
+  <div class="wpop-divider"></div>
+  <div class="wpop-row"><label>Masa całk.</label><span class="wlbl" id="mw-total-lbl" style="flex:1;text-align:right">75000 kg</span></div>
+  <div class="wpop-row"><label>MTOW</label><span class="wlbl" style="flex:1;text-align:right">93500 kg</span></div>
+  <div class="wpop-row"><label>Przesun. CG</label><span class="wlbl" id="mw-cg-lbl" style="flex:1;text-align:right">0.0 m</span></div>
+  <div class="wpop-row" id="mw-mtow-warn" style="display:none;color:#ff5a4a;justify-content:center">⚠ MTOW przekroczone — masa ograniczona</div>
+  <div class="wpop-divider"></div>
+  <div class="wpop-presets">
+    <button data-wpreset-mob="empty">Pusty</button>
+    <button data-wpreset-mob="default" class="active">Domyślny</button>
+    <button data-wpreset-mob="full">Pełny</button>
+  </div>
+  <div class="wpop-row" style="font-style:italic;justify-content:center;color:#4a8fbf">Zastosowane przy najbliższym Reset</div>
+  <button id="mwpop-close">✕ Zamknij</button>
+</div>
+
 <!-- Orbit joy i zoom — ukryte (nieużywane) -->
 <div id="orbit-joy-wrap" style="display:none!important"></div>
 <div id="orbit-zoom"     style="display:none!important"></div>
@@ -315,6 +359,7 @@
 <script src="js/sim-weather.js"></script>
 <script src="js/sim-sky.js"></script>
 <script src="js/sim-weather-ui.js"></script>
+<script src="js/sim-weight-ui.js"></script>
 <script src="js/sim-contrails.js"></script>
 <script src="js/sim-controls.js"></script>
 <script src="js/sim-main.js"></script>
