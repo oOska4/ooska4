@@ -106,6 +106,13 @@ async function loadA321Model() {
 const G_ACC = 9.81;
 const RHO   = 1.225;
 
+// Reverse thrust: ok. 20% maksymalnego ciągu do przodu — typowe dla
+// wysokoprzepływowych silników turbowentylatorowych (reverser "łapie" tylko
+// strumień obejściowy, nie cały ciąg silnika). Patrz reverserDeployFrac w
+// physicsUpdate() — ciąg wsteczny narasta wraz z fizycznym wysuwaniem
+// rewersorów, nie skokowo.
+const A321_REVERSE_THRUST_FRAC = 0.20;
+
 const A321_PARAMS = {
   mass:       75000,
   maxThrust:  280000,
@@ -542,6 +549,14 @@ const GEAR_HARDSTOP_K_MULT = 12; // dodatkowa sztywność po przekroczeniu GEAR_
 // stabilne numerycznie podejście z dynamiki pojazdów.
 const TIRE_ROLLING_MU  = 0.02;
 const TIRE_BRAKE_MU    = 0.45;
+
+// Autobrake: LOW/MED/MAX jako stała frakcja TIRE_BRAKE_MU (nie regulator
+// stałego opóźnienia — patrz uzasadnienie przy autobrakeActive w
+// physicsUpdate: siła tarcia skaluje się z chwilowym obciążeniem koła, więc
+// efektywne opóźnienie i tak wychodzi w przybliżeniu stałe niezależnie od
+// masy samolotu, bez potrzeby osobnej pętli regulacyjnej).
+const AUTOBRAKE_MU_FRAC     = { LOW: 0.30, MED: 0.60, MAX: 1.0 };
+const AUTOBRAKE_MIN_SPEED_KT = 10; // poniżej tej prędkości autobrake się rozłącza (blisko prędkości kołowania, jak w realu)
 const TIRE_LAT_GRIP_MU = 0.8;
 const TIRE_LONG_STIFF  = 2.2e5; // N/(m/s) przed odcięciem przez limit Coulomba
 const TIRE_LAT_STIFF   = 3.5e5; // N/(m/s)
@@ -830,6 +845,9 @@ class A321Entity extends Entity {
     this.pitchRate = 0; this.rollRate = 0; this.yawRate = 0;
     this.vel = new THREE.Vector3(0, 0, 0);
     this.throttle = 0;
+    this.reverserDeployFrac = 0; // 0=schowany, 1=w pełni wysunięty (patrz reverse thrust w physicsUpdate)
+    this.parkingBrake = false;
+    this.autobrakeLevel = 'OFF'; // 'OFF' | 'LOW' | 'MED' | 'MAX' — patrz AUTOBRAKE_MU_FRAC
     this.flaps = 1;
     this.gearDown = true;
     this.spoilers = false;
@@ -1059,6 +1077,7 @@ class A321Entity extends Entity {
     this.pitchRate = 0; this.rollRate = 0; this.yawRate = 0;
     this.vel.set(opts.velX ?? 0, opts.velY ?? 0, opts.velZ ?? 0);
     this.throttle = opts.throttle ?? 0;
+    this.reverserDeployFrac = 0; // rewerser fizycznie schowany po reset — nie jest to "ustawienie" jak autobrake/parking brake
     this.flaps = opts.flaps ?? 1;
     this.gearDown = opts.gearDown ?? true;
     this.spoilers = false;
@@ -1217,14 +1236,39 @@ class A321Entity extends Entity {
     const dtCap = Math.min(dt, 0.05);
     if (this._bounceCooldown > 0) this._bounceCooldown = Math.max(0, this._bounceCooldown - dtCap);
 
-    if (input.throttleUp)   this.throttle = Math.min(1, this.throttle + dtCap * 0.6);
-    if (input.throttleDown) this.throttle = Math.max(0, this.throttle - dtCap * 0.8);
+    // Throttle: 0..1 = normalny zakres do przodu (bez zmian). Poniżej zera =
+    // reverse thrust — TYLKO na ziemi, dokładnie jak w prawdziwym samolocie
+    // (przepustnice reverse są mechanicznie zablokowane w locie, odblokowuje
+    // je czujnik obciążenia podwozia/"weight on wheels" po dotknięciu pasa).
+    // this.onGround pochodzi z POPRZEDNIEJ klatki (patrz komentarz o orientacji
+    // wyżej) — to ten sam, już istniejący wzorzec w tym pliku.
+    if (input.throttleUp) this.throttle = Math.min(1, this.throttle + dtCap * 0.6);
+    if (input.throttleDown) {
+      const minThrottle = this.onGround ? -1 : 0;
+      this.throttle = Math.max(minThrottle, this.throttle - dtCap * 0.8);
+    }
+    // Bezpiecznik: gdyby samolot oderwał się od ziemi z wybranym reverse
+    // (np. odbicie/bounced landing), natychmiast wróć do zera — nie da się
+    // fizycznie latać z wysuniętymi rewersorami.
+    if (!this.onGround && this.throttle < 0) this.throttle = 0;
+
+    // Rewersory potrzebują chwili na fizyczne wysunięcie/schowanie (jak
+    // translating cowl w prawdziwym silniku) — ciąg wsteczny narasta dopiero
+    // wraz z reverserDeployFrac, nie skokowo. Chowają się szybciej niż się
+    // wysuwają (tak jak w realu — bezpieczeństwo przy go-around).
+    const reverserTarget = (this.throttle < -0.001 && this.onGround) ? 1 : 0;
+    const reverserRate = (reverserTarget > this.reverserDeployFrac) ? (dtCap / 1.6) : (dtCap / 0.9);
+    this.reverserDeployFrac += Math.max(-reverserRate, Math.min(reverserRate, reverserTarget - this.reverserDeployFrac));
 
     const airspeed = this.vel.length();
     const speedKt = Units.msToKt(airspeed);
     const pitchInput = input.pitch;
     const rollInput  = input.roll;
     const yawInput   = input.yaw;
+    // Zapamiętane dla HUD (sim-hud.js) — czy hamulce main gear są w tej
+    // klatce faktycznie zaciśnięte (manualnie albo parking brake). Autobrake
+    // ma osobny wskaźnik (this.autobrakeLevel), bo działa niezależnie.
+    this.brakesActiveDisplay = !!input.brakes || this.parkingBrake;
 
     // ── Orientacja z POPRZEDNIEGO kroku — z niej liczymy WSZYSTKIE siły i momenty
     // w tej klatce (kąty same zmienią się dopiero na końcu funkcji, gdy
@@ -1312,16 +1356,23 @@ class A321Entity extends Entity {
     // ── Ciąg silników — przyłożony POD CG (THRUST_PT.y<0), więc zmiana mocy
     // silników daje (mały, ale prawdziwy) moment pitch, dokładnie jak na
     // realnym samolocie z silnikami podwieszonymi pod skrzydłami. ───────
-    const thrustScale = groundRun ? A321_PARAMS.groundRunThrustBoost : 1.0;
-    const thrustVec = noseDir.clone().multiplyScalar(this.throttle * A321_PARAMS.maxThrust * thrustScale);
+    // throttle>=0: normalny ciąg do przodu (bez zmian względem wcześniej).
+    // throttle<0: reverse thrust — ograniczony do A321_REVERSE_THRUST_FRAC
+    // maksymalnego ciągu i narastający wraz z reverserDeployFrac (fizyczne
+    // wysuwanie translating cowl, patrz throttle/reverser wyżej w tej funkcji).
+    const thrustScale = (groundRun && this.throttle >= 0) ? A321_PARAMS.groundRunThrustBoost : 1.0;
+    const thrustMagFwd = this.throttle >= 0
+      ? this.throttle * A321_PARAMS.maxThrust
+      : this.throttle * A321_PARAMS.maxThrust * A321_REVERSE_THRUST_FRAC * this.reverserDeployFrac;
+    const thrustVec = noseDir.clone().multiplyScalar(thrustMagFwd * thrustScale);
     totalForce.add(thrustVec);
-    // Moment liczymy z NIEPODBITEGO ciągu (throttle*maxThrust, BEZ
+    // Moment liczymy z NIEPODBITEGO ciągu (thrustMagFwd, BEZ
     // groundRunThrustBoost) — boost naziemny to umowne wzmocnienie
     // przyspieszenia dla lepszego odczucia rozbiegu, nie prawdziwy wzrost mocy
     // silników; użycie go też tutaj sztucznie potęgowałoby "power pitch" ×2.2,
     // prowadząc do samoczynnego unoszenia przedniego koła przy większej
     // przepustnicy, bez udziału pilota (patrz NAPRAWA przy THRUST_PT).
-    const thrustTorqueVec = noseDir.clone().multiplyScalar(this.throttle * A321_PARAMS.maxThrust);
+    const thrustTorqueVec = noseDir.clone().multiplyScalar(thrustMagFwd);
     { const Ft = toLocal(thrustTorqueVec);
       torquePitch += _pitchTorque(THRUST_PT, Ft); }
 
@@ -1451,6 +1502,15 @@ class A321Entity extends Entity {
       if (gearContact) bounced = this.applyBounce(gear);
 
       if (!bounced) {
+        // Autobrake: automatyczne hamowanie kół głównych po lądowaniu, bez
+        // udziału pilota. Rozłącza się gdy: pilot sam hamuje (override —
+        // manualny hamulec zawsze wygrywa), dodaje moc silnika (go-around),
+        // albo prędkość spadnie blisko kołowania (jak w realu).
+        const autobrakeActive = this.autobrakeLevel !== 'OFF' && this.onGround
+          && !input.brakes && this.throttle <= 0.05 && speedKt > AUTOBRAKE_MIN_SPEED_KT;
+        const autobrakeMuRoll = TIRE_ROLLING_MU
+          + (TIRE_BRAKE_MU - TIRE_ROLLING_MU) * (AUTOBRAKE_MU_FRAC[this.autobrakeLevel] ?? 0);
+
         for (const k of ['nose', 'left', 'right']) {
           const gp = gear[k];
           if (gp.pen < 0) continue; // koło w powietrzu — brak siły z tej goleni
@@ -1486,7 +1546,15 @@ class A321Entity extends Entity {
           const rollSpeed = vTangent.dot(noseFlat);
           const latSpeed  = vTangent.dot(rightFlat);
 
-          const muRoll = input.brakes ? TIRE_BRAKE_MU : TIRE_ROLLING_MU;
+          // Hamulce: TYLKO koła główne — tak jak w realnym A321, przednie koło
+          // ma wyłącznie skręt (nosewheel steering), nigdy hamulec. Kolejność
+          // pierwszeństwa: manualny hamulec pilota / parking brake > autobrake
+          // > zwykłe tarcie toczenia.
+          let muRoll = TIRE_ROLLING_MU;
+          if (isMain) {
+            if (input.brakes || this.parkingBrake) muRoll = TIRE_BRAKE_MU;
+            else if (autobrakeActive)              muRoll = autobrakeMuRoll;
+          }
           const fRoll = -Math.max(-muRoll * fN, Math.min(muRoll * fN, TIRE_LONG_STIFF * rollSpeed));
 
           // Tylko przednie koło ma komenderowany kąt skrętu (nosewheel
@@ -1714,91 +1782,4 @@ class A321Entity extends Entity {
     const rudderTarget = (typeof planeInput !== 'undefined' ? planeInput.yaw : 0) * RUDDER_MAX_RAD;
     this.rudderPos += (rudderTarget - this.rudderPos) * Math.min(1, frameDt * 10);
     if (p.rudder && p.rudder.userData.hingeAxis) {
-      p.rudder.quaternion.setFromAxisAngle(p.rudder.userData.hingeAxis, this.rudderPos);
-    } else if (p.rudder) {
-      p.rudder.rotation.y = this.rudderPos;
-    }
-
-    this._updateShadow();
-  }
-
-  // Prawdziwy cień 3D: liczy pozycję KAŻDEGO punktu obrysu samolotu osobno
-  // (nie jednej figury sztywno przeskalowanej) — obraca obrys pełną orientacją
-  // samolotu, przesuwa do jego pozycji w świecie, a potem rzutuje każdy punkt
-  // na teren WZDŁUŻ kierunku promieni słonecznych (z doprecyzowaniem wysokości
-  // terenu w miejscu trafienia w kilku iteracjach, bo teren pod cieniem nie musi
-  // być płaski — np. na zboczu albo przy krawędzi pasa). Bez Słońca nad
-  // horyzontem (noc) cień jest po prostu ukryty.
-  _updateShadow() {
-    if (!this._shadow || !this._shadowHull) return;
-    const sunDir = typeof sunWorldDir !== 'undefined' ? sunWorldDir : null;
-    if (!sunDir || sunDir.y <= 0.006) {
-      this._shadow.visible = false;
-      return;
-    }
-
-    const outline = this._shadowHull;
-    const n = outline.length;
-    const planePos = this.worldPos;
-    // Kierunek W KTÓRYM PADAJĄ promienie (od Słońca w dół/na zewnątrz) —
-    // dokładnie przeciwny do wektora "do Słońca" używanego przez reszę sceny.
-    const lightDir = _shadowLightDir.copy(sunDir).negate().normalize();
-    const invLy = 1 / Math.max(-lightDir.y, 0.035); // ograniczone, żeby cień nie "uciekał" w nieskończoność tuż przy horyzoncie
-
-    // Ta sama macierz orientacji, której używa syncMesh() (kolejność 'YXZ':
-    // najpierw pitch wokół X, potem yaw wokół Y, na końcu roll wokół Z) — dzięki
-    // temu cień zawsze odpowiada RZECZYWISTEJ, aktualnej pozie samolotu.
-    _shadowEuler.set(-this.pitchRad, this.yawRad, this.rollRad, 'YXZ');
-    _shadowQuat.setFromEuler(_shadowEuler);
-
-    let cx = 0, cz = 0, cy = 0;
-
-    for (let i = 0; i < n; i++) {
-      const local = outline[i];
-      _shadowLocalVec.set(local.x, 0, local.z).applyQuaternion(_shadowQuat);
-      _shadowWorldVec.set(
-        planePos.x + _shadowLocalVec.x,
-        planePos.y + _shadowLocalVec.y,
-        planePos.z + _shadowLocalVec.z
-      );
-
-      // Rzut wzdłuż promienia słonecznego na teren: zaczynamy od przybliżenia
-      // wysokością terenu z poprzedniej klatki, potem doprecyzowujemy 2x
-      // wysokością terenu FAKTYCZNIE pod punktem trafienia — wystarczająco
-      // dokładne dla cienia (rzędy metrów błędu przy stromym terenie znikają po
-      // 2 iteracjach), dużo tańsze niż prawdziwy raymarching przez DEM.
-      let groundY = _shadowLastGroundY;
-      for (let iter = 0; iter < 3; iter++) {
-        const travel = (_shadowWorldVec.y - groundY) * invLy;
-        _shadowHitVec.set(
-          _shadowWorldVec.x + lightDir.x * travel,
-          _shadowWorldVec.y + lightDir.y * travel,
-          _shadowWorldVec.z + lightDir.z * travel
-        );
-        const geo = worldToGeo(_shadowHitVec);
-        groundY = terrainHeightBest(geo.lat, geo.lon) * DEM_EXAG * Y_SCALE;
-      }
-      _shadowLastGroundY = groundY;
-
-      const hitY = groundY + 0.05; // mały offset, żeby cień nie migotał (z-fighting) z terenem
-      this._shadowPos[(i + 1) * 3 + 0] = _shadowHitVec.x;
-      this._shadowPos[(i + 1) * 3 + 1] = hitY;
-      this._shadowPos[(i + 1) * 3 + 2] = _shadowHitVec.z;
-      cx += _shadowHitVec.x; cy += hitY; cz += _shadowHitVec.z;
-    }
-
-    // Centroid (indeks 0 w buforze) — środek triangulacji typu "fan".
-    this._shadowPos[0] = cx / n;
-    this._shadowPos[1] = cy / n;
-    this._shadowPos[2] = cz / n;
-
-    this._shadow.geometry.attributes.position.needsUpdate = true;
-
-    // Słońce nisko nad horyzontem → kontakt cienia z ziemią jest w rzeczywistości
-    // słabszy/bardziej rozmyty — lekko przyciemniamy cień przy wysokim słońcu
-    // (ostry cień w południe) i rozjaśniamy przy niskim (słabszy o świcie/zmierzchu).
-    const sunElevFactor = _clamp01(sunDir.y / 0.5);
-    this._shadow.material.opacity = 0.20 + 0.30 * sunElevFactor;
-    this._shadow.visible = true;
-  }
-}
+      p.rud
