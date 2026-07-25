@@ -231,14 +231,23 @@ body.is-touch #throttle-display  { display: none !important; }
   overflow: hidden;
 }
 #thr-fill {
-  position: absolute; bottom: 0; left: 0; right: 0; height: 0%;
+  position: absolute; bottom: 50%; left: 0; right: 0; height: 0%;
   background: linear-gradient(to top, #074a1c, #22cc55);
-  border-radius: 0 0 26px 26px;
+  pointer-events: none;
+}
+#thr-fill-rev {
+  position: absolute; top: 50%; left: 0; right: 0; height: 0%;
+  background: linear-gradient(to bottom, #5a1a0a, #ff5a30);
+  pointer-events: none;
+}
+#thr-idle-mark {
+  position: absolute; top: 50%; left: 0; right: 0; height: 1px;
+  background: rgba(120,170,220,0.5);
   pointer-events: none;
 }
 #thr-thumb {
   position: absolute; left: 5px; right: 5px; height: 22px;
-  bottom: -11px;
+  bottom: calc(50% - 11px);
   background: rgba(50,200,90,0.92);
   border: 2px solid #44ff88;
   border-radius: 11px;
