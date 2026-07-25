@@ -357,6 +357,7 @@ _btn('mpop-map',  () => {
   setCameraMode(CameraMode.ORBIT);
   _setMenu(false);
 });
+_btn('mpop-weight', () => { openWeightPopup(); _setMenu(false); });
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  updatePlaneInput
