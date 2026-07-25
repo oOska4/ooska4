@@ -419,6 +419,7 @@ let GEAR_C_MAIN = 2 * GEAR_SUSP_ZETA_MAIN * GEAR_SUSP_OMEGA_MAIN * A321_PARAMS.m
 // ── Waga samolotu: paliwo + payload ─────────────────────────────────────────
 // Realistyczne wartości dla A321-200 (silniki CFM56). Źródło: publicznie znane
 // dane producenta/operatorów, zaokrąglone do rozsądnych wartości gry:
+
 //   OEW (Operating Empty Weight, samolot pusty)         ≈ 48 500 kg
 //   Max paliwo (zbiorniki skrzydłowe + centralny)        ≈ 23 700 kg
 //   Max payload (pasażerowie + bagaż + cargo)            ≈ 22 000 kg
