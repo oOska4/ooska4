@@ -47,6 +47,8 @@ window.addEventListener('keyup', e => {
     case 'KeyF': if (p) { p.flaps = (p.flaps + 1) % 4; _syncFlapsLabel(); } break;
     case 'KeyG': if (p && !p.onGround) { p.gearDown = !p.gearDown; p.updateGearVisibility(); _syncGearBtn(); } break;
     case 'KeyB': if (p) { p.spoilers = !p.spoilers; _syncSplrBtn(); } break;
+    case 'KeyP': if (p) { p.parkingBrake = !p.parkingBrake; _syncParkBtn(); } break;
+    case 'KeyN': if (p) { p.autobrakeLevel = _nextAutobrakeLevel(p.autobrakeLevel); _syncAutobrakeBtn(); } break;
     case 'KeyR': resetPlane(); break;
     case 'KeyC': cycleCameraMode(); break;
     case 'Digit1': setCameraMode(CameraMode.ORBIT); break;
@@ -234,9 +236,10 @@ function _flyReset() {
 // ═══════════════════════════════════════════════════════════════════════════════
 const thrTrack = document.getElementById('thr-track');
 const thrFill  = document.getElementById('thr-fill');
+const thrFillRev = document.getElementById('thr-fill-rev');
 const thrThumb = document.getElementById('thr-thumb');
 const thrPct   = document.getElementById('thr-pct');
-let thrId = -1, thrValue = -1;
+let thrId = -1, thrValue = null;
 
 thrTrack.addEventListener('touchstart', e => {
   e.stopPropagation(); e.preventDefault();
@@ -252,14 +255,17 @@ window.addEventListener('touchcancel', e => { for(const t of e.changedTouches) i
 
 function _thrY(cy) {
   const r = thrTrack.getBoundingClientRect();
-  return Math.max(0, Math.min(1, 1-(cy-r.top)/r.height));
+  const frac = Math.max(0, Math.min(1, 1 - (cy - r.top) / r.height)); // 0=dół, 1=góra
+  return frac * 2 - 1; // -1 (pełny reverse, dół) .. +1 (pełny gaz, góra); środek (50%) = idle
 }
 function _thrSet(v) { thrValue=v; _thrDraw(v); }
 function _thrDraw(v) {
-  const p = Math.round(v*100);
-  if (thrFill)  thrFill.style.height  = p+'%';
-  if (thrThumb) thrThumb.style.bottom = `calc(${p}% - 11px)`;
-  if (thrPct)   thrPct.textContent    = p+'%';
+  const revActive = v < 0;
+  if (thrFill)    thrFill.style.height    = Math.max(0, v * 50) + '%';
+  if (thrFillRev) thrFillRev.style.height = Math.max(0, -v * 50) + '%';
+  const thumbPct = 50 + v * 50; // 0..100% wysokości toru
+  if (thrThumb) thrThumb.style.bottom = `calc(${thumbPct}% - 11px)`;
+  if (thrPct)   thrPct.textContent = (revActive ? 'REV ' : '') + Math.round(Math.abs(v) * 100) + '%';
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -295,6 +301,23 @@ function _syncGearBtn() {
 function _syncSplrBtn() {
   const p = activeEntity; if (!p) return;
   document.getElementById('mb-splr')?.classList.toggle('active', p.spoilers);
+}
+const AUTOBRAKE_CYCLE = ['OFF', 'LOW', 'MED', 'MAX'];
+function _nextAutobrakeLevel(cur) {
+  const i = AUTOBRAKE_CYCLE.indexOf(cur);
+  return AUTOBRAKE_CYCLE[(i + 1) % AUTOBRAKE_CYCLE.length];
+}
+function _syncParkBtn() {
+  const p = activeEntity; if (!p) return;
+  const val = document.getElementById('mpop-park-val');
+  if (val) val.textContent = p.parkingBrake ? 'ON' : 'OFF';
+  document.getElementById('mpop-park')?.classList.toggle('active', p.parkingBrake);
+}
+function _syncAutobrakeBtn() {
+  const p = activeEntity; if (!p) return;
+  const val = document.getElementById('mpop-autobrake-val');
+  if (val) val.textContent = p.autobrakeLevel;
+  document.getElementById('mpop-autobrake')?.classList.toggle('active', p.autobrakeLevel !== 'OFF');
 }
 
 // ── Guziki lotnisk — działają przez data-apt, bez duplikatów ID ────────────────
@@ -358,6 +381,14 @@ _btn('mpop-map',  () => {
   _setMenu(false);
 });
 _btn('mpop-weight', () => { openWeightPopup(); _setMenu(false); });
+_btn('mpop-park', () => {
+  const p = activeEntity; if (!p) return;
+  p.parkingBrake = !p.parkingBrake; _syncParkBtn(); _setMenu(false);
+});
+_btn('mpop-autobrake', () => {
+  const p = activeEntity; if (!p) return;
+  p.autobrakeLevel = _nextAutobrakeLevel(p.autobrakeLevel); _syncAutobrakeBtn(); _setMenu(false);
+});
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  updatePlaneInput
@@ -382,7 +413,7 @@ function updatePlaneInput() {
   let brakes=!!planeKeys['KeyS']||brakesHeld;
 
   if (_isMobile() && activeEntity) {
-    if (thrValue>=0) { activeEntity.throttle=thrValue; throttleUp=false; throttleDown=false; }
+    if (thrValue !== null) { activeEntity.throttle=thrValue; throttleUp=false; throttleDown=false; }
     else _thrDraw(activeEntity.throttle);
   }
 
@@ -396,7 +427,7 @@ function updatePlaneInput() {
 // ═══════════════════════════════════════════════════════════════════════════════
 function resetPlane() {
   if (!activeEntity) return;
-  const apt=AIRPORTS[currentAirport]; thrValue=-1;
+  const apt=AIRPORTS[currentAirport]; thrValue=null;
   activeEntity.reset({ lat:apt.spawnLat, lon:apt.spawnLon, yawRad:Units.degToRad((180-apt.heading+360)%360) });
 }
 
@@ -423,7 +454,7 @@ function selectAirport(code) {
   document.querySelectorAll('[data-apt]').forEach(b => {
     b.classList.toggle('active', b.dataset.apt===code);
   });
-  thrValue=-1; _setMenu(false);
+  thrValue=null; _setMenu(false);
   if (activeEntity) {
     activeEntity.reset({ lat:apt.spawnLat,lon:apt.spawnLon,yawRad:Units.degToRad((180-apt.heading+360)%360) });
     orb.lat=apt.spawnLat; orb.lon=apt.spawnLon;
