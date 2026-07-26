@@ -44,12 +44,45 @@ function _lerp(a, b, t)  { return a + (b - a) * t; }
 function _smooth(t)      { return t * t * (3 - 2 * t); }
 function _clamp01(v)     { return Math.max(0, Math.min(1, v)); }
 
+// Gradient przyziemny wiatru (warstwa graniczna): poniżej tej wysokości wiatr
+// jest słabszy (tarcie o teren) i skręcony względem wiatru "swobodnego" —
+// powyżej traktujemy wiatr jako w pełni swobodny (gradient wind). 600m ≈ 2000ft,
+// typowa górna granica warstwy granicznej używana w meteorologii lotniczej.
+const WIND_GRADIENT_REF_ALT_M = 600;
+const WIND_GRADIENT_SURFACE_FACTOR = 0.4; // u samej ziemi wiatr ma tylko tyle % prędkości "swobodnej"
+const WIND_GRADIENT_VEER_DEG = 20;        // o tyle stopni skręcony wiatr przy ziemi względem wysokości odniesienia
+
+// Turbulencja: proces Ornsteina-Uhlenbecka (szum ze średnim powrotem), NIE
+// biały szum — dzięki temu poryw narasta/zanika płynnie zamiast migotać co
+// klatkę. WIND_TURB_REVERT to szybkość powrotu do zera (1/s).
+const WIND_TURB_REVERT = 0.6;
+
+// Scenariusz testowy windshear (patrz getWindshearDelta): klasyczny profil
+// treningowy mikroburstu — narastający headwind (zwodniczo "lepsze" osiągi),
+// potem gwałtowne przejście w tailwind + downdraft (najgroźniejsza faza),
+// wreszcie powrót do normy. Czasy w sekundach, prędkości w m/s.
+const WINDSHEAR_PHASE1_DUR = 6;   // narastający headwind
+const WINDSHEAR_PHASE2_DUR = 10;  // gwałtowne przejście headwind -> tailwind + downdraft
+const WINDSHEAR_PHASE3_DUR = 8;   // powrót do normalnego wiatru
+const WINDSHEAR_HEADWIND_PEAK_MS = 12;
+const WINDSHEAR_TAILWIND_PEAK_MS = 14;
+const WINDSHEAR_DOWNDRAFT_PEAK_MS = 4;
+
 class WeatherSystem {
 
   constructor() {
     this._isMobile = document.body.classList.contains('is-touch');
     this._time     = 0;
     this._gustTime = 0;
+
+    // ── Turbulencja (proces OU) i windshear — patrz getWindVector3D /
+    // getWindshearDelta niżej. Osobne od starego _gustTime (który zostaje,
+    // bo wciąż go używa windEffective()/windWorld dla sim-sky.js).
+    this._windGustSpeedMs = 0;
+    this._windGustDirDeg  = 0;
+    this._windGustVertMs  = 0;
+    this._windshearActive = false;
+    this._windshearT      = 0;
 
     // Stan płynnego przejścia między presetami
     this._trans = {
@@ -128,6 +161,88 @@ class WeatherSystem {
 
   getWindAtAlt(altM)    { return this.windVector; }
   getTurbulenceAt(altM) { return WeatherState.turbulence * (this.isInCloud ? 1.4 : 1.0); }
+
+  // ── Wiatr 3D dla FIZYKI (sim-physics.js) — w przeciwieństwie do windVector/
+  // getWindAtAlt (bazowy kierunek/prędkość presetu, do wiatru na canvasie i
+  // dryfu chmur w sim-sky.js) ta metoda uwzględnia:
+  //  1) gradient przyziemny — słabszy i skręcony wiatr blisko ziemi (tarcie),
+  //  2) turbulencję jako płynny szum (proces OU), skalowany przez
+  //     getTurbulenceAt (czyli też mocniej w chmurze),
+  // Zwraca wektor w RAMIE LOKALNEJ fizyki (x=wschód, y=góra, z=-północ) plus
+  // prędkość/kierunek "po ludzku" (do odczytu w HUD). NIE zawiera windsheara
+  // testowego — patrz getWindshearDelta, bo tamten potrzebuje kierunku dziobu
+  // samolotu, którego ta metoda (celowo) nie zna.
+  getWindVector3D(altAglM, dtCap) {
+    const turb = this.getTurbulenceAt(altAglM);
+
+    // Proces OU: szum ze średnim powrotem do zera, żeby poryw narastał/zanikał
+    // płynnie zamiast migotać co klatkę. sqrt(dtCap) daje poprawne (w
+    // przybliżeniu) skalowanie niezależne od częstotliwości klatek.
+    const sq = Math.sqrt(Math.max(dtCap, 0.0001));
+    this._windGustSpeedMs += -WIND_TURB_REVERT * this._windGustSpeedMs * dtCap
+      + (Math.random() * 2 - 1) * turb * 4.0 * sq;
+    this._windGustDirDeg  += -WIND_TURB_REVERT * this._windGustDirDeg * dtCap
+      + (Math.random() * 2 - 1) * turb * 15 * sq;
+    this._windGustVertMs  += -WIND_TURB_REVERT * this._windGustVertMs * dtCap
+      + (Math.random() * 2 - 1) * turb * 2.5 * sq;
+
+    const hFrac = Math.max(0, Math.min(1, altAglM / WIND_GRADIENT_REF_ALT_M));
+    const speedFactor = WIND_GRADIENT_SURFACE_FACTOR + (1 - WIND_GRADIENT_SURFACE_FACTOR) * hFrac;
+    const dirVeerDeg  = WIND_GRADIENT_VEER_DEG * (1 - hFrac);
+
+    const speedMs    = Math.max(0, WeatherState.windSpeedMs * speedFactor + this._windGustSpeedMs);
+    const dirFromDeg = (WeatherState.windDirectionDeg + dirVeerDeg + this._windGustDirDeg + 360) % 360;
+
+    const toRad = ((dirFromDeg + 180) % 360) * Math.PI / 180;
+    return {
+      x: Math.sin(toRad) * speedMs,
+      y: this._windGustVertMs,
+      z: -Math.cos(toRad) * speedMs,
+      speedMs, dirFromDeg,
+    };
+  }
+
+  // Uruchamia jednorazowy scenariusz testowy windshear (przycisk/klawisz w UI —
+  // patrz sim-controls.js). Nie robi nic, jeśli już trwa.
+  triggerWindshearTest() {
+    if (this._windshearActive) return;
+    this._windshearActive = true;
+    this._windshearT = 0;
+  }
+
+  get windshearActive() { return this._windshearActive; }
+
+  // Zwraca deltę windsheara WZGLĘDEM AKTUALNEGO KIERUNKU LOTU — czyli
+  // "dodatkowy headwind/tailwind" (alongMs, dodatnie = dodatkowy headwind) i
+  // pionowy downdraft (vertMs, ujemne = opadanie powietrza). sim-physics.js
+  // dokłada to do wektora wiatru wzdłuż własnego `forward`, bo to jedyne
+  // miejsce, które zna orientację samolotu. Profil to klasyczny trening
+  // mikroburstu: narastający headwind (zwodniczo "lepsze" osiągi) -> gwałtowne
+  // przejście w tailwind + downdraft (najgroźniejsza faza, realny spadek IAS i
+  // wysokości) -> powrót do normy.
+  getWindshearDelta(dtCap) {
+    if (!this._windshearActive) return { alongMs: 0, vertMs: 0 };
+    this._windshearT += dtCap;
+    const t = this._windshearT;
+    let alongMs, vertMs;
+    if (t < WINDSHEAR_PHASE1_DUR) {
+      const p = t / WINDSHEAR_PHASE1_DUR;
+      alongMs = WINDSHEAR_HEADWIND_PEAK_MS * p;
+      vertMs = 0;
+    } else if (t < WINDSHEAR_PHASE1_DUR + WINDSHEAR_PHASE2_DUR) {
+      const p = (t - WINDSHEAR_PHASE1_DUR) / WINDSHEAR_PHASE2_DUR;
+      alongMs = _lerp(WINDSHEAR_HEADWIND_PEAK_MS, -WINDSHEAR_TAILWIND_PEAK_MS, p);
+      vertMs = -WINDSHEAR_DOWNDRAFT_PEAK_MS * Math.sin(Math.PI * p); // szczyt opadania w środku fazy
+    } else if (t < WINDSHEAR_PHASE1_DUR + WINDSHEAR_PHASE2_DUR + WINDSHEAR_PHASE3_DUR) {
+      const p = (t - WINDSHEAR_PHASE1_DUR - WINDSHEAR_PHASE2_DUR) / WINDSHEAR_PHASE3_DUR;
+      alongMs = _lerp(-WINDSHEAR_TAILWIND_PEAK_MS, 0, p);
+      vertMs = 0;
+    } else {
+      this._windshearActive = false;
+      alongMs = 0; vertMs = 0;
+    }
+    return { alongMs, vertMs };
+  }
 
   // Przybliżona relatywna wilgotność dla danej wysokości (0..1).
   // Jeśli jesteśmy wewnątrz chmury → 1.0. Poza chmurą przybliżamy RH na podstawie

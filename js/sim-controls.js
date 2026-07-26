@@ -49,6 +49,7 @@ window.addEventListener('keyup', e => {
     case 'KeyB': if (p) { p.spoilers = !p.spoilers; _syncSplrBtn(); } break;
     case 'KeyP': if (p) { p.parkingBrake = !p.parkingBrake; _syncParkBtn(); } break;
     case 'KeyN': if (p) { p.autobrakeLevel = _nextAutobrakeLevel(p.autobrakeLevel); _syncAutobrakeBtn(); } break;
+    case 'KeyX': if (p) { p.ap.master = false; p.ap.hdgHold = false; p.ap.altHold = false; p.ap.vsHold = false; p.ap.spdHold = false; } break;
     case 'KeyR': resetPlane(); break;
     case 'KeyC': cycleCameraMode(); break;
     case 'Digit1': setCameraMode(CameraMode.ORBIT); break;
@@ -381,6 +382,7 @@ _btn('mpop-map',  () => {
   _setMenu(false);
 });
 _btn('mpop-weight', () => { openWeightPopup(); _setMenu(false); });
+_btn('mpop-ap', () => { openApPopup(); _setMenu(false); });
 _btn('mpop-park', () => {
   const p = activeEntity; if (!p) return;
   p.parkingBrake = !p.parkingBrake; _syncParkBtn(); _setMenu(false);

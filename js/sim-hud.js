@@ -167,6 +167,12 @@ const hudEl = {
   phase:      document.getElementById('phase-disp'),
   stall:      document.getElementById('stall-disp'),
   overspeed:  document.getElementById('overspeed-disp'),
+  windshear:  document.getElementById('windshear-disp'),
+  wind:       document.getElementById('wind-val'),
+  fmaHdg:     document.getElementById('fma-hdg'),
+  fmaAlt:     document.getElementById('fma-alt'),
+  fmaVs:      document.getElementById('fma-vs'),
+  fmaSpd:     document.getElementById('fma-spd'),
   brakes:     document.getElementById('brakes-val'),
   park:       document.getElementById('park-val'),
   autobrake:  document.getElementById('autobrake-val'),
@@ -254,6 +260,39 @@ function updateHUD() {
     hudEl.autobrake.style.color = plane.autobrakeLevel !== 'OFF' ? '#44ccff' : '#c8e8ff';
   }
 
+  // Wiatr — odczyt "po ludzku" (kierunek OD którego wieje / prędkość), patrz
+  // getWindVector3D w sim-weather.js. Nie zawiera windsheara testowego celowo
+  // (patrz komentarz przy getWindshearDelta) — to osobne ostrzeżenie niżej.
+  if (hudEl.wind) {
+    hudEl.wind.textContent = Math.round(plane.windDirDeg || 0) + '°/' + Math.round(plane.windSpeedKt || 0) + 'kt';
+  }
+
+  // FMA (Flight Mode Annunciator) — pokazuje cel gdy tryb aktywny, samą
+  // etykietę (przygaszoną przez CSS .fma-item bez .active) gdy nieaktywny.
+  if (hudEl.fmaHdg) {
+    hudEl.fmaHdg.textContent = plane.ap.hdgHold ? ('HDG ' + Math.round(plane.ap.targetHdgDeg) + '°') : 'HDG';
+    hudEl.fmaHdg.classList.toggle('active', plane.ap.hdgHold);
+  }
+  if (hudEl.fmaAlt) {
+    hudEl.fmaAlt.textContent = plane.ap.altHold ? ('ALT ' + Math.round(plane.ap.targetAltFt)) : 'ALT';
+    hudEl.fmaAlt.classList.toggle('active', plane.ap.altHold);
+  }
+  if (hudEl.fmaVs) {
+    hudEl.fmaVs.textContent = plane.ap.vsHold ? ('V/S ' + (plane.ap.targetVsFpm >= 0 ? '+' : '') + Math.round(plane.ap.targetVsFpm)) : 'V/S';
+    hudEl.fmaVs.classList.toggle('active', plane.ap.vsHold);
+  }
+  if (hudEl.fmaSpd) {
+    hudEl.fmaSpd.textContent = plane.ap.spdHold ? ('A/THR ' + Math.round(plane.ap.targetSpdKt)) : 'A/THR';
+    hudEl.fmaSpd.classList.toggle('active', plane.ap.spdHold);
+  }
+  if (typeof apUI !== 'undefined') apUI.syncFromEntity(plane); // złap autonomiczne rozłączenia (ręczny ster) w panelu
+
+  // Windshear — ostrzeżenie widoczne DOKŁADNIE podczas scenariusza testowego
+  // (patrz weather.triggerWindshearTest / getWindshearDelta).
+  if (hudEl.windshear) {
+    hudEl.windshear.style.display = (typeof weather !== 'undefined' && weather && weather.windshearActive) ? 'block' : 'none';
+  }
+
   let phase = 'ON GROUND';
   if (!plane.onGround) {
     if (agl_ft < 400 && plane.vs > 0.5) phase = 'TAKEOFF';
@@ -318,4 +357,3 @@ window.setCameraMode = function(mode) {
   _originalSetCameraMode(mode);
   _updateCameraButtonStates();
 };
-

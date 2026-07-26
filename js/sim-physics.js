@@ -394,6 +394,35 @@ const PITCH_DAMPING_GAIN = 1.0;
 // stabilne, więc KP=3/KD=15 ma spory margines, nie jest granicą).
 const PITCH_HOLD_KP = 0.2;  // NAPRAWA v6: obnizone z 3.0, patrz komentarz nizej
 const PITCH_HOLD_KD = 60.0; // NAPRAWA v6: podniesione z 15.0, patrz komentarz nizej
+
+// ── Autopilot — stałe regulatorów ────────────────────────────────────────────
+// UWAGA: to są rozsądne wartości startowe, NIE finalnie dostrojone (w
+// przeciwieństwie do PITCH_HOLD_KP/KD wyżej, które przeszły wielorundowe
+// strojenie na żywo). Oś ALT/V-S celowo korzysta z ISTNIEJĄCEGO,
+// sprawdzonego regulatora PD (pitchHoldTarget + PITCH_HOLD_KP/KD) jako pętli
+// wewnętrznej — autopilot tylko przelicza jaki kąt pochylenia jest potrzebny.
+// Jeśli po testach coś lata "nerwowo" albo za wolno, to WŁAŚNIE te stałe
+// warto skanować/dostrajać w pierwszej kolejności — dokładnie tak jak
+// PITCH_HOLD_KP/KD było stopniowo dostrajane wcześniej.
+const AP_MANUAL_OVERRIDE_DEADZONE = 0.05; // próg wejścia pilota, który rozłącza daną oś AP
+
+// Oś pochylenia: ALT error -> V/S cel -> (integrator) -> cel pitch -> istniejący PD
+const AP_ALT_KP          = 0.04;               // błąd wysokości [m] -> V/S cel [m/s]
+const AP_MAX_VS_MS       = Units.fpmToMs(1800); // limit V/S komenderowanej przez AP (łagodniej niż ręczne manewry)
+const AP_VS_TO_PITCH_KI  = 0.0025;              // integrator: rad/s celu pitch na (m/s błędu V/S)
+const AP_MAX_PITCH_RAD   = 15 * Math.PI / 180;  // bezpieczny zakres celu pitch z autopilota
+
+// Oś przechylenia: HDG error -> bank cel -> PD na błędzie banku -> "wychył lotki"
+const AP_MAX_BANK_DEG = 25;   // maks. przechylenie komenderowane przez AP (standardowy limit AP na liniowcach)
+const AP_HDG_KP       = 1.0;  // stopień banku na stopień błędu kursu (przycięte do AP_MAX_BANK_DEG)
+const AP_ROLL_KP      = 1.2;  // "wychył lotki" na rad błędu banku
+const AP_ROLL_KD      = 0.5;  // tłumienie po rollRate
+
+// Autothrust: SPD error -> throttle (P+I, integrator eliminuje offset np. od wiatru/wagi)
+const AP_SPD_KP = 0.006; // throttle na kt błędu prędkości
+const AP_SPD_KI = 0.0008; // throttle/s na kt błędu (całka, z ograniczeniem nawinięcia niżej)
+const AP_ATHR_INTEGRAL_MAX = 0.35;
+
 const NOSEWHEEL_MAX_RAD  = 0.90; // maks. skret przedniego kola (~50st) - skutecznosc spada z predkoscia, patrz groundSteerTrackFactor()
 // NAPRAWA v6 (zgłoszone: "ustawiam pitch na 10, leci do ~12, potem do ~8,
 // potem do 10 i tam zostaje — chcę zeby po prostu doszlo do ~12 i tam
@@ -419,7 +448,6 @@ let GEAR_C_MAIN = 2 * GEAR_SUSP_ZETA_MAIN * GEAR_SUSP_OMEGA_MAIN * A321_PARAMS.m
 // ── Waga samolotu: paliwo + payload ─────────────────────────────────────────
 // Realistyczne wartości dla A321-200 (silniki CFM56). Źródło: publicznie znane
 // dane producenta/operatorów, zaokrąglone do rozsądnych wartości gry:
-
 //   OEW (Operating Empty Weight, samolot pusty)         ≈ 48 500 kg
 //   Max paliwo (zbiorniki skrzydłowe + centralny)        ≈ 23 700 kg
 //   Max payload (pasażerowie + bagaż + cargo)            ≈ 22 000 kg
@@ -849,6 +877,27 @@ class A321Entity extends Entity {
     this.reverserDeployFrac = 0; // 0=schowany, 1=w pełni wysunięty (patrz reverse thrust w physicsUpdate)
     this.parkingBrake = false;
     this.autobrakeLevel = 'OFF'; // 'OFF' | 'LOW' | 'MED' | 'MAX' — patrz AUTOBRAKE_MU_FRAC
+
+    // ── Autopilot — patrz sekcja AP w physicsUpdate(). master=wyłącznik
+    // główny; poszczególne osie (hdgHold/altHold/vsHold/spdHold) działają
+    // tylko gdy master=true. altHold i vsHold się wykluczają (włączenie
+    // jednego wyłącza drugie — dokładnie jak ALT/V-S na prawdziwym MCP).
+    // target* to wartości "nakręcone" na panelu AP (sim-controls.js/HTML) —
+    // PRZETRWAJĄ reset() (pilot nie musi ich wpisywać na nowo po każdym
+    // repozycjonowaniu), ale master i wszystkie *Hold zawsze wyłączają się
+    // przy reset (bezpieczny domyślny stan po każdym starcie/teleportacji).
+    this.ap = {
+      master: false,
+      hdgHold: false,
+      altHold: false,
+      vsHold: false,
+      spdHold: false,
+      targetHdgDeg: 360,
+      targetAltFt: 3000,
+      targetVsFpm: 0,
+      targetSpdKt: 250,
+    };
+    this._athrIntegral = 0; // integrator autothrust (patrz AP_SPD_KI) — zerowany przy reset/rozłączeniu
     this.flaps = 1;
     this.gearDown = true;
     this.spoilers = false;
@@ -857,6 +906,10 @@ class A321Entity extends Entity {
     // Start jako "blisko ziemi" — bezpieczny domyślny stan tuż po starcie/spawnie.
     this._nearGroundZone = true;
     this.airspeed = 0;
+    this.groundSpeed = 0;
+    this.windVec3 = new THREE.Vector3(0, 0, 0);
+    this.windSpeedKt = 0;
+    this.windDirDeg = 0;
     this.vs = 0;
     this._alpha = 0; this._cl = 0; this._isStalling = false;
     this.terrainZoom = 15; // maks. dostępna dokładność danych wysokościowych (~3 m/px) — tyle samo, co dla renderowanego terenu (patrz sim-terrain.js: buildMeshWithNeighbors ogranicza DEM do z15)
@@ -1079,6 +1132,9 @@ class A321Entity extends Entity {
     this.vel.set(opts.velX ?? 0, opts.velY ?? 0, opts.velZ ?? 0);
     this.throttle = opts.throttle ?? 0;
     this.reverserDeployFrac = 0; // rewerser fizycznie schowany po reset — nie jest to "ustawienie" jak autobrake/parking brake
+    this.ap.master = false; this.ap.hdgHold = false; this.ap.altHold = false;
+    this.ap.vsHold = false; this.ap.spdHold = false; // target* NIE są zerowane — patrz komentarz przy this.ap w konstruktorze
+    this._athrIntegral = 0;
     this.flaps = opts.flaps ?? 1;
     this.gearDown = opts.gearDown ?? true;
     this.spoilers = false;
@@ -1261,10 +1317,69 @@ class A321Entity extends Entity {
     const reverserRate = (reverserTarget > this.reverserDeployFrac) ? (dtCap / 1.6) : (dtCap / 0.9);
     this.reverserDeployFrac += Math.max(-reverserRate, Math.min(reverserRate, reverserTarget - this.reverserDeployFrac));
 
-    const airspeed = this.vel.length();
+    // ── Wiatr: wektor 3D w ramie lokalnej fizyki (x=wschód,y=góra,z=-północ).
+    // getWindVector3D daje gradient przyziemny + turbulencję (patrz
+    // sim-weather.js); getWindshearDelta daje ewentualny scenariusz testowy —
+    // liczony WZGLĘDEM aktualnego kierunku lotu, więc potrzebuje `_windForward`
+    // (to samo co `forward` liczone niżej w tej funkcji, tylko wcześniej —
+    // duplikacja tej jednej linijki jest tańsza niż przestawianie kolejności
+    // całej, już dostrojonej, reszty physicsUpdate).
+    // UWAGA: to jedyne miejsce, gdzie this.vel (prędkość względem ZIEMI)
+    // rozjeżdża się z prędkością względem POWIETRZA — airRelVel/airspeed
+    // niżej służą WYŁĄCZNIE aerodynamice (siła nośna, opór, kąt natarcia/
+    // poślizgu). Pozycja, prędkość względem ziemi (G/S), tarcie kół i V/S
+    // dalej używają this.vel bez zmian, bo to fizycznie poprawne — wiatr nie
+    // zmienia jak szybko koła toczą się po pasie ani jak szybko realnie
+    // przemieszczamy się nad ziemią.
+    const _windForward = new THREE.Vector3(Math.sin(this.yawRad), 0, Math.cos(this.yawRad));
+    const windVec3 = new THREE.Vector3(0, 0, 0);
+    if (typeof weather !== 'undefined' && weather) {
+      const w = weather.getWindVector3D(this.agl, dtCap);
+      windVec3.set(w.x, w.y, w.z);
+      this.windSpeedKt = Units.msToKt(w.speedMs);
+      this.windDirDeg  = w.dirFromDeg;
+      const wsD = weather.getWindshearDelta(dtCap);
+      // UWAGA na znak: airRelVel = this.vel - windVec3 (patrz niżej), więc
+      // "dodatkowy headwind" (alongMs>0, ma ZWIĘKSZAĆ airspeed) to wektor
+      // wiatru PRZECIWNY do kierunku dziobu (powietrze płynie od dziobu w
+      // stronę ogona) — stąd minus. Sprawdzone na wprost: V=50 do przodu,
+      // headwind=12 -> windVec=-12*forward -> airRelVel=(50-(-12))*forward
+      // = 62 > 50. Bez minusa wyszłoby 38 (czyli de facto tailwind).
+      windVec3.addScaledVector(_windForward, -wsD.alongMs);
+      windVec3.y += wsD.vertMs;
+    }
+    this.windVec3 = windVec3; // do odczytu w HUD/debug (wektor CAŁKOWITY, z windshearem)
+
+    const airRelVel = this.vel.clone().sub(windVec3);
+    const airspeed = airRelVel.length();
     const speedKt = Units.msToKt(airspeed);
+    // groundSpeedKt: NAPRAWA — to co dawniej było `speedKt` u autobrake'u i
+    // groundSteerTrackFactor (niżej w tej funkcji) w rzeczywistości zawsze
+    // chodziło o prędkość WZGLĘDEM ZIEMI (kiedy jeszcze nie było wiatru,
+    // airspeed==groundspeed, więc różnica nie była widoczna) — teraz trzeba
+    // je rozdzielić jawnie, bo silny wiatr mógłby inaczej fałszywie
+    // rozłączać/załączać autobrake albo psuć skręt na pasie.
+    const groundSpeedKt = Units.msToKt(this.vel.length());
+
+    // ── Autopilot: autothrust (SPD HOLD) ─────────────────────────────────
+    // P+I na błędzie prędkości WZGLĘDEM POWIETRZA (speedKt, patrz sekcja
+    // wiatru wyżej) — integrator jest tu ważny, bo bez niego autothrust
+    // zostawiałby stały błąd prędkości przy headwindzie/tailwindzie albo przy
+    // cięższym samolocie (patrz system wagi). Rozłącza się przy ręcznym
+    // throttleUp/Down (pilot bierze stery) — dokładnie jak reszta osi AP.
+    if (this.ap.master && this.ap.spdHold && !input.throttleUp && !input.throttleDown) {
+      const spdErrKt = this.ap.targetSpdKt - speedKt; // dodatnie = za wolno, trzeba dodać mocy
+      this._athrIntegral = Math.max(-AP_ATHR_INTEGRAL_MAX, Math.min(AP_ATHR_INTEGRAL_MAX,
+        this._athrIntegral + spdErrKt * AP_SPD_KI * dtCap));
+      this.throttle = Math.max(0, Math.min(1, AP_SPD_KP * spdErrKt + this._athrIntegral));
+      // Autothrust nie wchodzi w reverse ani nie rusza rewersorów — to
+      // manewr WYŁĄCZNIE ręczny (real A320/321 rodzina działa tak samo).
+    } else if ((input.throttleUp || input.throttleDown) && this.ap.master) {
+      this.ap.spdHold = false; // ręczne przejęcie gazu rozłącza autothrust
+    }
+
     const pitchInput = input.pitch;
-    const rollInput  = input.roll;
+    let rollInput  = input.roll;
     const yawInput   = input.yaw;
     // Zapamiętane dla HUD (sim-hud.js) — czy hamulce main gear są w tej
     // klatce faktycznie zaciśnięte (manualnie albo parking brake). Autobrake
@@ -1310,13 +1425,13 @@ class A321Entity extends Entity {
     // samolotu — używany dla siły nośnej skrzydła i usterzenia (patrz NAPRAWA
     // przy _computeWindUp wyżej). airspeed jest już policzony na początku
     // physicsUpdate.
-    const windUp = _computeWindUp(this.vel, wingRight, acUp, airspeed);
+    const windUp = _computeWindUp(airRelVel, wingRight, acUp, airspeed);
     let torquePitch = 0, torqueRoll = 0, torqueYaw = 0;
 
     // ── Aerodynamika skrzydła: siła nośna + opór, jak wcześniej, ale teraz
     // przyłożona w WING_AC (blisko CG) — daje więc też niewielki moment pitch,
     // zamiast działać "w próżni" bez wpływu na obrót. ─────────────────
-    const fpa = airspeed > 2 ? Math.asin(Math.max(-1, Math.min(1, this.vel.y / airspeed))) : 0;
+    const fpa = airspeed > 2 ? Math.asin(Math.max(-1, Math.min(1, airRelVel.y / airspeed))) : 0;
     const alpha = this.pitchRad - fpa;
 
     const flap = this.flaps;
@@ -1348,7 +1463,7 @@ class A321Entity extends Entity {
     const dragMag = q * A321_PARAMS.wingArea * Math.max(0, cd);
 
     const liftVec = windUp.clone().multiplyScalar(liftMag);
-    const dragVec = airspeed > 0.1 ? this.vel.clone().normalize().multiplyScalar(-dragMag) : new THREE.Vector3();
+    const dragVec = airspeed > 0.1 ? airRelVel.clone().normalize().multiplyScalar(-dragMag) : new THREE.Vector3();
     totalForce.add(liftVec).add(dragVec);
     { const Fl = toLocal(liftVec);
       torquePitch += _pitchTorque(WING_AC, Fl);
@@ -1424,6 +1539,23 @@ class A321Entity extends Entity {
     torquePitch -= PITCH_DAMPING_GAIN * q * A321_PARAMS.wingArea * A321_FUSELAGE_LEN * A321_FUSELAGE_LEN
                  * this.pitchRate / (2 * Math.max(airspeed, 5));
 
+    // ── Autopilot: oś przechylenia (HDG HOLD) ────────────────────────────
+    // Kaskada: błąd kursu -> cel przechylenia (P, przycięty do AP_MAX_BANK_DEG)
+    // -> PD na błędzie przechylenia -> podstawienie w miejsce ręcznego
+    // rollInput (tu NIE ma odpowiednika pitchHoldTarget/PD do ponownego użycia
+    // — oś przechylenia nie miała wcześniej żadnego auto-trymu, więc
+    // autopilot komenderuje "wychył lotki" bezpośrednio, tak jak zrobiłby to
+    // pilot drążkiem).
+    if (this.ap.master && this.ap.hdgHold && Math.abs(input.roll) < AP_MANUAL_OVERRIDE_DEADZONE) {
+      const hdgErrDeg = ((this.ap.targetHdgDeg - this.heading + 540) % 360) - 180; // -180..+180, dodatnie = cel na prawo
+      const targetBankDeg = Math.max(-AP_MAX_BANK_DEG, Math.min(AP_MAX_BANK_DEG, hdgErrDeg * AP_HDG_KP));
+      const bankErrRad = (targetBankDeg * Math.PI / 180) - this.rollRad;
+      rollInput = Math.max(-1, Math.min(1, AP_ROLL_KP * bankErrRad - AP_ROLL_KD * this.rollRate));
+    } else if (Math.abs(input.roll) >= AP_MANUAL_OVERRIDE_DEADZONE && this.ap.master && this.ap.hdgHold) {
+      // Ręczne przejęcie steru rozłącza autopilota na osi przechylenia
+      this.ap.hdgHold = false;
+    }
+
     // ── Lotki: moment przechylający wprost ze standardowego wzoru
     // aerodynamicznego (τ = q·S·rozpiętość·Cl_δa·δa) — ailerony nie mają jednego
     // "ramienia" (działają różnicowo na całej rozpiętości skrzydeł), więc
@@ -1442,7 +1574,7 @@ class A321Entity extends Entity {
     // (FIN_AC.y > 0), więc ta sama siła naturalnie sprzęga się też z rollem —
     // to prawdziwy, znany efekt uboczny sterowania kierunkiem (nie coś
     // dodanego sztucznie na siłę). ─────────────────────────────
-    const beta = Math.atan2(this.vel.dot(wingRight), Math.max(airspeed, 0.5));
+    const beta = Math.atan2(airRelVel.dot(wingRight), Math.max(airspeed, 0.5));
     // NAPRAWA (zgłoszone: "samolot sam bez controls sie buja lewo prawo w
     // locie — heading, nie roll"): wkład yawRate do finBeta musi mieć
     // PRZECIWNY znak względem tego, jak wchodzi do finForceVec, niż wkład
@@ -1508,7 +1640,7 @@ class A321Entity extends Entity {
         // manualny hamulec zawsze wygrywa), dodaje moc silnika (go-around),
         // albo prędkość spadnie blisko kołowania (jak w realu).
         const autobrakeActive = this.autobrakeLevel !== 'OFF' && this.onGround
-          && !input.brakes && this.throttle <= 0.05 && speedKt > AUTOBRAKE_MIN_SPEED_KT;
+          && !input.brakes && this.throttle <= 0.05 && groundSpeedKt > AUTOBRAKE_MIN_SPEED_KT;
         const autobrakeMuRoll = TIRE_ROLLING_MU
           + (TIRE_BRAKE_MU - TIRE_ROLLING_MU) * (AUTOBRAKE_MU_FRAC[this.autobrakeLevel] ?? 0);
 
@@ -1564,7 +1696,7 @@ class A321Entity extends Entity {
           let latTarget = 0;
           if (k === 'nose') {
             latTarget = Math.tan(yawInput * NOSEWHEEL_MAX_RAD) * Math.max(rollSpeed, 0)
-                      * groundSteerTrackFactor(speedKt);
+                      * groundSteerTrackFactor(groundSpeedKt);
           }
           const fLat = -Math.max(-TIRE_LAT_GRIP_MU * fN, Math.min(TIRE_LAT_GRIP_MU * fN,
                         TIRE_LAT_STIFF * (latSpeed - latTarget)));
@@ -1639,12 +1771,38 @@ class A321Entity extends Entity {
       // DOKŁADNIE ten kąt, w którym pilot zostawił samolot. Gdy pilot trzyma
       // input, target na bieżąco podąża za aktualnym pitchem, żeby "złapać"
       // właściwy kąt w chwili puszczenia drążka.
+      // ── Autopilot: oś pochylenia (ALT HOLD / V-S HOLD) ───────────────────
+      // Kaskada: błąd wysokości (ALT) -> cel V/S -> (integrator) -> cel pitch
+      // -> ISTNIEJĄCY regulator PD niżej (pitchHoldTarget/PITCH_HOLD_KP/KD).
+      // Liczone TYLKO gdy pilot faktycznie nie trzyma steru (identyczny próg
+      // co reszta hold-logiki) — inaczej walczylibyśmy z ręcznym wejściem.
+      if (this.ap.master && (this.ap.altHold || this.ap.vsHold) && Math.abs(pitchInput) < AP_MANUAL_OVERRIDE_DEADZONE) {
+        const vsTargetMs = this.ap.altHold
+          ? Math.max(-AP_MAX_VS_MS, Math.min(AP_MAX_VS_MS, (Units.ftToM(this.ap.targetAltFt) - this.altM) * AP_ALT_KP))
+          : Units.fpmToMs(this.ap.targetVsFpm);
+        const vsErrMs = vsTargetMs - this.vel.y; // this.vel.y = V/S względem ziemi, patrz this.vs niżej — to jest to co ma pokazywać AP
+        this.pitchHoldTarget += AP_VS_TO_PITCH_KI * vsErrMs * dtCap;
+        this.pitchHoldTarget = Math.max(-AP_MAX_PITCH_RAD, Math.min(AP_MAX_PITCH_RAD, this.pitchHoldTarget));
+      }
+
+      // Attitude hold: TYLKO gdy pilot nie trzyma wyraźnego inputu pitch,
+      // regulator PD aktywnie utrzymuje this.pitchHoldTarget (patrz NAPRAWA v3
+      // przy PITCH_HOLD_KP/KD) — zamiast tylko zerować pitchRate (co dryfowało
+      // do jednego, naturalnego kąta zależnego od throttle/klap), teraz trzyma
+      // DOKŁADNIE ten kąt, w którym pilot zostawił samolot. Gdy pilot trzyma
+      // input, target na bieżąco podąża za aktualnym pitchem, żeby "złapać"
+      // właściwy kąt w chwili puszczenia drążka. Powyższa kaskada AP tylko
+      // PRZESUWA pitchHoldTarget zanim tu dojdziemy — sam regulator PD jest
+      // wspólny dla ręcznego auto-trymu i dla autopilota.
       if (Math.abs(pitchInput) < 0.05) {
         const pitchErr = this.pitchRad - this.pitchHoldTarget; // dodatnie = pitch za wysoko względem celu
         this.pitchTrim += (PITCH_HOLD_KP * pitchErr + PITCH_HOLD_KD * this.pitchRate) * dtCap;
         this.pitchTrim = Math.max(-ELEVATOR_MAX_RAD, Math.min(ELEVATOR_MAX_RAD, this.pitchTrim));
       } else {
         this.pitchHoldTarget = this.pitchRad;
+        // Ręczne przejęcie steru rozłącza autopilota na osi pitch (jak w
+        // realu — sidestick z siłą powyżej progu odłącza A/P).
+        if (this.ap.master) { this.ap.altHold = false; this.ap.vsHold = false; }
       }
 
       const eastVel  = this.vel.x;
@@ -1655,7 +1813,19 @@ class A321Entity extends Entity {
       this.altM += this.vel.y * dtCap;
     }
 
-    if (this.vel.length() > A321_PARAMS.VMO) this.vel.setLength(A321_PARAMS.VMO);
+    // NAPRAWA (wiatr): VMO jest limitem prędkości WZGLĘDEM POWIETRZA (to on
+    // wyznacza rzeczywiste obciążenie aerodynamiczne/strukturalne), nie
+    // względem ziemi. Bez tej poprawki silny tailwind fałszywie "łamałby"
+    // limit (a samolot byłby bezpieczny aerodynamicznie), a silny headwind
+    // mógłby ukryć realne przekroczenie VMO. Przycinamy więc składową
+    // względem powietrza, zachowując kierunek wiatru w wyniku.
+    {
+      const airRelNow = this.vel.clone().sub(this.windVec3);
+      if (airRelNow.length() > A321_PARAMS.VMO) {
+        airRelNow.setLength(A321_PARAMS.VMO);
+        this.vel.copy(airRelNow.add(this.windVec3));
+      }
+    }
 
     // ── Stan po integracji: świeża próbka podwozia z NOWEJ pozycji — do tego
     // służy onGround/agl/markery, i zabezpieczenie awaryjne przed "zamurowaniem"
@@ -1679,7 +1849,8 @@ class A321Entity extends Entity {
       this.onGround = false;
     }
 
-    this.airspeed = this.vel.length();
+    this.airspeed = this.vel.clone().sub(this.windVec3).length();
+    this.groundSpeed = this.vel.length(); // do HUD/debug — wyraźnie odróżnione od airspeed teraz, gdy jest wiatr
     this.terrainM = groundH;
     this.agl = gearFinal
       ? Math.max(0, -Math.max(gearFinal.nose.pen, gearFinal.left.pen, gearFinal.right.pen))
@@ -1704,7 +1875,9 @@ class A321Entity extends Entity {
           `rate=${(this.pitchRate * 180 / Math.PI).toFixed(1)} alpha=${(alpha * 180 / Math.PI).toFixed(1)} ` +
           `input=${pitchInput.toFixed(2)} trim=${(this.pitchTrim * 180 / Math.PI).toFixed(2)} ` +
           `target=${(this.pitchHoldTarget * 180 / Math.PI).toFixed(1)} flaps=${flap} ` +
-          `V=${speedKt.toFixed(0)}kt vs=${this.vel.y.toFixed(1)} gnd=${this.onGround ? 1 : 0} stall=${isStalling ? 1 : 0}`
+          `V=${speedKt.toFixed(0)}kt vs=${this.vel.y.toFixed(1)} gnd=${this.onGround ? 1 : 0} stall=${isStalling ? 1 : 0} ` +
+          `wind=${this.windDirDeg.toFixed(0)}/${this.windSpeedKt.toFixed(0)}kt gs=${groundSpeedKt.toFixed(0)}kt ` +
+          `ap=${this.ap.master ? (this.ap.hdgHold?'H':'') + (this.ap.altHold?'A':'') + (this.ap.vsHold?'V':'') + (this.ap.spdHold?'S':'') || 'ON' : 'OFF'}`
         );
       }
     }

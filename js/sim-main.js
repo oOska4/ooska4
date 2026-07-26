@@ -200,6 +200,7 @@ const statusTimer = setInterval(() => {
     weatherUI.init();
     weatherUI.syncUI();
     weightUI.init();
+    apUI.init();
     completeStage('wx');
 
     lastRenderT = performance.now();
