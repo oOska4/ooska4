@@ -412,6 +412,13 @@ body.is-touch #mob-menu-popup.open { display: flex; }
 #weather-panel {
   display: none; padding: 0 6px 4px;
 }
+/* NAPRAWA: #weight-panel nie miał tej reguły w ogóle — był domyślnie
+   widoczny (display:block, domyślne dla <div>) zamiast zwinięty, bo JS
+   (weightUI._open=false) nigdy nie ustawiał initial inline style. #ap-panel
+   dostaje to samo od razu poprawnie. */
+#weight-panel, #ap-panel {
+  display: none; padding: 0 6px 4px;
+}
 .w-row {
   display: flex; align-items: center; gap: 4px;
   padding: 2px 0; font-size: 7px; color: #4a8fbf;
@@ -445,6 +452,16 @@ body.is-touch #mob-menu-popup.open { display: flex; }
 }
 /* Popup wagi/paliwa (mobile) — identyczny wzorzec co weather-popup */
 #weight-popup {
+  display: none;
+  position: fixed; bottom: 125px; left: 50%; transform: translateX(-50%);
+  z-index: 200; pointer-events: all;
+  background: rgba(4,12,28,0.97); border: 1px solid #2a5a8c;
+  border-radius: 12px; padding: 12px;
+  flex-direction: column; gap: 7px;
+  min-width: 300px; max-width: calc(100vw - 24px); max-height: 65vh; overflow-y: auto;
+}
+/* Popup autopilota (mobile) — identyczny wzorzec co weight-popup */
+#ap-popup {
   display: none;
   position: fixed; bottom: 125px; left: 50%; transform: translateX(-50%);
   z-index: 200; pointer-events: all;
@@ -491,3 +508,27 @@ body.is-touch #mob-menu-popup.open { display: flex; }
 .w-row button.active,
 .wpop-row button.active,
 .w-presets button.active { background: #1a3a5c; border-color: #3a8abf; color: #fff; }
+
+/* ── Autopilot: tryby aktywne na zielono (odróżnienie od zwykłego "wybrane"
+   na niebiesko) — bo tu "active" znaczy "faktycznie steruje samolotem teraz",
+   nie tylko "zaznaczone". Ten sam kod koloru co .mb.active (przyciski mobile). */
+.ap-eng.active,
+#dg-ap-master.active,
+#mw-ap-master.active {
+  background: rgba(15,70,35,0.85); border-color: #44ff88; color: #44ff88;
+}
+.ap-step {
+  padding: 2px 0; font-size: 10px; text-align: center;
+  background: #0e1e35; border: 1px solid #1a3a5c; border-radius: 4px;
+  color: #c8e8ff; cursor: pointer; font-family: inherit;
+}
+.ap-step:hover { background: #1a3050; }
+
+/* ── FMA (Flight Mode Annunciator) — pasek trybów autopilota nad PFD ──── */
+.fma-row {
+  display: flex; justify-content: center; gap: 6px;
+  font-size: 7px; font-weight: bold; letter-spacing: .5px;
+  padding: 2px 0; margin-bottom: 2px;
+}
+.fma-item { color: #2a4a6a; }
+.fma-item.active { color: #44ff88; text-shadow: 0 0 6px rgba(68,255,136,.5); }

@@ -51,6 +51,12 @@
 
   <div id="pfd" class="panel">
     <div class="panel-title">PFD · <span id="hud-cam-badge">ORBIT</span></div>
+    <div id="fma-row" class="fma-row">
+      <span class="fma-item" id="fma-hdg">HDG</span>
+      <span class="fma-item" id="fma-alt">ALT</span>
+      <span class="fma-item" id="fma-vs">V/S</span>
+      <span class="fma-item" id="fma-spd">A/THR</span>
+    </div>
     <canvas id="attitude-canvas" width="110" height="110"></canvas>
     <div class="pfd-grid">
       <span class="pl">IAS</span><span class="pv"    id="ias-val">0 kt</span>
@@ -67,6 +73,7 @@
     <div class="nd-info">
       <span class="pl">ALT</span><span class="pv" id="alt-val">0 ft</span>
       <span class="pl">AGL</span><span class="pv" id="agl-val">0 ft</span>
+      <span class="pl">WIND</span><span class="pv" id="wind-val">–</span>
     </div>
   </div>
 
@@ -80,6 +87,7 @@
     <div class="phase" id="phase-disp">ON GROUND</div>
     <div id="stall-disp"     class="warn-blink"             style="display:none">⚠ STALL</div>
     <div id="overspeed-disp" class="warn-blink warn-orange" style="display:none">⚠ OVERSPD</div>
+    <div id="windshear-disp" class="warn-blink"             style="display:none">⚠ WINDSHEAR</div>
     <div class="sb-row">ALT  <b id="alt-m-val">0 m</b></div>
     <div class="sb-row">TERR <b id="terr-val">0 m</b></div>
     <div class="sb-row">AoA  <b id="aoa-val">0°</b></div>
@@ -164,6 +172,11 @@
         <button data-qual="med" class="active">Średnia</button>
         <button data-qual="high">Wysoka</button>
       </div>
+      <div class="ctrl-divider"></div>
+      <div class="hint-row dim">TRENING</div>
+      <div class="w-presets">
+        <button id="btn-windshear-test">⚡ Test windshear</button>
+      </div>
     </div>
 
     <div class="ctrl-divider"></div>
@@ -185,6 +198,48 @@
         <button data-wpreset="full">Pełny</button>
       </div>
       <div class="hint-row dim" style="font-style:italic">Zastosowane przy najbliższym Reset</div>
+    </div>
+
+    <div class="ctrl-divider"></div>
+    <div class="hint-row" style="display:flex;justify-content:space-between;align-items:center">
+      <span class="dim">AUTOPILOT</span>
+      <button id="btn-ap-toggle" style="width:auto;padding:1px 6px;font-size:9px">▼</button>
+    </div>
+    <div id="ap-panel">
+      <div class="w-row">
+        <label>AP</label>
+        <button id="dg-ap-master" style="flex:1">WYŁĄCZONY</button>
+      </div>
+      <div class="ctrl-divider"></div>
+      <div class="w-row">
+        <label>HDG</label>
+        <button class="ap-step" data-ap="hdg" data-dir="-1" style="width:22px">−</button>
+        <span class="w-lbl" id="dg-ap-hdg-val" style="flex:0 0 40px">360°</span>
+        <button class="ap-step" data-ap="hdg" data-dir="1" style="width:22px">+</button>
+        <button class="ap-eng" data-mode="hdgHold" id="dg-ap-hdg-eng" style="flex:0 0 44px">ON</button>
+      </div>
+      <div class="w-row">
+        <label>ALT</label>
+        <button class="ap-step" data-ap="alt" data-dir="-1" style="width:22px">−</button>
+        <span class="w-lbl" id="dg-ap-alt-val" style="flex:0 0 52px">3000ft</span>
+        <button class="ap-step" data-ap="alt" data-dir="1" style="width:22px">+</button>
+        <button class="ap-eng" data-mode="altHold" id="dg-ap-alt-eng" style="flex:0 0 44px">ON</button>
+      </div>
+      <div class="w-row">
+        <label>V/S</label>
+        <button class="ap-step" data-ap="vs" data-dir="-1" style="width:22px">−</button>
+        <span class="w-lbl" id="dg-ap-vs-val" style="flex:0 0 52px">0fpm</span>
+        <button class="ap-step" data-ap="vs" data-dir="1" style="width:22px">+</button>
+        <button class="ap-eng" data-mode="vsHold" id="dg-ap-vs-eng" style="flex:0 0 44px">ON</button>
+      </div>
+      <div class="w-row">
+        <label>SPD</label>
+        <button class="ap-step" data-ap="spd" data-dir="-1" style="width:22px">−</button>
+        <span class="w-lbl" id="dg-ap-spd-val" style="flex:0 0 40px">250kt</span>
+        <button class="ap-step" data-ap="spd" data-dir="1" style="width:22px">+</button>
+        <button class="ap-eng" data-mode="spdHold" id="dg-ap-spd-eng" style="flex:0 0 44px">A/THR</button>
+      </div>
+      <div class="hint-row dim" style="font-style:italic">ALT i V/S wykluczają się. Ręczny ster rozłącza daną oś. Klawisz X = pełne rozłączenie.</div>
     </div>
   </div>
 
@@ -281,6 +336,9 @@
   <div class="popup-row">
     <button id="mpop-autobrake">A/BRK: <span id="mpop-autobrake-val">OFF</span></button>
   </div>
+  <div class="popup-row">
+    <button id="mpop-ap">🅰 Autopilot</button>
+  </div>
   <div class="popup-divider"></div>
   <button id="mpop-close">✕ Zamknij</button>
 </div>
@@ -326,6 +384,8 @@
     <button data-qual="med" class="active">Średnia</button>
     <button data-qual="high">Wysoka</button>
   </div>
+  <div class="wpop-divider"></div>
+  <button id="mwpop-windshear-test">⚡ Test windshear</button>
   <button id="wpop-close">✕ Zamknij</button>
 </div>
 
@@ -349,6 +409,45 @@
   <button id="mwpop-close">✕ Zamknij</button>
 </div>
 
+<!-- Autopilot popup (mobile) -->
+<div id="ap-popup">
+  <div class="wpop-title">🅰 AUTOPILOT</div>
+  <div class="wpop-row" style="justify-content:center">
+    <button id="mw-ap-master" style="flex:1">WYŁĄCZONY</button>
+  </div>
+  <div class="wpop-divider"></div>
+  <div class="wpop-row">
+    <label>HDG</label>
+    <button class="ap-step" data-ap="hdg" data-dir="-1" style="width:26px">−</button>
+    <span class="wlbl" id="mw-ap-hdg-val" style="flex:0 0 44px">360°</span>
+    <button class="ap-step" data-ap="hdg" data-dir="1" style="width:26px">+</button>
+    <button class="ap-eng" data-mode="hdgHold" id="mw-ap-hdg-eng" style="flex:0 0 48px">ON</button>
+  </div>
+  <div class="wpop-row">
+    <label>ALT</label>
+    <button class="ap-step" data-ap="alt" data-dir="-1" style="width:26px">−</button>
+    <span class="wlbl" id="mw-ap-alt-val" style="flex:0 0 56px">3000ft</span>
+    <button class="ap-step" data-ap="alt" data-dir="1" style="width:26px">+</button>
+    <button class="ap-eng" data-mode="altHold" id="mw-ap-alt-eng" style="flex:0 0 48px">ON</button>
+  </div>
+  <div class="wpop-row">
+    <label>V/S</label>
+    <button class="ap-step" data-ap="vs" data-dir="-1" style="width:26px">−</button>
+    <span class="wlbl" id="mw-ap-vs-val" style="flex:0 0 56px">0fpm</span>
+    <button class="ap-step" data-ap="vs" data-dir="1" style="width:26px">+</button>
+    <button class="ap-eng" data-mode="vsHold" id="mw-ap-vs-eng" style="flex:0 0 48px">ON</button>
+  </div>
+  <div class="wpop-row">
+    <label>SPD</label>
+    <button class="ap-step" data-ap="spd" data-dir="-1" style="width:26px">−</button>
+    <span class="wlbl" id="mw-ap-spd-val" style="flex:0 0 44px">250kt</span>
+    <button class="ap-step" data-ap="spd" data-dir="1" style="width:26px">+</button>
+    <button class="ap-eng" data-mode="spdHold" id="mw-ap-spd-eng" style="flex:0 0 48px">A/THR</button>
+  </div>
+  <div class="wpop-row" style="font-style:italic;justify-content:center;color:#4a8fbf">ALT/V-S wykluczają się. Ręczny ster rozłącza oś.</div>
+  <button id="apwpop-close">✕ Zamknij</button>
+</div>
+
 <!-- Orbit joy i zoom — ukryte (nieużywane) -->
 <div id="orbit-joy-wrap" style="display:none!important"></div>
 <div id="orbit-zoom"     style="display:none!important"></div>
@@ -369,6 +468,7 @@
 <script src="js/sim-sky.js"></script>
 <script src="js/sim-weather-ui.js"></script>
 <script src="js/sim-weight-ui.js"></script>
+<script src="js/sim-ap-ui.js"></script>
 <script src="js/sim-contrails.js"></script>
 <script src="js/sim-controls.js"></script>
 <script src="js/sim-main.js"></script>
