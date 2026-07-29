@@ -1,0 +1,764 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<title>Wyświetlacz lotnisk 3D</title>
+<style>
+  html, body { margin:0; padding:0; overflow:hidden; background:#0a0e14; font-family:'Segoe UI', Arial, sans-serif; }
+  #canvas-container { position:fixed; inset:0; }
+  #ui { position:fixed; top:16px; left:16px; z-index:10; width:340px; color:#e8edf4; }
+  .panel { background:rgba(14,18,26,0.82); border:1px solid rgba(255,255,255,0.08); border-radius:10px;
+           padding:14px 16px; margin-bottom:10px; backdrop-filter:blur(6px); box-shadow:0 4px 18px rgba(0,0,0,0.4); }
+  .panel h1 { font-size:15px; margin:0 0 10px; letter-spacing:.5px; color:#7fd0ff; text-transform:uppercase; }
+  .search-row { display:flex; gap:8px; }
+  #q { flex:1; background:#12161f; border:1px solid rgba(255,255,255,0.12); color:#e8edf4; border-radius:6px;
+       padding:8px 10px; font-size:14px; outline:none; }
+  #q:focus { border-color:#4fa8ff; }
+  #searchBtn { background:#2a6fd6; border:none; color:#fff; padding:8px 14px; border-radius:6px; cursor:pointer; font-size:14px; }
+  #searchBtn:hover { background:#3a7fe6; }
+  #searchBtn:disabled { opacity:.5; cursor:default; }
+  #status { font-size:12.5px; color:#9fb0c8; margin-top:8px; min-height:16px; }
+  #results { margin-top:8px; max-height:180px; overflow-y:auto; }
+  .result-item { padding:7px 9px; border-radius:6px; cursor:pointer; font-size:13px; color:#dbe4f0; }
+  .result-item:hover { background:rgba(79,168,255,.15); }
+  #info h2 { font-size:16px; margin:0 0 4px; color:#fff; }
+  #info .sub { font-size:12px; color:#8fa3bd; margin-bottom:10px; }
+  #info table { width:100%; border-collapse:collapse; font-size:12.5px; }
+  #info td { padding:3px 0; border-bottom:1px solid rgba(255,255,255,.06); color:#d3dbe8; }
+  #info td.k { color:#7f93ad; width:48%; }
+  .legend { display:flex; gap:12px; font-size:11.5px; margin-top:10px; flex-wrap:wrap; }
+  .legend span { display:inline-flex; align-items:center; gap:5px; color:#a9b7c9; }
+  .swatch { width:11px; height:11px; border-radius:2px; display:inline-block; }
+  #footer-note { position:fixed; bottom:10px; left:16px; font-size:10.5px; color:#5c6a7d; z-index:10; max-width:420px; line-height:1.4; }
+  .spinner { width:12px; height:12px; border:2px solid rgba(255,255,255,.2); border-top-color:#4fa8ff; border-radius:50%;
+             display:inline-block; animation:spin .8s linear infinite; margin-right:6px; vertical-align:-1px; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  #hint { position:fixed; bottom:10px; right:16px; font-size:11px; color:#5c6a7d; z-index:10; }
+</style>
+</head>
+<body>
+<div id="canvas-container"></div>
+<div id="ui">
+  <div class="panel">
+    <h1>Wyświetlacz lotnisk 3D</h1>
+    <div class="search-row">
+      <input id="q" type="text" placeholder="np. EPWR, KJFK, Wrocław..." value="EPWR" />
+      <button id="searchBtn">Szukaj</button>
+    </div>
+    <div id="status"></div>
+    <div id="results"></div>
+  </div>
+  <div class="panel" id="info" style="display:none;">
+    <h2 id="infoName">-</h2>
+    <div class="sub" id="infoSub"></div>
+    <table id="infoTable"></table>
+    <div class="legend">
+      <span><i class="swatch" style="background:#2b2b2e"></i>Pas startowy</span>
+      <span><i class="swatch" style="background:#55565c"></i>Droga kołowania</span>
+      <span><i class="swatch" style="background:#6e6e73"></i>Płyta postojowa</span>
+      <span><i class="swatch" style="background:#ffcc00"></i>Granica lotniska</span>
+    </div>
+  </div>
+</div>
+<div id="footer-note">Dane: wkrgames.com API (metadane + pasy) + OpenStreetMap/Overpass (drogi kołowania, płyty, granica lotniska).
+Jeśli wyszukiwanie nie działa: sprawdź nagłówek CORS (Access-Control-Allow-Origin) w api.php oraz status serwera (action=log).</div>
+<div id="hint">LMB: obrót • scroll: zoom • RMB: przesuń</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script>
+(function(){
+'use strict';
+
+// ---------- CONFIG ----------
+const WKR_API = 'https://wkrgames.com/guslarz/simworld/api.php';
+const OVERPASS_SERVERS = [
+  'https://overpass-api.de/api/interpreter',
+  'https://overpass.kumi.systems/api/interpreter',
+  'https://overpass.private.coffee/api/interpreter',
+  'https://overpass.nchc.org.tw/api/interpreter',
+  'https://overpass.osm.ch/api/interpreter',
+  'https://overpass.openstreetmap.fr/api/interpreter'
+];
+const TERRAIN_SIZE = 14000;
+const TERRAIN_SEGMENTS = 220;
+const HILL_AMPLITUDE = 55;
+const DETAIL_AMPLITUDE = 9;
+const NOISE_SCALE = 1/2600;
+const FLATTEN_BLEND = 550;
+const DEFAULT_RUNWAY_WIDTH = 45;
+const DEFAULT_TAXIWAY_WIDTH = 18;
+const EARTH_R = 6371000;
+
+// ---------- STATE ----------
+let refLat = 51.1027, refLon = 16.8858; // EPWR - default until something else loads
+let refLatRad = refLat*Math.PI/180;
+let noiseSeed = 1;
+let flattenPolygons = [];
+let flattenFallbackRadius = 1200;
+
+// ---------- DOM ----------
+const qInput = document.getElementById('q');
+const searchBtn = document.getElementById('searchBtn');
+const statusEl = document.getElementById('status');
+const resultsEl = document.getElementById('results');
+const infoPanel = document.getElementById('info');
+const infoName = document.getElementById('infoName');
+const infoSub = document.getElementById('infoSub');
+const infoTable = document.getElementById('infoTable');
+
+function setStatus(text, loading){
+  statusEl.innerHTML = (loading ? '<span class="spinner"></span>' : '') + text;
+}
+
+// ---------- NOISE (self-contained value noise + fbm) ----------
+function hash2(ix, iy, seed){
+  let h = (ix*374761393 + iy*668265263 + seed*2147483647) | 0;
+  h = Math.imul(h ^ (h>>>13), 1274126177);
+  h = h ^ (h>>>16);
+  return ((h>>>0) / 4294967295);
+}
+function fade(t){ return t*t*t*(t*(t*6-15)+10); }
+function lerp(a,b,t){ return a+(b-a)*t; }
+function smoothNoise(x,y,seed){
+  const x0=Math.floor(x), y0=Math.floor(y);
+  const x1=x0+1, y1=y0+1;
+  const sx=fade(x-x0), sy=fade(y-y0);
+  const n00=hash2(x0,y0,seed), n10=hash2(x1,y0,seed);
+  const n01=hash2(x0,y1,seed), n11=hash2(x1,y1,seed);
+  const ix0=lerp(n00,n10,sx), ix1=lerp(n01,n11,sx);
+  return lerp(ix0,ix1,sy);
+}
+function fbm(x,y,seed,octaves){
+  let total=0, amp=1, freq=1, maxAmp=0;
+  for(let i=0;i<octaves;i++){
+    total += smoothNoise(x*freq,y*freq,seed+i*101)*amp;
+    maxAmp += amp; amp*=0.5; freq*=2;
+  }
+  return total/maxAmp;
+}
+
+// ---------- PROJECTION (local tangent plane, meters) ----------
+function setReference(lat, lon){ refLat=lat; refLon=lon; refLatRad=lat*Math.PI/180; }
+function project(lat, lon){
+  const dLat=(lat-refLat)*Math.PI/180, dLon=(lon-refLon)*Math.PI/180;
+  return { x: dLon*EARTH_R*Math.cos(refLatRad), z: -dLat*EARTH_R };
+}
+
+// ---------- GEO HELPERS ----------
+function pointInPoly(x,z,poly){
+  let inside=false;
+  for(let i=0,j=poly.length-1;i<poly.length;j=i++){
+    const xi=poly[i].x, zi=poly[i].z, xj=poly[j].x, zj=poly[j].z;
+    const intersect = ((zi>z)!==(zj>z)) && (x < (xj-xi)*(z-zi)/((zj-zi)||1e-9)+xi);
+    if(intersect) inside=!inside;
+  }
+  return inside;
+}
+function distToSegment(px,pz,ax,az,bx,bz){
+  const dx=bx-ax, dz=bz-az, len2=dx*dx+dz*dz;
+  let t = len2>0 ? ((px-ax)*dx+(pz-az)*dz)/len2 : 0;
+  t = Math.max(0,Math.min(1,t));
+  return Math.hypot(px-(ax+t*dx), pz-(az+t*dz));
+}
+function distToPolyEdge(x,z,poly){
+  let min=Infinity;
+  for(let i=0;i<poly.length;i++){
+    const a=poly[i], b=poly[(i+1)%poly.length];
+    const d=distToSegment(x,z,a.x,a.z,b.x,b.z);
+    if(d<min) min=d;
+  }
+  return min;
+}
+function distanceToAnyPolygon(x,z,polys){
+  if(!polys || !polys.length) return null;
+  let best=Infinity;
+  for(const poly of polys){
+    if(poly.length<3) continue;
+    if(pointInPoly(x,z,poly)) return 0;
+    const d=distToPolyEdge(x,z,poly);
+    if(d<best) best=d;
+  }
+  return best===Infinity ? null : best;
+}
+function smoothstep(e0,e1,x){
+  const t=Math.max(0,Math.min(1,(x-e0)/(e1-e0)));
+  return t*t*(3-2*t);
+}
+
+// ---------- TERRAIN HEIGHT ----------
+function terrainHeight(x,z){
+  let h = (fbm(x*NOISE_SCALE, z*NOISE_SCALE, noiseSeed, 5)-0.5)*2*HILL_AMPLITUDE;
+  h += (fbm(x*NOISE_SCALE*5, z*NOISE_SCALE*5, noiseSeed+777, 3)-0.5)*2*DETAIL_AMPLITUDE;
+  let d = distanceToAnyPolygon(x,z,flattenPolygons);
+  if(d===null) d = Math.max(0, Math.hypot(x,z)-flattenFallbackRadius);
+  return h * smoothstep(0, FLATTEN_BLEND, d);
+}
+
+// ---------- THREE SETUP ----------
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x8fb6d9);
+scene.fog = new THREE.Fog(0x8fb6d9, 4000, 13000);
+
+const camera = new THREE.PerspectiveCamera(55, innerWidth/innerHeight, 1, 40000);
+camera.position.set(0, 900, 1600);
+
+const renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.shadowMap.enabled = true;
+document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+const controls = new THREE.OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.maxPolarAngle = Math.PI*0.49;
+controls.minDistance = 80;
+controls.maxDistance = 9000;
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+const sun = new THREE.DirectionalLight(0xfff2d9, 0.95);
+sun.position.set(3000,4000,2000);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048,2048);
+sun.shadow.camera.left=-6000; sun.shadow.camera.right=6000;
+sun.shadow.camera.top=6000; sun.shadow.camera.bottom=-6000;
+sun.shadow.camera.far=12000;
+scene.add(sun);
+
+let terrainMesh = null;
+const airportGroup = new THREE.Group();
+scene.add(airportGroup);
+
+function buildTerrain(){
+  if(terrainMesh){ scene.remove(terrainMesh); terrainMesh.geometry.dispose(); }
+  const geo = new THREE.PlaneGeometry(TERRAIN_SIZE, TERRAIN_SIZE, TERRAIN_SEGMENTS, TERRAIN_SEGMENTS);
+  geo.rotateX(-Math.PI/2);
+  const pos = geo.attributes.position;
+  for(let i=0;i<pos.count;i++){
+    const x=pos.getX(i), z=pos.getZ(i);
+    pos.setY(i, terrainHeight(x,z));
+  }
+  geo.computeVertexNormals();
+  const mat = new THREE.MeshStandardMaterial({color:0x4a6741, flatShading:true, roughness:1});
+  terrainMesh = new THREE.Mesh(geo, mat);
+  terrainMesh.receiveShadow = true;
+  scene.add(terrainMesh);
+}
+
+// ---------- LABELS ----------
+function makeLabel(text, opts){
+  opts = opts||{};
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+  const fontSize = opts.fontSize||46;
+  ctx.font = `bold ${fontSize}px Arial`;
+  const pad=20;
+  const w = ctx.measureText(text).width + pad*2;
+  const h = fontSize + pad*1.4;
+  canvas.width=w; canvas.height=h;
+  ctx.font = `bold ${fontSize}px Arial`;
+  ctx.fillStyle = 'rgba(10,14,20,0.72)';
+  if(ctx.roundRect){ ctx.beginPath(); ctx.roundRect(0,0,w,h,10); ctx.fill(); }
+  else { ctx.fillRect(0,0,w,h); }
+  ctx.fillStyle = opts.color || '#ffffff';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, pad, h/2);
+  const tex = new THREE.CanvasTexture(canvas);
+  const mat = new THREE.SpriteMaterial({map:tex, depthTest:false, transparent:true});
+  const sprite = new THREE.Sprite(mat);
+  const scale = opts.worldWidth||80;
+  sprite.scale.set(scale, scale*(h/w), 1);
+  return sprite;
+}
+
+// ---------- GEOMETRY BUILDERS ----------
+function buildRibbon(pointsLatLon, widthM, material){
+  const pts = pointsLatLon.map(p=>project(p.lat,p.lon));
+  if(pts.length<2) return null;
+  const half = widthM/2;
+  const normals=[];
+  for(let i=0;i<pts.length;i++){
+    let dx,dz;
+    if(i===0){ dx=pts[1].x-pts[0].x; dz=pts[1].z-pts[0].z; }
+    else if(i===pts.length-1){ dx=pts[i].x-pts[i-1].x; dz=pts[i].z-pts[i-1].z; }
+    else { dx=pts[i+1].x-pts[i-1].x; dz=pts[i+1].z-pts[i-1].z; }
+    const len=Math.hypot(dx,dz)||1;
+    normals.push({nx:-dz/len, nz:dx/len});
+  }
+  const left=[], right=[];
+  for(let i=0;i<pts.length;i++){
+    const n=normals[i];
+    left.push({x:pts[i].x+n.nx*half, z:pts[i].z+n.nz*half});
+    right.push({x:pts[i].x-n.nx*half, z:pts[i].z-n.nz*half});
+  }
+  const verts=[];
+  for(let i=0;i<pts.length-1;i++){
+    const l0=left[i],r0=right[i],l1=left[i+1],r1=right[i+1];
+    const yl0=terrainHeight(l0.x,l0.z)+0.08, yr0=terrainHeight(r0.x,r0.z)+0.08;
+    const yl1=terrainHeight(l1.x,l1.z)+0.08, yr1=terrainHeight(r1.x,r1.z)+0.08;
+    verts.push(
+      l0.x,yl0,l0.z, r0.x,yr0,r0.z, l1.x,yl1,l1.z,
+      r0.x,yr0,r0.z, r1.x,yr1,r1.z, l1.x,yl1,l1.z
+    );
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(verts,3));
+  geo.computeVertexNormals();
+  const mesh = new THREE.Mesh(geo, material);
+  mesh.receiveShadow = true;
+  return mesh;
+}
+
+function buildRunwayRect(leLat,leLon,heLat,heLon,widthM,material){
+  const le=project(leLat,leLon), he=project(heLat,heLon);
+  const dx=he.x-le.x, dz=he.z-le.z, len=Math.hypot(dx,dz)||1;
+  const nx=-dz/len, nz=dx/len, half=widthM/2;
+  const c = [
+    {x:le.x+nx*half, z:le.z+nz*half},
+    {x:le.x-nx*half, z:le.z-nz*half},
+    {x:he.x-nx*half, z:he.z-nz*half},
+    {x:he.x+nx*half, z:he.z+nz*half},
+  ];
+  const y = c.map(p=>terrainHeight(p.x,p.z)+0.1);
+  const verts = [
+    c[0].x,y[0],c[0].z, c[1].x,y[1],c[1].z, c[2].x,y[2],c[2].z,
+    c[0].x,y[0],c[0].z, c[2].x,y[2],c[2].z, c[3].x,y[3],c[3].z,
+  ];
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(verts,3));
+  geo.computeVertexNormals();
+  const mesh = new THREE.Mesh(geo, material);
+  mesh.receiveShadow = true;
+  return {mesh, le, he};
+}
+
+function buildPolygon(outerLatLon, innerRingsLatLon, material){
+  if(!outerLatLon || outerLatLon.length<3) return null;
+  const outer = outerLatLon.map(p=>project(p.lat,p.lon));
+  const shape = new THREE.Shape(outer.map(p=>new THREE.Vector2(p.x,p.z)));
+  for(const ring of (innerRingsLatLon||[])){
+    if(ring.length<3) continue;
+    const pts = ring.map(p=>project(p.lat,p.lon));
+    shape.holes.push(new THREE.Path(pts.map(p=>new THREE.Vector2(p.x,p.z))));
+  }
+  const geo = new THREE.ShapeGeometry(shape);
+  const pos = geo.attributes.position;
+  const arr = new Float32Array(pos.count*3);
+  for(let i=0;i<pos.count;i++){
+    const x=pos.getX(i), zShape=pos.getY(i);
+    arr[i*3]=x; arr[i*3+1]=terrainHeight(x,zShape)+0.06; arr[i*3+2]=zShape;
+  }
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(arr,3));
+  geo.computeVertexNormals();
+  const mesh = new THREE.Mesh(geo, material);
+  mesh.receiveShadow = true;
+  return mesh;
+}
+
+function buildBoundaryLine(outerLatLon){
+  const pts = outerLatLon.map(p=>project(p.lat,p.lon));
+  const positions=[];
+  for(const p of pts) positions.push(p.x, terrainHeight(p.x,p.z)+0.2, p.z);
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions,3));
+  return new THREE.Line(geo, new THREE.LineBasicMaterial({color:0xffcc00}));
+}
+
+function buildDashedCenterline(pointsLatLon, color){
+  const pts = pointsLatLon.map(p=>project(p.lat,p.lon));
+  const positions=[];
+  for(const p of pts) positions.push(p.x, terrainHeight(p.x,p.z)+0.25, p.z);
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions,3));
+  const mat = new THREE.LineDashedMaterial({color, dashSize:20, gapSize:14});
+  const line = new THREE.Line(geo, mat);
+  line.computeLineDistances();
+  return line;
+}
+
+const MAT_RUNWAY = new THREE.MeshStandardMaterial({color:0x2b2b2e, roughness:.95, side:THREE.DoubleSide});
+const MAT_TAXIWAY = new THREE.MeshStandardMaterial({color:0x55565c, roughness:.95, side:THREE.DoubleSide});
+const MAT_APRON = new THREE.MeshStandardMaterial({color:0x6e6e73, roughness:.95, side:THREE.DoubleSide});
+
+// ---------- WKR API HELPERS ----------
+async function fetchJSON(url){
+  try{
+    const res = await fetch(url);
+    if(!res.ok) return null;
+    return await res.json();
+  }catch(e){ return null; }
+}
+function pick(obj, keys){
+  if(!obj) return undefined;
+  for(const k of keys){ const v=obj[k]; if(v!==undefined && v!==null && v!=='') return v; }
+  return undefined;
+}
+function unwrapSingle(json){
+  if(!json) return null;
+  if(Array.isArray(json)) return json[0]||null;
+  if(Array.isArray(json.data)) return json.data[0]||null;
+  if(json.data && typeof json.data==='object') return json.data;
+  if(json.airport) return json.airport;
+  if(Array.isArray(json.result)) return json.result[0]||null;
+  if(json.result) return json.result;
+  return json;
+}
+function unwrapList(json){
+  if(!json) return [];
+  if(Array.isArray(json)) return json;
+  if(Array.isArray(json.data)) return json.data;
+  if(Array.isArray(json.results)) return json.results;
+  if(Array.isArray(json.airports)) return json.airports;
+  if(Array.isArray(json.runways)) return json.runways;
+  return [];
+}
+function getLat(o){ const v=pick(o,['lat','latitude','latitude_deg']); return v!==undefined?parseFloat(v):NaN; }
+function getLon(o){ const v=pick(o,['lon','lng','longitude','longitude_deg']); return v!==undefined?parseFloat(v):NaN; }
+function getIdent(o){ return pick(o,['ident','icao','icao_code','gps_code']); }
+function getIata(o){ return pick(o,['iata_code','iata']); }
+function getName(o){ return pick(o,['name','airport_name']) || '(brak nazwy)'; }
+function getElevFt(o){ const v=pick(o,['elevation_ft','elevation']); return v!==undefined?parseFloat(v):NaN; }
+function getCountry(o){ return pick(o,['iso_country','country']) || '?'; }
+function getId(o){ return pick(o,['id','airport_id','ref']); }
+
+function runwayFields(r){
+  return {
+    rid: pick(r,['id']),
+    lenFt: parseFloat(pick(r,['length_ft','runway_length_ft','length'])),
+    widthFt: parseFloat(pick(r,['width_ft','runway_width_ft','width'])),
+    surface: pick(r,['surface']),
+    closed: pick(r,['closed']),
+    leIdent: pick(r,['le_ident']),
+    leLat: parseFloat(pick(r,['le_latitude_deg','le_lat'])),
+    leLon: parseFloat(pick(r,['le_longitude_deg','le_lon'])),
+    heIdent: pick(r,['he_ident']),
+    heLat: parseFloat(pick(r,['he_latitude_deg','he_lat'])),
+    heLon: parseFloat(pick(r,['he_longitude_deg','he_lon'])),
+  };
+}
+function isClosedFlag(v){ return v===true || v===1 || v==='1' || v==='true' || v==='yes'; }
+function dedupeRunways(list){
+  const seen = new Set(); const out = [];
+  for(const r of list){
+    const key = r.rid!=null ? ('id:'+r.rid) : `${r.leIdent}-${r.heIdent}-${r.lenFt}-${r.leLat}-${r.leLon}`;
+    if(seen.has(key)) continue;
+    seen.add(key); out.push(r);
+  }
+  return out;
+}
+function surfaceColor(surface){
+  if(!surface) return 0x2b2b2e;
+  const s = String(surface).toUpperCase();
+  if(s.includes('GRASS') || s.includes('TURF')) return 0x5f7a3d;
+  if(s.includes('GRAVEL')) return 0x8a7f66;
+  if(s.includes('WATER')) return 0x2f6f9e;
+  if(s.includes('DIRT') || s.includes('SAND')) return 0x9c8b5e;
+  return 0x2b2b2e; // asfalt/beton domyślnie
+}
+async function resolveRunways(airportObj, apiId){
+  let raw = [];
+  if(airportObj && Array.isArray(airportObj.runways) && airportObj.runways.length){
+    raw = airportObj.runways;
+  } else if(apiId){
+    raw = await apiRunways(apiId);
+  }
+  return dedupeRunways(raw.map(runwayFields)).filter(r=>!isClosedFlag(r.closed));
+}
+
+async function apiSearchByCode(code){
+  const json = await fetchJSON(`${WKR_API}?action=code&code=${encodeURIComponent(code)}`);
+  const obj = unwrapSingle(json);
+  if(obj && !isNaN(getLat(obj)) && !isNaN(getLon(obj))) return obj;
+  return null;
+}
+async function apiSearch(q){
+  const json = await fetchJSON(`${WKR_API}?action=search&q=${encodeURIComponent(q)}&limit=8`);
+  return unwrapList(json);
+}
+async function apiRunways(id){
+  const json = await fetchJSON(`${WKR_API}?action=runways&id=${encodeURIComponent(id)}`);
+  return unwrapList(json);
+}
+
+// ---------- OVERPASS ----------
+function buildAreaQuery(icao){
+  return `[out:json][timeout:25];area["icao"="${icao}"]->.a;(way(area.a)["aeroway"~"runway|taxiway|apron"];relation(area.a)["aeroway"~"runway|taxiway|apron"];way["icao"="${icao}"]["aeroway"="aerodrome"];relation["icao"="${icao}"]["aeroway"="aerodrome"];);out geom;`;
+}
+function buildRadiusQuery(lat,lon,radius){
+  return `[out:json][timeout:25];(way(around:${radius},${lat},${lon})["aeroway"~"runway|taxiway|apron|aerodrome"];relation(around:${radius},${lat},${lon})["aeroway"~"runway|taxiway|apron|aerodrome"];);out geom;`;
+}
+async function overpassRun(query){
+  for(const server of OVERPASS_SERVERS){
+    try{
+      const controller = new AbortController();
+      const timeout = setTimeout(()=>controller.abort(), 12000);
+      const res = await fetch(server, {
+        method:'POST',
+        headers:{'Content-Type':'application/x-www-form-urlencoded'},
+        body:'data='+encodeURIComponent(query),
+        signal: controller.signal
+      });
+      clearTimeout(timeout);
+      if(!res.ok) continue;
+      const json = await res.json();
+      if(json && Array.isArray(json.elements)) return json.elements;
+    }catch(e){ /* try next mirror */ }
+  }
+  return [];
+}
+function classifyElements(elements){
+  const out = {runways:[], taxiways:[], aprons:[], aerodromes:[]};
+  for(const el of elements){
+    const tags = el.tags||{};
+    const aeroway = tags.aeroway;
+    if(!aeroway) continue;
+    let outerRings=[], innerRings=[];
+    if(el.type==='way' && el.geometry && el.geometry.length>1){
+      outerRings=[el.geometry.map(p=>({lat:p.lat,lon:p.lon}))];
+    } else if(el.type==='relation' && el.members){
+      for(const m of el.members){
+        if(!m.geometry || m.geometry.length<2) continue;
+        const pts = m.geometry.map(p=>({lat:p.lat,lon:p.lon}));
+        if(m.role==='inner') innerRings.push(pts); else outerRings.push(pts);
+      }
+    }
+    if(!outerRings.length) continue;
+    const isClosed = r => r.length>2 && Math.abs(r[0].lat-r[r.length-1].lat)<1e-6 && Math.abs(r[0].lon-r[r.length-1].lon)<1e-6;
+    if(aeroway==='aerodrome'){ out.aerodromes.push({outer:outerRings[0], inner:innerRings, tags}); }
+    else if(aeroway==='apron'){
+      if(isClosed(outerRings[0])) out.aprons.push({outer:outerRings[0], inner:innerRings, tags});
+      else out.taxiways.push({line:outerRings[0], tags});
+    } else if(aeroway==='taxiway'){ out.taxiways.push({line:outerRings[0], tags}); }
+    else if(aeroway==='runway'){ out.runways.push({line:outerRings[0], tags}); }
+  }
+  return out;
+}
+
+// ---------- CAMERA FRAMING ----------
+function frameCamera(){
+  const box = new THREE.Box3().setFromObject(airportGroup);
+  if(box.isEmpty()) return;
+  const size = box.getSize(new THREE.Vector3());
+  const center = box.getCenter(new THREE.Vector3());
+  const dist = Math.max(size.x,size.z)*0.9 + 400;
+  camera.position.set(center.x+dist*0.6, dist*0.55+150, center.z+dist*0.75);
+  controls.target.set(center.x, center.y, center.z);
+  controls.update();
+}
+
+function clearAirportGroup(){
+  while(airportGroup.children.length){
+    const c = airportGroup.children.pop();
+    if(c.geometry) c.geometry.dispose();
+  }
+}
+function hashSeed(lat,lon){ return Math.floor(lat*1000+lon*1000)|0; }
+
+// ---------- MAIN LOAD FLOW ----------
+async function loadAirport(query){
+  searchBtn.disabled = true;
+  resultsEl.innerHTML='';
+  setStatus('Szukam lotniska (API bywa wolne, do minuty)...', true);
+  try{
+    const cleaned = query.trim();
+    if(!cleaned){ setStatus('Wpisz kod lotniska lub nazwę.'); return; }
+
+    let airportObj = await apiSearchByCode(cleaned.toUpperCase());
+    if(!airportObj){
+      const candidates = await apiSearch(cleaned);
+      if(candidates.length===1){ airportObj = candidates[0]; }
+      else if(candidates.length>1){
+        setStatus(`Znaleziono ${candidates.length} lotnisk - wybierz:`);
+        renderCandidates(candidates);
+        searchBtn.disabled=false;
+        return;
+      }
+    }
+
+    let icaoGuess=null, lat=NaN, lon=NaN, apiId=null;
+    if(airportObj){
+      icaoGuess = getIdent(airportObj);
+      lat = getLat(airportObj); lon = getLon(airportObj);
+      apiId = getId(airportObj);
+    } else if(/^[A-Za-z]{4}$/.test(cleaned)){
+      icaoGuess = cleaned.toUpperCase(); // API niedostępne, ale można spróbować samego Overpass po kodzie ICAO
+    } else {
+      setStatus('Nie znaleziono lotniska (API niedostępne dla tekstu). Spróbuj kodu ICAO, np. EPWR.');
+      searchBtn.disabled=false;
+      return;
+    }
+    await finishLoad({airportObj, icaoGuess, lat, lon, apiId});
+  } catch(err){
+    console.error(err);
+    setStatus('Błąd podczas ładowania danych.');
+  } finally {
+    searchBtn.disabled=false;
+  }
+}
+
+function renderCandidates(list){
+  resultsEl.innerHTML='';
+  for(const c of list){
+    const div = document.createElement('div');
+    div.className='result-item';
+    div.textContent = `${getIdent(c)||'?'} — ${getName(c)} (${getCountry(c)})`;
+    div.onclick = async ()=>{
+      resultsEl.innerHTML='';
+      setStatus('Ładowanie lotniska...', true);
+      searchBtn.disabled=true;
+      await finishLoad({airportObj:c, icaoGuess:getIdent(c), lat:getLat(c), lon:getLon(c), apiId:getId(c)});
+      searchBtn.disabled=false;
+    };
+    resultsEl.appendChild(div);
+  }
+}
+
+async function finishLoad({airportObj, icaoGuess, lat, lon, apiId}){
+  setStatus('Pobieram dane o pasach (API, może potrwać do minuty)...', true);
+
+  let apiRunwayList = [];
+  try{ apiRunwayList = await resolveRunways(airportObj, apiId); }catch(e){}
+
+  setStatus('Pobieram dane geograficzne (Overpass)...', true);
+  let elements = [];
+  if(icaoGuess) elements = await overpassRun(buildAreaQuery(icaoGuess));
+  if(!elements.length && !isNaN(lat) && !isNaN(lon)) elements = await overpassRun(buildRadiusQuery(lat, lon, 3500));
+  const classified = classifyElements(elements);
+
+  let refPointLat=lat, refPointLon=lon;
+  if(isNaN(refPointLat) || isNaN(refPointLon)){
+    if(classified.aerodromes.length){
+      const ring = classified.aerodromes[0].outer;
+      refPointLat = ring.reduce((s,p)=>s+p.lat,0)/ring.length;
+      refPointLon = ring.reduce((s,p)=>s+p.lon,0)/ring.length;
+    } else if(classified.runways.length){
+      const line = classified.runways[0].line;
+      refPointLat = line.reduce((s,p)=>s+p.lat,0)/line.length;
+      refPointLon = line.reduce((s,p)=>s+p.lon,0)/line.length;
+    } else {
+      setStatus('Brak jakichkolwiek danych geograficznych dla tego lotniska (API i Overpass puste).');
+      return;
+    }
+  }
+  setReference(refPointLat, refPointLon);
+  noiseSeed = hashSeed(refPointLat, refPointLon);
+  flattenPolygons = classified.aerodromes.map(a=>a.outer.map(p=>project(p.lat,p.lon)));
+
+  let longestLen = 0;
+  const validApiRunways = apiRunwayList
+    .filter(r=>!isNaN(r.leLat)&&!isNaN(r.leLon)&&!isNaN(r.heLat)&&!isNaN(r.heLon));
+  if(validApiRunways.length){
+    for(const r of validApiRunways){
+      const a=project(r.leLat,r.leLon), b=project(r.heLat,r.heLon);
+      const len = !isNaN(r.lenFt) ? r.lenFt*0.3048 : Math.hypot(b.x-a.x,b.z-a.z);
+      if(len>longestLen) longestLen=len;
+    }
+  } else if(classified.runways.length){
+    for(const rw of classified.runways){
+      const pts = rw.line.map(p=>project(p.lat,p.lon));
+      const len = Math.hypot(pts[pts.length-1].x-pts[0].x, pts[pts.length-1].z-pts[0].z);
+      if(len>longestLen) longestLen=len;
+    }
+  }
+  flattenFallbackRadius = Math.max(600, longestLen/2 + 350);
+
+  buildTerrain();
+  clearAirportGroup();
+
+  if(validApiRunways.length){
+    for(const r of validApiRunways){
+      const widthM = !isNaN(r.widthFt) ? r.widthFt*0.3048 : DEFAULT_RUNWAY_WIDTH;
+      const mat = new THREE.MeshStandardMaterial({color:surfaceColor(r.surface), roughness:.95, side:THREE.DoubleSide});
+      const {mesh, le, he} = buildRunwayRect(r.leLat,r.leLon,r.heLat,r.heLon,widthM,mat);
+      airportGroup.add(mesh);
+      airportGroup.add(buildDashedCenterline([{lat:r.leLat,lon:r.leLon},{lat:r.heLat,lon:r.heLon}], 0xffffff));
+      if(r.leIdent){ const s=makeLabel(r.leIdent,{worldWidth:70}); s.position.set(le.x, terrainHeight(le.x,le.z)+40, le.z); airportGroup.add(s); }
+      if(r.heIdent){ const s=makeLabel(r.heIdent,{worldWidth:70}); s.position.set(he.x, terrainHeight(he.x,he.z)+40, he.z); airportGroup.add(s); }
+    }
+  } else {
+    for(const rw of classified.runways){
+      const widthTag = parseFloat(rw.tags.width);
+      const mesh = buildRibbon(rw.line, !isNaN(widthTag)?widthTag:DEFAULT_RUNWAY_WIDTH, MAT_RUNWAY);
+      if(mesh) airportGroup.add(mesh);
+      airportGroup.add(buildDashedCenterline(rw.line, 0xffffff));
+    }
+  }
+
+  for(const tw of classified.taxiways){
+    const widthTag = parseFloat(tw.tags.width);
+    const mesh = buildRibbon(tw.line, !isNaN(widthTag)?widthTag:DEFAULT_TAXIWAY_WIDTH, MAT_TAXIWAY);
+    if(mesh) airportGroup.add(mesh);
+    airportGroup.add(buildDashedCenterline(tw.line, 0xffd54a));
+    if(tw.tags.ref){
+      const mid = tw.line[Math.floor(tw.line.length/2)];
+      const p = project(mid.lat, mid.lon);
+      const s = makeLabel(tw.tags.ref, {worldWidth:50, color:'#ffd54a'});
+      s.position.set(p.x, terrainHeight(p.x,p.z)+22, p.z);
+      airportGroup.add(s);
+    }
+  }
+
+  for(const ap of classified.aprons){
+    const mesh = buildPolygon(ap.outer, ap.inner, MAT_APRON);
+    if(mesh) airportGroup.add(mesh);
+  }
+  for(const ad of classified.aerodromes){ airportGroup.add(buildBoundaryLine(ad.outer)); }
+
+  const airportName = airportObj ? getName(airportObj) : (icaoGuess||'Lotnisko');
+  const nameLabel = makeLabel(`${icaoGuess||''} ${airportName}`.trim(), {worldWidth:220, color:'#7fd0ff'});
+  nameLabel.position.set(0, 300, 0);
+  airportGroup.add(nameLabel);
+
+  frameCamera();
+  updateInfoPanel({airportObj, icaoGuess, validApiRunways, classified});
+  setStatus(`Wczytano: ${airportName}`);
+}
+
+function updateInfoPanel({airportObj, icaoGuess, validApiRunways, classified}){
+  infoPanel.style.display='block';
+  const name = airportObj? getName(airportObj) : (icaoGuess||'Lotnisko');
+  infoName.textContent = name;
+  const iata = airportObj? getIata(airportObj) : '';
+  const country = airportObj? getCountry(airportObj) : '?';
+  const elevFt = airportObj? getElevFt(airportObj) : NaN;
+  infoSub.textContent = `${icaoGuess||'?'}${iata?(' / '+iata):''} • ${country}`;
+
+  let rows = '';
+  rows += `<tr><td class="k">Wysokość n.p.m.</td><td>${!isNaN(elevFt)? Math.round(elevFt*0.3048)+' m' : '—'}</td></tr>`;
+  rows += `<tr><td class="k">Pasy startowe</td><td>${validApiRunways.length || classified.runways.length}</td></tr>`;
+  rows += `<tr><td class="k">Drogi kołowania (OSM)</td><td>${classified.taxiways.length}</td></tr>`;
+  rows += `<tr><td class="k">Płyty postojowe (OSM)</td><td>${classified.aprons.length}</td></tr>`;
+  for(const r of validApiRunways){
+    const lenM = !isNaN(r.lenFt)? Math.round(r.lenFt*0.3048) : '?';
+    const widM = !isNaN(r.widthFt)? Math.round(r.widthFt*0.3048) : '?';
+    const surf = r.surface ? ` (${r.surface})` : '';
+    rows += `<tr><td class="k">${r.leIdent||'?'}/${r.heIdent||'?'}</td><td>${lenM}×${widM} m${surf}</td></tr>`;
+  }
+  infoTable.innerHTML = rows;
+}
+
+// ---------- EVENTS ----------
+searchBtn.addEventListener('click', ()=>loadAirport(qInput.value));
+qInput.addEventListener('keydown', e=>{ if(e.key==='Enter') loadAirport(qInput.value); });
+window.addEventListener('resize', ()=>{
+  camera.aspect = innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+function animate(){
+  requestAnimationFrame(animate);
+  controls.update();
+  renderer.render(scene, camera);
+}
+animate();
+
+// ---------- INITIAL LOAD ----------
+buildTerrain();
+loadAirport('EPWR');
+
+})();
+</script>
+</body>
+</html>
