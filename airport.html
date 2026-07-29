@@ -17,6 +17,11 @@
   #searchBtn { background:#2a6fd6; border:none; color:#fff; padding:8px 14px; border-radius:6px; cursor:pointer; font-size:14px; }
   #searchBtn:hover { background:#3a7fe6; }
   #searchBtn:disabled { opacity:.5; cursor:default; }
+  .daynight-row { display:flex; gap:6px; margin-top:10px; }
+  .dn-btn { flex:1; background:#12161f; border:1px solid rgba(255,255,255,0.12); color:#9fb0c8;
+            padding:6px 8px; border-radius:6px; cursor:pointer; font-size:12.5px; transition:background .15s,color .15s; }
+  .dn-btn:hover { background:#1a2029; }
+  .dn-btn.active { background:#2a6fd6; color:#fff; border-color:#2a6fd6; }
   #status { font-size:12.5px; color:#9fb0c8; margin-top:8px; min-height:16px; }
   #results { margin-top:8px; max-height:180px; overflow-y:auto; }
   .result-item { padding:7px 9px; border-radius:6px; cursor:pointer; font-size:13px; color:#dbe4f0; }
@@ -44,6 +49,10 @@
     <div class="search-row">
       <input id="q" type="text" placeholder="np. EPWR, KJFK, Wrocław..." value="EPWR" />
       <button id="searchBtn">Szukaj</button>
+    </div>
+    <div class="daynight-row">
+      <button id="dayBtn" class="dn-btn active">☀️ Dzień</button>
+      <button id="nightBtn" class="dn-btn">🌙 Noc</button>
     </div>
     <div id="status"></div>
     <div id="results"></div>
@@ -76,9 +85,9 @@ const OVERPASS_SERVERS = [
   'https://overpass-api.de/api/interpreter',
   'https://overpass.kumi.systems/api/interpreter',
   'https://overpass.private.coffee/api/interpreter',
+  'https://overpass.openstreetmap.fr/api/interpreter',
   'https://overpass.nchc.org.tw/api/interpreter',
-  'https://overpass.osm.ch/api/interpreter',
-  'https://overpass.openstreetmap.fr/api/interpreter'
+  'https://overpass.osm.ch/api/interpreter' // UWAGA: ta instancja zawiera WYŁĄCZNIE dane Szwajcarii - trzymana na końcu jako ostatnia deska ratunku, nie jako pierwszy wybór
 ];
 const TERRAIN_SIZE = 14000;
 const TERRAIN_SEGMENTS = 220;
@@ -88,6 +97,10 @@ const NOISE_SCALE = 1/2600;
 const FLATTEN_BLEND = 550;
 const DEFAULT_RUNWAY_WIDTH = 45;
 const DEFAULT_TAXIWAY_WIDTH = 18;
+const MIN_TAXIWAY_WIDTH = 14;
+const RUNWAY_EDGE_LIGHT_SPACING = 60;
+const TAXIWAY_EDGE_LIGHT_SPACING = 40;
+let isNight = false;
 const EARTH_R = 6371000;
 
 // ---------- STATE ----------
@@ -100,6 +113,8 @@ let flattenFallbackRadius = 1200;
 // ---------- DOM ----------
 const qInput = document.getElementById('q');
 const searchBtn = document.getElementById('searchBtn');
+const dayBtn = document.getElementById('dayBtn');
+const nightBtn = document.getElementById('nightBtn');
 const statusEl = document.getElementById('status');
 const resultsEl = document.getElementById('results');
 const infoPanel = document.getElementById('info');
@@ -216,7 +231,8 @@ controls.maxPolarAngle = Math.PI*0.49;
 controls.minDistance = 80;
 controls.maxDistance = 9000;
 
-scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+const ambientLight = new THREE.AmbientLight(0xffffff, 0.55);
+scene.add(ambientLight);
 const sun = new THREE.DirectionalLight(0xfff2d9, 0.95);
 sun.position.set(3000,4000,2000);
 sun.castShadow = true;
@@ -307,7 +323,7 @@ function buildRibbon(pointsLatLon, widthM, material){
   geo.computeVertexNormals();
   const mesh = new THREE.Mesh(geo, material);
   mesh.receiveShadow = true;
-  return mesh;
+  return {mesh, left, right};
 }
 
 function buildRunwayRect(leLat,leLon,heLat,heLon,widthM,material){
@@ -377,8 +393,86 @@ function buildDashedCenterline(pointsLatLon, color){
   return line;
 }
 
+// ---------- NIGHT LIGHTS ----------
+function makeGlowTexture(){
+  const size=64;
+  const canvas=document.createElement('canvas');
+  canvas.width=canvas.height=size;
+  const ctx=canvas.getContext('2d');
+  const g = ctx.createRadialGradient(size/2,size/2,0,size/2,size/2,size/2);
+  g.addColorStop(0,'rgba(255,255,255,1)');
+  g.addColorStop(0.4,'rgba(255,255,255,0.75)');
+  g.addColorStop(1,'rgba(255,255,255,0)');
+  ctx.fillStyle=g;
+  ctx.fillRect(0,0,size,size);
+  return new THREE.CanvasTexture(canvas);
+}
+const GLOW_TEX = makeGlowTexture();
+
+function samplePointsAlongPolyline(pts, spacing){
+  const out=[];
+  let carried=0;
+  for(let i=0;i<pts.length-1;i++){
+    const a=pts[i], b=pts[i+1];
+    const segLen = Math.hypot(b.x-a.x, b.z-a.z);
+    let d = carried;
+    while(d < segLen){
+      const t = segLen>0 ? d/segLen : 0;
+      out.push({x:a.x+(b.x-a.x)*t, z:a.z+(b.z-a.z)*t});
+      d += spacing;
+    }
+    carried = d - segLen;
+  }
+  return out;
+}
+
+function makePointsObject(pts, color, size){
+  if(!pts || !pts.length) return null;
+  const positions = new Float32Array(pts.length*3);
+  for(let i=0;i<pts.length;i++){
+    positions[i*3] = pts[i].x;
+    positions[i*3+1] = terrainHeight(pts[i].x, pts[i].z) + 2.2;
+    positions[i*3+2] = pts[i].z;
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions,3));
+  const mat = new THREE.PointsMaterial({
+    map: GLOW_TEX, color, size, sizeAttenuation:true,
+    transparent:true, blending:THREE.AdditiveBlending, depthWrite:false
+  });
+  return new THREE.Points(geo, mat);
+}
+
+function buildNightLightsGroup(data){
+  const g = new THREE.Group();
+  const runwayEdges = makePointsObject(data.runwayEdgePts, 0xffffff, 5.5); // białe światła krawędziowe pasa
+  const taxiwayEdges = makePointsObject(data.taxiwayEdgePts, 0x3fa9ff, 4.5); // niebieskie światła dróg kołowania
+  const thresholds = makePointsObject(data.thresholdPts, 0x33ff66, 7); // zielone światła progu
+  const apronGlow = makePointsObject(data.apronCentroids, 0xffcf8a, 42); // ciepła poświata płyt postojowych
+  for(const o of [runwayEdges, taxiwayEdges, thresholds, apronGlow]) if(o) g.add(o);
+  return g;
+}
+
+function applyDayNightLighting(){
+  if(isNight){
+    scene.background = new THREE.Color(0x040711);
+    scene.fog = new THREE.Fog(0x040711, 2200, 10500);
+    ambientLight.intensity = 0.14;
+    ambientLight.color.set(0x3a4a72);
+    sun.intensity = 0.06;
+    sun.color.set(0x94a9ff);
+  } else {
+    scene.background = new THREE.Color(0x8fb6d9);
+    scene.fog = new THREE.Fog(0x8fb6d9, 4000, 13000);
+    ambientLight.intensity = 0.55;
+    ambientLight.color.set(0xffffff);
+    sun.intensity = 0.95;
+    sun.color.set(0xfff2d9);
+  }
+}
+
 const MAT_RUNWAY = new THREE.MeshStandardMaterial({color:0x2b2b2e, roughness:.95, side:THREE.DoubleSide});
-const MAT_TAXIWAY = new THREE.MeshStandardMaterial({color:0x55565c, roughness:.95, side:THREE.DoubleSide});
+const MAT_TAXIWAY = new THREE.MeshStandardMaterial({color:0x7a7f88, roughness:.95, side:THREE.DoubleSide});
 const MAT_APRON = new THREE.MeshStandardMaterial({color:0x6e6e73, roughness:.95, side:THREE.DoubleSide});
 
 // ---------- WKR API HELPERS ----------
@@ -489,10 +583,11 @@ function buildRadiusQuery(lat,lon,radius){
   return `[out:json][timeout:25];(way(around:${radius},${lat},${lon})["aeroway"~"runway|taxiway|apron|aerodrome"];relation(around:${radius},${lat},${lon})["aeroway"~"runway|taxiway|apron|aerodrome"];);out geom;`;
 }
 async function overpassRun(query){
+  let fallbackEmpty = null;
   for(const server of OVERPASS_SERVERS){
     try{
       const controller = new AbortController();
-      const timeout = setTimeout(()=>controller.abort(), 12000);
+      const timeout = setTimeout(()=>controller.abort(), 20000);
       const res = await fetch(server, {
         method:'POST',
         headers:{'Content-Type':'application/x-www-form-urlencoded'},
@@ -502,10 +597,13 @@ async function overpassRun(query){
       clearTimeout(timeout);
       if(!res.ok) continue;
       const json = await res.json();
-      if(json && Array.isArray(json.elements)) return json.elements;
-    }catch(e){ /* try next mirror */ }
+      if(json && Array.isArray(json.elements)){
+        if(json.elements.length>0) return json.elements;
+        fallbackEmpty = json.elements; // 200 OK ale pusto (np. regionalny mirror bez pokrycia) - próbuj dalej, zapamiętaj na wypadek gdyby nic innego nie zadziałało
+      }
+    }catch(e){ /* następny mirror */ }
   }
-  return [];
+  return fallbackEmpty || [];
 }
 function classifyElements(elements){
   const out = {runways:[], taxiways:[], aprons:[], aerodromes:[]};
@@ -551,6 +649,9 @@ function clearAirportGroup(){
   while(airportGroup.children.length){
     const c = airportGroup.children.pop();
     if(c.geometry) c.geometry.dispose();
+    if(c.children && c.children.length){
+      for(const child of c.children){ if(child.geometry) child.geometry.dispose(); }
+    }
   }
 }
 function hashSeed(lat,lon){ return Math.floor(lat*1000+lon*1000)|0; }
@@ -666,6 +767,11 @@ async function finishLoad({airportObj, icaoGuess, lat, lon, apiId}){
   buildTerrain();
   clearAirportGroup();
 
+  const runwayEdgePts = [];
+  const thresholdPts = [];
+  const taxiwayEdgePts = [];
+  const apronCentroids = [];
+
   if(validApiRunways.length){
     for(const r of validApiRunways){
       const widthM = !isNaN(r.widthFt) ? r.widthFt*0.3048 : DEFAULT_RUNWAY_WIDTH;
@@ -675,20 +781,35 @@ async function finishLoad({airportObj, icaoGuess, lat, lon, apiId}){
       airportGroup.add(buildDashedCenterline([{lat:r.leLat,lon:r.leLon},{lat:r.heLat,lon:r.heLon}], 0xffffff));
       if(r.leIdent){ const s=makeLabel(r.leIdent,{worldWidth:70}); s.position.set(le.x, terrainHeight(le.x,le.z)+40, le.z); airportGroup.add(s); }
       if(r.heIdent){ const s=makeLabel(r.heIdent,{worldWidth:70}); s.position.set(he.x, terrainHeight(he.x,he.z)+40, he.z); airportGroup.add(s); }
+
+      const half = widthM/2;
+      const dx=he.x-le.x, dz=he.z-le.z, len=Math.hypot(dx,dz)||1;
+      const nx=-dz/len, nz=dx/len;
+      const leftLine=[{x:le.x+nx*half,z:le.z+nz*half},{x:he.x+nx*half,z:he.z+nz*half}];
+      const rightLine=[{x:le.x-nx*half,z:le.z-nz*half},{x:he.x-nx*half,z:he.z-nz*half}];
+      runwayEdgePts.push(...samplePointsAlongPolyline(leftLine,RUNWAY_EDGE_LIGHT_SPACING), ...samplePointsAlongPolyline(rightLine,RUNWAY_EDGE_LIGHT_SPACING));
+      for(const center of [le,he]) for(let k=-2;k<=2;k++) thresholdPts.push({x:center.x+nx*(half*k/2.2), z:center.z+nz*(half*k/2.2)});
     }
   } else {
     for(const rw of classified.runways){
       const widthTag = parseFloat(rw.tags.width);
-      const mesh = buildRibbon(rw.line, !isNaN(widthTag)?widthTag:DEFAULT_RUNWAY_WIDTH, MAT_RUNWAY);
-      if(mesh) airportGroup.add(mesh);
+      const rb = buildRibbon(rw.line, !isNaN(widthTag)?widthTag:DEFAULT_RUNWAY_WIDTH, MAT_RUNWAY);
+      if(rb){
+        airportGroup.add(rb.mesh);
+        runwayEdgePts.push(...samplePointsAlongPolyline(rb.left,RUNWAY_EDGE_LIGHT_SPACING), ...samplePointsAlongPolyline(rb.right,RUNWAY_EDGE_LIGHT_SPACING));
+      }
       airportGroup.add(buildDashedCenterline(rw.line, 0xffffff));
     }
   }
 
   for(const tw of classified.taxiways){
     const widthTag = parseFloat(tw.tags.width);
-    const mesh = buildRibbon(tw.line, !isNaN(widthTag)?widthTag:DEFAULT_TAXIWAY_WIDTH, MAT_TAXIWAY);
-    if(mesh) airportGroup.add(mesh);
+    const widthM = Math.max(MIN_TAXIWAY_WIDTH, !isNaN(widthTag)?widthTag:DEFAULT_TAXIWAY_WIDTH);
+    const rb = buildRibbon(tw.line, widthM, MAT_TAXIWAY);
+    if(rb){
+      airportGroup.add(rb.mesh);
+      taxiwayEdgePts.push(...samplePointsAlongPolyline(rb.left,TAXIWAY_EDGE_LIGHT_SPACING), ...samplePointsAlongPolyline(rb.right,TAXIWAY_EDGE_LIGHT_SPACING));
+    }
     airportGroup.add(buildDashedCenterline(tw.line, 0xffd54a));
     if(tw.tags.ref){
       const mid = tw.line[Math.floor(tw.line.length/2)];
@@ -701,9 +822,17 @@ async function finishLoad({airportObj, icaoGuess, lat, lon, apiId}){
 
   for(const ap of classified.aprons){
     const mesh = buildPolygon(ap.outer, ap.inner, MAT_APRON);
-    if(mesh) airportGroup.add(mesh);
+    if(mesh){
+      airportGroup.add(mesh);
+      const pts = ap.outer.map(p=>project(p.lat,p.lon));
+      apronCentroids.push({x: pts.reduce((s,p)=>s+p.x,0)/pts.length, z: pts.reduce((s,p)=>s+p.z,0)/pts.length});
+    }
   }
   for(const ad of classified.aerodromes){ airportGroup.add(buildBoundaryLine(ad.outer)); }
+
+  const nightGroup = buildNightLightsGroup({runwayEdgePts, thresholdPts, taxiwayEdgePts, apronCentroids});
+  nightGroup.visible = isNight;
+  airportGroup.add(nightGroup);
 
   const airportName = airportObj ? getName(airportObj) : (icaoGuess||'Lotnisko');
   const nameLabel = makeLabel(`${icaoGuess||''} ${airportName}`.trim(), {worldWidth:220, color:'#7fd0ff'});
@@ -741,6 +870,16 @@ function updateInfoPanel({airportObj, icaoGuess, validApiRunways, classified}){
 // ---------- EVENTS ----------
 searchBtn.addEventListener('click', ()=>loadAirport(qInput.value));
 qInput.addEventListener('keydown', e=>{ if(e.key==='Enter') loadAirport(qInput.value); });
+function setDayNight(night){
+  isNight = night;
+  applyDayNightLighting();
+  dayBtn.classList.toggle('active', !night);
+  nightBtn.classList.toggle('active', night);
+  const grp = airportGroup.children.find(c=>c.type==='Group');
+  if(grp) grp.visible = isNight;
+}
+dayBtn.addEventListener('click', ()=>setDayNight(false));
+nightBtn.addEventListener('click', ()=>setDayNight(true));
 window.addEventListener('resize', ()=>{
   camera.aspect = innerWidth/innerHeight;
   camera.updateProjectionMatrix();
@@ -755,6 +894,7 @@ function animate(){
 animate();
 
 // ---------- INITIAL LOAD ----------
+applyDayNightLighting();
 buildTerrain();
 loadAirport('EPWR');
 
