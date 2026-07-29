@@ -98,9 +98,21 @@ const FLATTEN_BLEND = 550;
 const DEFAULT_RUNWAY_WIDTH = 45;
 const DEFAULT_TAXIWAY_WIDTH = 18;
 const MIN_TAXIWAY_WIDTH = 14;
-const RUNWAY_EDGE_LIGHT_SPACING = 60;
+const RUNWAY_EDGE_LIGHT_SPACING = 60;      // ok. 200 ft
 const TAXIWAY_EDGE_LIGHT_SPACING = 40;
+const TAXIWAY_CENTERLINE_LIGHT_SPACING = 15;
+const CENTERLINE_LIGHT_SPACING = 15.24;     // 50 ft
+const CAUTION_ZONE_LENGTH = 609.6;          // ostatnie 2000 ft pasa - żółte światła krawędziowe
+const CENTERLINE_RED_WHITE_ZONE = 914.4;    // ostatnie 3000 ft osi - naprzemiennie czerwono-białe
+const CENTERLINE_RED_ZONE = 304.8;          // ostatnie 1000 ft osi - czerwone
+const COL_WHITE = [1,1,1];
+const COL_YELLOW = [1,0.82,0.12];
+const COL_GREEN = [0.15,1,0.35];
+const COL_RED = [1,0.13,0.13];
+const COL_BLUE = [0.28,0.62,1];
+const COL_AMBER = [1,0.8,0.45];
 let isNight = false;
+let reilPoints = null;
 const EARTH_R = 6371000;
 
 // ---------- STATE ----------
@@ -411,33 +423,44 @@ const GLOW_TEX = makeGlowTexture();
 
 function samplePointsAlongPolyline(pts, spacing){
   const out=[];
-  let carried=0;
+  let carried=0, dist=0;
   for(let i=0;i<pts.length-1;i++){
     const a=pts[i], b=pts[i+1];
     const segLen = Math.hypot(b.x-a.x, b.z-a.z);
     let d = carried;
     while(d < segLen){
       const t = segLen>0 ? d/segLen : 0;
-      out.push({x:a.x+(b.x-a.x)*t, z:a.z+(b.z-a.z)*t});
+      out.push({x:a.x+(b.x-a.x)*t, z:a.z+(b.z-a.z)*t, d: dist+d});
       d += spacing;
     }
     carried = d - segLen;
+    dist += segLen;
   }
   return out;
 }
+function polylineLength(pts){
+  let len=0;
+  for(let i=0;i<pts.length-1;i++) len += Math.hypot(pts[i+1].x-pts[i].x, pts[i+1].z-pts[i].z);
+  return len;
+}
+function projectLine(latlonPts){ return latlonPts.map(p=>project(p.lat,p.lon)); }
 
-function makePointsObject(pts, color, size){
-  if(!pts || !pts.length) return null;
-  const positions = new Float32Array(pts.length*3);
-  for(let i=0;i<pts.length;i++){
-    positions[i*3] = pts[i].x;
-    positions[i*3+1] = terrainHeight(pts[i].x, pts[i].z) + 2.2;
-    positions[i*3+2] = pts[i].z;
+function makeColoredPointsObject(items, size){
+  if(!items || !items.length) return null;
+  const positions = new Float32Array(items.length*3);
+  const colors = new Float32Array(items.length*3);
+  for(let i=0;i<items.length;i++){
+    positions[i*3] = items[i].x;
+    positions[i*3+1] = terrainHeight(items[i].x, items[i].z) + 2.2;
+    positions[i*3+2] = items[i].z;
+    const c = items[i].color || COL_WHITE;
+    colors[i*3]=c[0]; colors[i*3+1]=c[1]; colors[i*3+2]=c[2];
   }
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute(positions,3));
+  geo.setAttribute('color', new THREE.Float32BufferAttribute(colors,3));
   const mat = new THREE.PointsMaterial({
-    map: GLOW_TEX, color, size, sizeAttenuation:true,
+    map: GLOW_TEX, size, sizeAttenuation:true, vertexColors:true,
     transparent:true, blending:THREE.AdditiveBlending, depthWrite:false
   });
   return new THREE.Points(geo, mat);
@@ -445,11 +468,14 @@ function makePointsObject(pts, color, size){
 
 function buildNightLightsGroup(data){
   const g = new THREE.Group();
-  const runwayEdges = makePointsObject(data.runwayEdgePts, 0xffffff, 5.5); // białe światła krawędziowe pasa
-  const taxiwayEdges = makePointsObject(data.taxiwayEdgePts, 0x3fa9ff, 4.5); // niebieskie światła dróg kołowania
-  const thresholds = makePointsObject(data.thresholdPts, 0x33ff66, 7); // zielone światła progu
-  const apronGlow = makePointsObject(data.apronCentroids, 0xffcf8a, 42); // ciepła poświata płyt postojowych
-  for(const o of [runwayEdges, taxiwayEdges, thresholds, apronGlow]) if(o) g.add(o);
+  const runwayEdges = makeColoredPointsObject(data.runwayEdgeItems, 5.5);       // biało/żółto/czerwone krawędzie pasa
+  const thresholds = makeColoredPointsObject(data.thresholdItems, 7.5);         // zielone/czerwone światła progu
+  const centerline = makeColoredPointsObject(data.centerlineItems, 3.6);        // biało/czerwone światła osi (wpuszczane)
+  const taxiwayEdges = makeColoredPointsObject(data.taxiwayEdgeItems, 4.5);     // niebieskie krawędzie TWY
+  const taxiwayCenter = makeColoredPointsObject(data.taxiwayCenterlineItems, 3.4); // zielona oś TWY (wpuszczana)
+  const apronGlow = makeColoredPointsObject(data.apronItems, 42);              // poświata płyt postojowych
+  reilPoints = makeColoredPointsObject(data.reilItems, 9);                     // synchronicznie migające REIL
+  for(const o of [runwayEdges, thresholds, centerline, taxiwayEdges, taxiwayCenter, apronGlow, reilPoints]) if(o) g.add(o);
   return g;
 }
 
@@ -526,9 +552,11 @@ function runwayFields(r){
     leIdent: pick(r,['le_ident']),
     leLat: parseFloat(pick(r,['le_latitude_deg','le_lat'])),
     leLon: parseFloat(pick(r,['le_longitude_deg','le_lon'])),
+    leDispFt: parseFloat(pick(r,['le_displaced_threshold_ft'])),
     heIdent: pick(r,['he_ident']),
     heLat: parseFloat(pick(r,['he_latitude_deg','he_lat'])),
     heLon: parseFloat(pick(r,['he_longitude_deg','he_lon'])),
+    heDispFt: parseFloat(pick(r,['he_displaced_threshold_ft'])),
   };
 }
 function isClosedFlag(v){ return v===true || v===1 || v==='1' || v==='true' || v==='yes'; }
@@ -767,10 +795,13 @@ async function finishLoad({airportObj, icaoGuess, lat, lon, apiId}){
   buildTerrain();
   clearAirportGroup();
 
-  const runwayEdgePts = [];
-  const thresholdPts = [];
-  const taxiwayEdgePts = [];
-  const apronCentroids = [];
+  const runwayEdgeItems = [];
+  const thresholdItems = [];
+  const centerlineItems = [];
+  const taxiwayEdgeItems = [];
+  const taxiwayCenterlineItems = [];
+  const apronItems = [];
+  const reilItems = [];
 
   if(validApiRunways.length){
     for(const r of validApiRunways){
@@ -783,22 +814,78 @@ async function finishLoad({airportObj, icaoGuess, lat, lon, apiId}){
       if(r.heIdent){ const s=makeLabel(r.heIdent,{worldWidth:70}); s.position.set(he.x, terrainHeight(he.x,he.z)+40, he.z); airportGroup.add(s); }
 
       const half = widthM/2;
-      const dx=he.x-le.x, dz=he.z-le.z, len=Math.hypot(dx,dz)||1;
-      const nx=-dz/len, nz=dx/len;
+      const dx=he.x-le.x, dz=he.z-le.z, runLen=Math.hypot(dx,dz)||1;
+      const ux=dx/runLen, uz=dz/runLen, nx=-uz, nz=ux;
+      const leDispM = (!isNaN(r.leDispFt) && r.leDispFt>0) ? r.leDispFt*0.3048 : 0;
+      const heDispM = (!isNaN(r.heDispFt) && r.heDispFt>0) ? r.heDispFt*0.3048 : 0;
+      const leThresh = {x: le.x+ux*leDispM, z: le.z+uz*leDispM};
+      const heThresh = {x: he.x-ux*heDispM, z: he.z-uz*heDispM};
+
+      // krawędź pasa: biała / żółta (ostatnie 2000ft) / czerwono-żółta (przesunięty próg, nieużywalny do lądowania)
       const leftLine=[{x:le.x+nx*half,z:le.z+nz*half},{x:he.x+nx*half,z:he.z+nz*half}];
       const rightLine=[{x:le.x-nx*half,z:le.z-nz*half},{x:he.x-nx*half,z:he.z-nz*half}];
-      runwayEdgePts.push(...samplePointsAlongPolyline(leftLine,RUNWAY_EDGE_LIGHT_SPACING), ...samplePointsAlongPolyline(rightLine,RUNWAY_EDGE_LIGHT_SPACING));
-      for(const center of [le,he]) for(let k=-2;k<=2;k++) thresholdPts.push({x:center.x+nx*(half*k/2.2), z:center.z+nz*(half*k/2.2)});
+      let ei=0;
+      for(const p of [...samplePointsAlongPolyline(leftLine,RUNWAY_EDGE_LIGHT_SPACING), ...samplePointsAlongPolyline(rightLine,RUNWAY_EDGE_LIGHT_SPACING)]){
+        const distLE=p.d, distHE=runLen-p.d;
+        let color;
+        if(leDispM>0 && distLE<leDispM) color = (ei%2===0)?COL_RED:COL_YELLOW;
+        else if(heDispM>0 && distHE<heDispM) color = (ei%2===0)?COL_RED:COL_YELLOW;
+        else if(Math.min(distLE,distHE) < CAUTION_ZONE_LENGTH) color = COL_YELLOW;
+        else color = COL_WHITE;
+        runwayEdgeItems.push({x:p.x,z:p.z,color});
+        ei++;
+      }
+
+      // próg: zielony (kierunek lądowania) - jeśli przesunięty, dodatkowo czerwony na fizycznym końcu (niedostępny do lądowania)
+      const addThresholdBar=(center,color)=>{ for(let k=-2;k<=2;k++) thresholdItems.push({x:center.x+nx*(half*k/2.2), z:center.z+nz*(half*k/2.2), color}); };
+      if(leDispM>0){ addThresholdBar(le, COL_RED); addThresholdBar(leThresh, COL_GREEN); } else addThresholdBar(le, COL_GREEN);
+      if(heDispM>0){ addThresholdBar(he, COL_RED); addThresholdBar(heThresh, COL_GREEN); } else addThresholdBar(he, COL_GREEN);
+
+      // oś pasa (światła wpuszczane): biała / naprzemiennie czerwono-biała (ostatnie 3000ft) / czerwona (ostatnie 1000ft)
+      let ci=0;
+      for(const p of samplePointsAlongPolyline([le,he], CENTERLINE_LIGHT_SPACING)){
+        const nearEnd = Math.min(p.d, runLen-p.d);
+        let color = nearEnd<CENTERLINE_RED_ZONE ? COL_RED
+                  : nearEnd<CENTERLINE_RED_WHITE_ZONE ? ((ci%2===0)?COL_RED:COL_WHITE)
+                  : COL_WHITE;
+        centerlineItems.push({x:p.x,z:p.z,color});
+        ci++;
+      }
+
+      // REIL - para synchronicznie migających świateł tuż za krawędzią przy obu progach
+      for(const center of [le,he]){
+        reilItems.push({x:center.x+nx*(half*1.2), z:center.z+nz*(half*1.2), color:COL_WHITE});
+        reilItems.push({x:center.x-nx*(half*1.2), z:center.z-nz*(half*1.2), color:COL_WHITE});
+      }
     }
   } else {
     for(const rw of classified.runways){
       const widthTag = parseFloat(rw.tags.width);
       const rb = buildRibbon(rw.line, !isNaN(widthTag)?widthTag:DEFAULT_RUNWAY_WIDTH, MAT_RUNWAY);
+      const centerProj = projectLine(rw.line);
+      const runLen = polylineLength(centerProj) || 1;
       if(rb){
         airportGroup.add(rb.mesh);
-        runwayEdgePts.push(...samplePointsAlongPolyline(rb.left,RUNWAY_EDGE_LIGHT_SPACING), ...samplePointsAlongPolyline(rb.right,RUNWAY_EDGE_LIGHT_SPACING));
+        for(const p of [...samplePointsAlongPolyline(rb.left,RUNWAY_EDGE_LIGHT_SPACING), ...samplePointsAlongPolyline(rb.right,RUNWAY_EDGE_LIGHT_SPACING)]){
+          const nearEnd = Math.min(p.d, runLen-p.d);
+          runwayEdgeItems.push({x:p.x,z:p.z,color: nearEnd<CAUTION_ZONE_LENGTH?COL_YELLOW:COL_WHITE});
+        }
+        const li=rb.left.length-1, ri=rb.right.length-1;
+        thresholdItems.push(
+          {x:rb.left[0].x,z:rb.left[0].z,color:COL_GREEN}, {x:rb.right[0].x,z:rb.right[0].z,color:COL_GREEN},
+          {x:rb.left[li].x,z:rb.left[li].z,color:COL_GREEN}, {x:rb.right[ri].x,z:rb.right[ri].z,color:COL_GREEN}
+        );
       }
       airportGroup.add(buildDashedCenterline(rw.line, 0xffffff));
+      let ci=0;
+      for(const p of samplePointsAlongPolyline(centerProj, CENTERLINE_LIGHT_SPACING)){
+        const nearEnd = Math.min(p.d, runLen-p.d);
+        const color = nearEnd<CENTERLINE_RED_ZONE ? COL_RED
+                    : nearEnd<CENTERLINE_RED_WHITE_ZONE ? ((ci%2===0)?COL_RED:COL_WHITE)
+                    : COL_WHITE;
+        centerlineItems.push({x:p.x,z:p.z,color});
+        ci++;
+      }
     }
   }
 
@@ -808,9 +895,15 @@ async function finishLoad({airportObj, icaoGuess, lat, lon, apiId}){
     const rb = buildRibbon(tw.line, widthM, MAT_TAXIWAY);
     if(rb){
       airportGroup.add(rb.mesh);
-      taxiwayEdgePts.push(...samplePointsAlongPolyline(rb.left,TAXIWAY_EDGE_LIGHT_SPACING), ...samplePointsAlongPolyline(rb.right,TAXIWAY_EDGE_LIGHT_SPACING));
+      for(const p of [...samplePointsAlongPolyline(rb.left,TAXIWAY_EDGE_LIGHT_SPACING), ...samplePointsAlongPolyline(rb.right,TAXIWAY_EDGE_LIGHT_SPACING)]){
+        taxiwayEdgeItems.push({x:p.x,z:p.z,color:COL_BLUE});
+      }
     }
     airportGroup.add(buildDashedCenterline(tw.line, 0xffd54a));
+    const twProj = projectLine(tw.line);
+    for(const p of samplePointsAlongPolyline(twProj, TAXIWAY_CENTERLINE_LIGHT_SPACING)){
+      taxiwayCenterlineItems.push({x:p.x,z:p.z,color:COL_GREEN});
+    }
     if(tw.tags.ref){
       const mid = tw.line[Math.floor(tw.line.length/2)];
       const p = project(mid.lat, mid.lon);
@@ -825,12 +918,12 @@ async function finishLoad({airportObj, icaoGuess, lat, lon, apiId}){
     if(mesh){
       airportGroup.add(mesh);
       const pts = ap.outer.map(p=>project(p.lat,p.lon));
-      apronCentroids.push({x: pts.reduce((s,p)=>s+p.x,0)/pts.length, z: pts.reduce((s,p)=>s+p.z,0)/pts.length});
+      apronItems.push({x: pts.reduce((s,p)=>s+p.x,0)/pts.length, z: pts.reduce((s,p)=>s+p.z,0)/pts.length, color:COL_AMBER});
     }
   }
   for(const ad of classified.aerodromes){ airportGroup.add(buildBoundaryLine(ad.outer)); }
 
-  const nightGroup = buildNightLightsGroup({runwayEdgePts, thresholdPts, taxiwayEdgePts, apronCentroids});
+  const nightGroup = buildNightLightsGroup({runwayEdgeItems, thresholdItems, centerlineItems, taxiwayEdgeItems, taxiwayCenterlineItems, apronItems, reilItems});
   nightGroup.visible = isNight;
   airportGroup.add(nightGroup);
 
