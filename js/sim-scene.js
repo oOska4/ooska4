@@ -21,7 +21,7 @@ scene.background = null;
 scene.fog        = new THREE.Fog(0x9fc3e6, 60_000, 400_000);
 
 // ── Kamera perspektywiczna ─────────────────────────────────────────────────────
-const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.5, 2_000_000);
+const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.2, 2_000_000);
 
 // ── Resize ────────────────────────────────────────────────────────────────────
 window.addEventListener('resize', () => {

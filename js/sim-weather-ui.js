@@ -25,10 +25,12 @@
       });
     }
 
-    // Zamknij po kliknięciu poza popupem
+    // Zamknij po kliknieciu poza popupem LUB bezposrednio na przyciemnione
+    // tlo (#weather-popup jest teraz peloekranowym backdropem — kliknieciem
+    // "poza karta" jest wiec e.target===popup, nie tylko !contains).
     document.addEventListener('click', (e) => {
       if (popup.style.display === 'flex' &&
-          !popup.contains(e.target) && e.target !== btn) {
+          (e.target === popup || (!popup.contains(e.target) && e.target !== btn))) {
         popup.style.display = 'none';
         btn.classList.remove('active');
       }

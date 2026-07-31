@@ -302,7 +302,7 @@ function updateHUD() {
   }
   hudEl.phase.textContent     = phase;
   hudEl.stall.style.display     = plane._isStalling ? 'block' : 'none';
-  hudEl.overspeed.style.display = (ias_kt > A321_PARAMS.VMO * MPS_KT) ? 'block' : 'none';
+  hudEl.overspeed.style.display = plane._isOverspeed ? 'block' : 'none'; // ta sama flaga co dzwiek (histereza w sim-physics.js) - koniec z miganiem na granicy VMO
 
   hudEl.vs.classList.remove('warn', 'danger', 'green');
   if (vs_fpm < -1500) hudEl.vs.classList.add('danger');

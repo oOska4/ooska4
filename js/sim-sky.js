@@ -124,6 +124,15 @@ const TimeState = {
   animMinutesPerSecond: 1, // nadpisywane przez UI (dw-anim-speed / w-anim-speed)
 };
 
+// Stan nieba odczytywany przez inne moduły (np. sim-airport-lights.js), żeby
+// nie musiały same liczyć pozycji Słońca — aktualizowany co klatkę w
+// updateSky() PRZED użyciem przez cokolwiek innego w tej samej klatce
+// (kolejność w animate() w sim-main.js: updateSky() jest wołane co klatkę).
+const SkyState = {
+  nightFactor:   0,   // 0 = pełny dzień, 1 = pełna noc
+  sunAltitude:  -1,   // radiany, ujemne = Słońce pod horyzontem
+};
+
 function getCurrentDate() {
   const d = new Date(Date.UTC(TimeState.year, 0, 1));
   d.setUTCDate(d.getUTCDate() + TimeState.dayOfYear - 1);
@@ -921,6 +930,8 @@ function updateSky(dt) {
   sunLight.position.y = Math.max(sunLight.position.y, 5);
 
   const nightFactor = 1 - dayFactor;
+  SkyState.nightFactor  = nightFactor;
+  SkyState.sunAltitude  = sunAlt;
   const moonLightStrength = nightFactor * Math.max(0, moonPos.altitude) * moonPos.illumFraction * 0.15;
 
   const skyTint = sunAlt > 0

@@ -51,6 +51,7 @@ window.addEventListener('keyup', e => {
     case 'KeyN': if (p) { p.autobrakeLevel = _nextAutobrakeLevel(p.autobrakeLevel); _syncAutobrakeBtn(); } break;
     case 'KeyX': if (p) { p.ap.master = false; p.ap.hdgHold = false; p.ap.altHold = false; p.ap.vsHold = false; p.ap.spdHold = false; } break;
     case 'KeyR': resetPlane(); break;
+    case 'KeyM': if (typeof SimSound !== 'undefined') SimSound.toggleMute(); break;
     case 'KeyC': cycleCameraMode(); break;
     case 'Digit1': setCameraMode(CameraMode.ORBIT); break;
     case 'Digit2': setCameraMode(CameraMode.COCKPIT); break;
@@ -229,8 +230,46 @@ function _flyMove(cx, cy) {
 }
 function _flyReset() {
   flyId=-1; flyDelta={x:0,y:0};
-  flyKnob.style.transform='translate(-50%,-50%)';
+  if (!tiltEnabled) flyKnob.style.transform='translate(-50%,-50%)';
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  TILT CONTROLS
+// ═══════════════════════════════════════════════════════════════════════════════
+let tiltEnabled = false;
+let tiltPitchCalib = 0;
+let tiltRollCalib = 0;
+let tiltPitchRaw = 0;
+let tiltRollRaw = 0;
+let tiltDelta = { x: 0, y: 0 };
+
+window.addEventListener('deviceorientation', e => {
+  if (e.beta === null || e.gamma === null) return;
+  
+  let p = e.beta; 
+  let r = e.gamma;
+  let angle = window.screen && window.screen.orientation ? window.screen.orientation.angle : window.orientation || 0;
+  
+  // Mapping standard device orientation to screen orientation
+  if (angle === 90) { p = -e.gamma; r = e.beta; }
+  else if (angle === -90 || angle === 270) { p = e.gamma; r = -e.beta; }
+  else if (angle === 180) { p = -e.beta; r = -e.gamma; }
+  
+  tiltPitchRaw = p;
+  tiltRollRaw = r;
+  
+  if (tiltEnabled) {
+    let adjustedPitch = p - tiltPitchCalib;
+    let adjustedRoll = r - tiltRollCalib;
+    let maxAngle = 30; // Max tilt angle for full input
+    
+    tiltDelta.y = Math.max(-1, Math.min(1, adjustedPitch / maxAngle));
+    tiltDelta.x = Math.max(-1, Math.min(1, adjustedRoll / maxAngle));
+  } else {
+    tiltDelta.y = 0;
+    tiltDelta.x = 0;
+  }
+}, { passive: true });
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  SLIDER GAZU
@@ -372,6 +411,12 @@ function _setMenu(open) {
 }
 _btn('mb-menu',   () => _setMenu(!menuOpen));
 _btn('mpop-close',() => _setMenu(false));
+// Zamknij po kliknieciu w przyciemnione tlo (poza karta .popup-card) --
+// #mob-menu-popup to teraz peloekranowy backdrop, wiec e.target===popup
+// znaczy klikniecie POZA karta z trescia.
+document.getElementById('mob-menu-popup')?.addEventListener('click', (e) => {
+  if (e.target.id === 'mob-menu-popup') _setMenu(false);
+});
 _btn('mpop-reset',() => { resetPlane();     _setMenu(false); });
 _btn('mpop-appr', () => { spawnApproach();  _setMenu(false); });
 _btn('mpop-cam',  () => { cycleCameraMode(); _setMenu(false); });
@@ -391,6 +436,29 @@ _btn('mpop-autobrake', () => {
   const p = activeEntity; if (!p) return;
   p.autobrakeLevel = _nextAutobrakeLevel(p.autobrakeLevel); _syncAutobrakeBtn(); _setMenu(false);
 });
+_btn('mpop-mute', () => {
+  if (typeof SimSound !== 'undefined') {
+    SimSound.toggleMute();
+    const val = document.getElementById('mpop-mute-val');
+    if (val) val.textContent = SimSound.muted ? 'OFF' : 'ON';
+    const btn = document.getElementById('mpop-mute');
+    if (btn) btn.querySelector('.mb-i') || (btn.textContent = (SimSound.muted ? '🔇' : '🔊') + ' Dźwięki: ' + (SimSound.muted ? 'OFF' : 'ON'));
+  }
+});
+
+_btn('mpop-tilt-toggle', () => {
+  tiltEnabled = !tiltEnabled;
+  const val = document.getElementById('mpop-tilt-val');
+  if (val) val.textContent = tiltEnabled ? 'ON' : 'OFF';
+  if (!tiltEnabled && flyId < 0) flyKnob.style.transform = 'translate(-50%,-50%)';
+  _setMenu(false);
+});
+
+_btn('mpop-tilt-calib', () => {
+  tiltPitchCalib = tiltPitchRaw;
+  tiltRollCalib = tiltRollRaw;
+  _setMenu(false);
+});
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  updatePlaneInput
@@ -406,7 +474,15 @@ function updatePlaneInput() {
 
   let pitch = (planeKeys['ArrowUp']?1:0)    - (planeKeys['ArrowDown']?1:0);
   let roll  = (planeKeys['ArrowRight']?1:0) - (planeKeys['ArrowLeft']?1:0);
-  if (_isMobile() && flyId>=0) { pitch=-flyDelta.y; roll=flyDelta.x; }
+  
+  if (_isMobile()) { 
+    if (flyId >= 0) {
+      pitch = -flyDelta.y; roll = flyDelta.x;
+    } else if (tiltEnabled) {
+      pitch = -tiltDelta.y; roll = tiltDelta.x;
+      flyKnob.style.transform = `translate(calc(-50% + ${tiltDelta.x * FLY_R}px), calc(-50% + ${tiltDelta.y * FLY_R}px))`;
+    }
+  }
 
   let yaw = (planeKeys['KeyQ']?-1:0) + (planeKeys['KeyE']?1:0);
   if (_isMobile()) { if(rudState.L) yaw=-1; if(rudState.R) yaw=1; }
@@ -429,11 +505,20 @@ function updatePlaneInput() {
 // ═══════════════════════════════════════════════════════════════════════════════
 function resetPlane() {
   if (!activeEntity) return;
-  const apt=AIRPORTS[currentAirport]; thrValue=null;
+  thrValue=null;
+  // Lotnisko świata (sim-airport-spawn.js, dowolne ICAO spoza AIRPORTS{})
+  // aktywne — "R"/Reset odtwarza OSTATNIO wybrany spawn (pas albo
+  // stanowisko), bo AIRPORTS[currentAirport] dla takiego lotniska nie istnieje.
+  if (typeof worldAirportActive === 'function' && worldAirportActive()) { worldRespawnLast(); return; }
+  const apt=AIRPORTS[currentAirport];
   activeEntity.reset({ lat:apt.spawnLat, lon:apt.spawnLon, yawRad:Units.degToRad((180-apt.heading+360)%360) });
+  if (typeof SimSound !== 'undefined') SimSound.resetCallouts();
 }
 
 function spawnApproach() {
+  // Jak wyżej — dla lotniska świata podejscie liczy się względem AKTUALNIE
+  // wybranej końcówki pasa w panelu "Lotniska świata", nie z AIRPORTS{}.
+  if (typeof worldAirportActive === 'function' && worldAirportActive()) { worldSpawnApproachLast(); return; }
   const plane=activeEntity; if(!plane) return;
   const apt=AIRPORTS[currentAirport];
   const yawRad=Units.degToRad((180-apt.heading+360)%360);
@@ -444,14 +529,22 @@ function spawnApproach() {
   plane.reset({ lat:p.lat,lon:p.lon,altM:groundH+300,yawRad,pitchRad:0.02,
     velX:Math.sin(yawRad)*70,velY:-2,velZ:Math.cos(yawRad)*70,
     throttle:0.55,flaps:2,gearDown:true,onGround:false });
+  if (typeof SimSound !== 'undefined') SimSound.resetCallouts();
   for (const[r,z] of [[2,17],[3,15],[4,13],[5,11]]) prefetchDEM(p.lat,p.lon,r,z);
 }
 
 function selectAirport(code) {
   if (!AIRPORTS[code]) return;
+  // Wyjście z trybu "lotnisko świata" (sim-airport-spawn.js) — od teraz
+  // Reset/Approach znowu czytają AIRPORTS[code] jak dawniej.
+  if (typeof worldDeactivate === 'function') worldDeactivate();
   currentAirport=code;
   const apt=AIRPORTS[code];
   refLat=apt.refLat; refLon=apt.refLon;
+  // Fotorealistyczne światła lotniskowe (sim-airport-lights.js) — ładowane/
+  // przełączane leniwie per lotnisko, buforowane, więc powrót do wcześniej
+  // odwiedzonego lotniska jest natychmiastowy.
+  if (typeof loadAirportLights !== 'undefined') loadAirportLights(code);
   // Zaktualizuj wszystkie guziki lotnisk (przez data-apt, bez duplikatów ID)
   document.querySelectorAll('[data-apt]').forEach(b => {
     b.classList.toggle('active', b.dataset.apt===code);
@@ -459,6 +552,7 @@ function selectAirport(code) {
   thrValue=null; _setMenu(false);
   if (activeEntity) {
     activeEntity.reset({ lat:apt.spawnLat,lon:apt.spawnLon,yawRad:Units.degToRad((180-apt.heading+360)%360) });
+    if (typeof SimSound !== 'undefined') SimSound.resetCallouts();
     orb.lat=apt.spawnLat; orb.lon=apt.spawnLon;
     for (const[r,z] of [[2,17],[3,15],[4,13],[5,11]]) prefetchDEM(apt.spawnLat,apt.spawnLon,r,z);
   }

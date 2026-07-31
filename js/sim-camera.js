@@ -38,7 +38,7 @@ const _orb = {
 let _orbitReady = false;  // false = snap do celu przy następnej klatce
 
 // Chase / cockpit
-const cockpitConfig = { offsetM: new THREE.Vector3(0.47, 0.97, 17.5) };
+const cockpitConfig = { offsetM: new THREE.Vector3(0.47, 0.35, 17.7) };
 const cockpitLook   = { yaw: 0, pitch: 0 };
 
 // ── FREE — kamera wolna ──────────────────────────────────────────────────────

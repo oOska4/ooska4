@@ -20,6 +20,9 @@ function animate(t) {
   // Advance physics
   physicsTick(t);
 
+  // Update sound system (GPWS callouts, warnings)
+  if (typeof SimSound !== 'undefined') SimSound.update(frameDt);
+
   updateOrbitKeyboard(frameDt);
   applyJoystick(frameDt);
   applyZoomButtons(frameDt);
@@ -32,6 +35,7 @@ function animate(t) {
 
   if (fc % 2  === 0) updateTiles(trackLat, trackLon, trackDist);
   if (fc % 10 === 0) loadBuildings(trackLat, trackLon, trackDist);
+  if (fc % 10 === 0 && typeof updateGroundTint !== 'undefined') updateGroundTint();
 
   for (const e of entities.values()) {
     e.syncMesh();
@@ -44,6 +48,15 @@ function animate(t) {
   // Niebo (Słońce/Księżyc/gwiazdy, atmosfera, chmury wolumetryczne, deszcz)
   // aktualizowane co klatkę dla płynności animacji czasu i smug deszczu.
   updateSky(frameDt);
+
+  // Kamera cienia (sunLight, sim-shadows.js) podąża za samolotem — MUSI iść
+  // PO updateSky(), bo czyta świeżo policzony kierunek Słońca (sunWorldDir).
+  if (typeof updateShadowFollow !== 'undefined') updateShadowFollow();
+
+  // Światła lotniskowe (krawędziowe/progowe/osiowe/PAPI/REIL/latarnia) —
+  // MUSI iść PO updateSky(), bo czyta świeżo policzony SkyState.nightFactor
+  // w tej samej klatce (patrz sim-airport-lights.js).
+  if (typeof updateAirportLights !== 'undefined') updateAirportLights();
 
   // Smugi kondensacyjne silników A321 — emisja + aktualizacja czasu życia
   // cząsteczek, co klatkę dla płynności (patrz sim-contrails.js).
@@ -79,17 +92,17 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 // na sekundę i od razu gra, bez żadnych animacji).
 const bootIntroDone = (async function bootIntro() {
   await sleep(200);                 // chwila czystej czerni na starcie
-  bootStudio.classList.add('show');
+  if (bootStudio) bootStudio.classList.add('show');
   await sleep(1600);                // "WKR GAMES" trzyma się w pełni widoczne
-  bootStudio.classList.remove('show');
+  if (bootStudio) bootStudio.classList.remove('show');
   await sleep(900);                 // fade-out studia
 
-  bootAuthor.classList.add('show');
+  if (bootAuthor) bootAuthor.classList.add('show');
   await sleep(1500);                // "oOska4" trzyma się w pełni widoczne
-  bootAuthor.classList.remove('show');
+  if (bootAuthor) bootAuthor.classList.remove('show');
   await sleep(900);                 // fade-out autora
 
-  bootLoad.classList.add('show');   // od teraz widoczny prawdziwy pasek postępu
+  if (bootLoad) bootLoad.classList.add('show');   // od teraz widoczny prawdziwy pasek postępu
 })();
 
 // ── Realny postęp ładowania ───────────────────────────────────────────────────
@@ -112,14 +125,14 @@ function completeStage(key) {
   if (!stage || stage.done) return;
   stage.done = true;
   const doneWeight = LOAD_STAGES.filter(s => s.done).reduce((s, x) => s + x.weight, 0);
-  loadbar.style.width = Math.min(100, Math.round(doneWeight / LOAD_TOTAL_WEIGHT * 100)) + '%';
+  if (loadbar) loadbar.style.width = Math.min(100, Math.round(doneWeight / LOAD_TOTAL_WEIGHT * 100)) + '%';
 }
 
 let statusRotIdx = 0;
-loadingText.textContent = LOAD_STAGES[0].label;
+if (loadingText) loadingText.textContent = LOAD_STAGES[0].label;
 const statusTimer = setInterval(() => {
   const pending = LOAD_STAGES.filter(s => !s.done);
-  if (!pending.length) return;
+  if (!pending.length || !loadingText) return;
   loadingText.textContent = pending[statusRotIdx % pending.length].label;
   statusRotIdx++;
 }, 900);
@@ -158,6 +171,11 @@ const statusTimer = setInterval(() => {
     .then(() => completeStage('osm'))
     .catch(e => { console.error('[init] loadBuildings failed', e); completeStage('osm'); });
 
+  // Światła lotniskowe dla domyślnego lotniska — ładowane w tle, NIE blokują
+  // paska postępu (mogą potrwać do minuty przez wolne API/Overpass, a gra
+  // jest grywalna zanim się doładują — światła po prostu "wskoczą" po chwili).
+  if (typeof loadAirportLights !== 'undefined') loadAirportLights(currentAirport);
+
   // Model A321 (obj+mtl) ładuje się w tle od razu w konstruktorze encji —
   // modelReadyPromise (patrz sim-physics.js) pozwala tu na niego poczekać.
   const modelP = (plane.modelReadyPromise || Promise.resolve())
@@ -170,12 +188,14 @@ const statusTimer = setInterval(() => {
   await bootIntroDone; // patrz komentarz przy bootIntro() — nie chowamy ekranu przed czasem
 
   clearInterval(statusTimer);
-  loadbar.style.width = '100%';
-  loadingText.textContent = 'Gotowe do startu.';
+  if (loadbar) loadbar.style.width = '100%';
+  if (loadingText) loadingText.textContent = 'Gotowe do startu.';
 
   setTimeout(() => {
-    document.getElementById('loading').style.display = 'none';
-    document.getElementById('hud').style.display = 'block';
+    const loadingEl = document.getElementById('loading');
+    if (loadingEl) loadingEl.style.display = 'none';
+    const hudEl = document.getElementById('hud');
+    if (hudEl) hudEl.style.display = 'block';
 
     // Wykryj prawdziwy ekran dotykowy (wyklucz PC z touchscreen przez sprawdzenie
     // czy urządzenie ma mysz — pointer:fine = mysz, pointer:coarse = palec)
@@ -197,10 +217,12 @@ const statusTimer = setInterval(() => {
     // Inicjalizacja pogody — proceduralna (bez sieci), ale liczona jako osobny
     // etap dla czytelności UI; zamykamy go od razu po synchronicznej inicjalizacji.
     weather = new WeatherSystem();
-    weatherUI.init();
-    weatherUI.syncUI();
-    weightUI.init();
-    apUI.init();
+    if (typeof weatherUI !== 'undefined') {
+      weatherUI.init();
+      weatherUI.syncUI();
+    }
+    if (typeof weightUI !== 'undefined') weightUI.init();
+    if (typeof apUI !== 'undefined') apUI.init();
     completeStage('wx');
 
     lastRenderT = performance.now();

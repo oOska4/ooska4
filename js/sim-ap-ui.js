@@ -28,8 +28,12 @@ const AP_RANGE = {
     const close = document.getElementById('apwpop-close');
     if (!popup) return;
     if (close) close.addEventListener('click', () => { popup.style.display = 'none'; });
+    // Zamknij tez po kliknieciu bezposrednio na przyciemnione tlo
+    // (#ap-popup to teraz peloekranowy backdrop, e.target===popup znaczy
+    // klikniecie poza karta .popup-card).
     document.addEventListener('click', (e) => {
-      if (popup.style.display === 'flex' && !popup.contains(e.target) && e.target.id !== 'mpop-ap') {
+      if (popup.style.display === 'flex' && e.target.id !== 'mpop-ap' &&
+          (e.target === popup || !popup.contains(e.target))) {
         popup.style.display = 'none';
       }
     });

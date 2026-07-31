@@ -27,12 +27,13 @@
     if (close) {
       close.addEventListener('click', () => { popup.style.display = 'none'; });
     }
-    // Zamknij po kliknięciu poza popupem (ale nie po kliknięciu w przycisk,
-    // który go otwiera — ten jest w innym popupie, mob-menu-popup)
+    // Zamknij po kliknieciu poza popupem (ale nie w przycisk co go otwiera
+    // — ten jest w innym popupie, mob-menu-popup) LUB bezposrednio na
+    // przyciemnione tlo (#weight-popup to teraz peloekranowy backdrop).
     document.addEventListener('click', (e) => {
       if (popup.style.display === 'flex' &&
-          !popup.contains(e.target) &&
-          e.target.id !== 'mpop-weight') {
+          e.target.id !== 'mpop-weight' &&
+          (e.target === popup || !popup.contains(e.target))) {
         popup.style.display = 'none';
       }
     });

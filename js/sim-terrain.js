@@ -418,6 +418,7 @@ async function buildMeshWithNeighbors(tx, ty, satZoom, signal, clipBoundsZ17 = n
   geo.setAttribute('position', new THREE.BufferAttribute(_posBuf.slice(0, vi), 3));
   geo.setAttribute('uv',       new THREE.BufferAttribute(_uvBuf.slice(0, ui), 2));
   geo.setIndex(new THREE.BufferAttribute(makeTerrainIndex(GRID, tx, ty, satZoom, clipBoundsZ17), 1));
+  geo.computeVertexNormals(); // potrzebne, żeby MeshLambertMaterial (sim-shadows.js) w ogóle miał co cieniować
   return geo;
 }
 
@@ -474,16 +475,27 @@ async function loadTile(tx, ty, zoom, clipBoundsZ17 = null) {
       loadSatTex(zoom, tx, ty, sig),
     ]);
     if (epoch !== tileEpoch || sig.aborted) return;
-    const mat = new THREE.MeshBasicMaterial({
-      map:   tex || null,
-      color: tex ? 0xffffff : 0x5a8a50,
+    const mat = new THREE.MeshPhongMaterial({
+      map:      tex || null,
+      color:    tex ? 0xffffff : 0x5a8a50,
+      specular: 0x000000, // teren ma być czysto dyfuzyjny - bez plastikowych połysków
+      shininess: 0,
     });
+    // Zapamiętany kolor bazowy (przed przyciemnieniem za dnia / rozjaśnieniem
+    // nocą — patrz updateGroundTint() w sim-ground-tint.js), żeby mnożenie przez
+    // ton nie zgubiło różnicy między kafelkiem z teksturą a bez niej.
+    mat.userData.baseColor = mat.color.clone();
     // polygonOffset eliminuje z-fighting na stykach LOD — niższy zoom = głębiej
     mat.polygonOffset       = true;
     mat.polygonOffsetFactor = (17 - zoom) * 1;
     mat.polygonOffsetUnits  = (17 - zoom) * 1;
     const mesh       = new THREE.Mesh(geo, mat);
     mesh.renderOrder = zoom;   // wyższy zoom = rysowany na wierzchu
+    // Cienie (sim-shadows.js) — teren ZAWSZE odbiera (żeby był widoczny cień
+    // samolotu), a rzuca WŁASNY cień (góra→dolina) tylko gdy jakość na to
+    // pozwala (Średnia/Wysoka) — patrz shadowTerrainCastEnabled().
+    mesh.receiveShadow = true;
+    mesh.castShadow = (typeof shadowTerrainCastEnabled === 'function') ? shadowTerrainCastEnabled() : false;
     scene.add(mesh);
     tileMeshes.set(key, mesh);
   } finally {
