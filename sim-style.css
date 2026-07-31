@@ -17,6 +17,26 @@ canvas { display: block; }
 #c { width: 100vw; height: 100vh; }
 #hud { position: fixed; inset: 0; pointer-events: none; z-index: 10; }
 
+/* ── Rotate-device prompt ─────────────────────────────────────────
+   Czysto CSS (pointer:coarse + orientation:portrait) — dziala od razu,
+   bez czekania na JS (ktore dolacza .is-touch dopiero po zaladowaniu),
+   i nie odpala sie na desktopie nawet gdy okno jest wąskie/pionowe,
+   bo tam pointer jest "fine" (mysz), nie "coarse" (palec). Ten symulator
+   wymaga szerokosci na joystick+throttle+przyciski, wiec w pionie
+   pokazujemy tylko ten ekran zamiast scisnietego, nakladajacego sie HUD-u. */
+#rotate-prompt { display: none; }
+@media (orientation: portrait) and (pointer: coarse) {
+  #rotate-prompt {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    position: fixed; inset: 0; z-index: 500;
+    background: #04070d; color: #c8e8ff; text-align: center; gap: 12px; padding: 24px;
+  }
+}
+.rotate-icon { font-size: 44px; animation: rotateHint 1.6s ease-in-out infinite; }
+@keyframes rotateHint { 0%,100% { transform: rotate(0deg); } 50% { transform: rotate(90deg); } }
+.rotate-text { font-size: 14px; letter-spacing: 2px; font-family: 'Courier New', monospace; }
+.rotate-sub  { font-size: 10px; color: #4a8fbf; max-width: 260px; }
+
 /* ── Boot / Loading ───────────────────────────────────────────────
    3 fazy nakładające się na siebie w jednym czarnym kontenerze (#loading):
    1) phase-studio  — logo "WKR GAMES"
@@ -170,6 +190,22 @@ canvas { display: block; }
    MOBILE CONTROLS
    Wszystkie ukryte domyślnie — JS pokazuje je TYLKO gdy
    wykryje prawdziwy ekran dotykowy (body.is-touch)
+
+   FILOZOFIA UKŁADU (naprawia nakładanie się z poprzedniej wersji):
+   - Każda strefa ekranu ma DOKŁADNIE jednego mieszkańca w danym pasie
+     wysokości, więc nic nie może się nałożyć "z konstrukcji":
+       góra-lewo: statusbar | góra-środek: PFD | góra-prawo: ND
+       środek-lewa-krawędź: speedtape | środek-prawa-krawędź: alt-tape
+       dół-lewo: joystick | dół-środek: mob-bar | dół-prawo: throttle
+     (PFD wcześniej dzielił DOKŁADNIE te same współrzędne co joystick —
+     to był realny błąd, nie tylko kwestia skalowania; stąd przeniesienie
+     PFD na górny środek, gdzie i tak jest dużo wolnego miejsca).
+   - Wszystkie wymiary/pozycje liczone przez clamp(min, Nvh/vw, max) —
+     min dobrany pod najkrótsze realne telefony w poziomie (~320–375px
+     wysokości), więc całość faktycznie mieści się bez nakładania
+     zamiast polegać na pojedynczym twardym breakpoincie szerokości
+     (który i tak prawie nigdy nie trafiał w poziomie — telefony w
+     poziomie są WĄSKIE wysokościowo, nie szerokościowo).
    ═══════════════════════════════════════════════════════════════ */
 #fly-joy-wrap, #thr-wrap, #mob-bar, #apt-picker,
 #orbit-joy-wrap, #orbit-zoom { display: none !important; }
@@ -183,15 +219,18 @@ body.is-touch #mob-bar      { display: flex !important; }
 body.is-touch #controls          { display: none !important; }
 body.is-touch #throttle-display  { display: none !important; }
 
-/* ── Joystick lotu (lewy dół) ─────────────────────────────────── */
+/* ── Joystick lotu (dół-lewo) ──────────────────────────────────── */
 #fly-joy-wrap {
-  position: fixed; bottom: 116px; left: 10px;
+  position: fixed;
+  bottom: clamp(78px, 17vh, 116px);
+  left: clamp(4px, 1.5vw, 10px);
   z-index: 50; pointer-events: all;
-  flex-direction: column; align-items: center; gap: 4px;
+  flex-direction: column; align-items: center; gap: clamp(2px, 0.5vh, 4px);
 }
-.joy-label { font-size: 7px; letter-spacing: 2px; color: rgba(80,160,240,0.55); }
+.joy-label { font-size: clamp(6px, 1.4vh, 7px); letter-spacing: 2px; color: rgba(80,160,240,0.55); }
 #fly-joy-base {
-  width: 110px; height: 110px; border-radius: 50%;
+  width: clamp(62px, 17vh, 110px); height: clamp(62px, 17vh, 110px);
+  border-radius: 50%;
   background: rgba(10,40,80,0.40);
   border: 2px solid rgba(60,140,220,0.30);
   position: relative;
@@ -206,7 +245,8 @@ body.is-touch #throttle-display  { display: none !important; }
 #fly-joy-label-l { left: 4px;   top: 50%;  transform: translateY(-50%); }
 #fly-joy-label-r { right: 4px;  top: 50%;  transform: translateY(-50%); }
 #fly-joy-knob {
-  width: 44px; height: 44px; border-radius: 50%;
+  width: clamp(26px, 7vh, 44px); height: clamp(26px, 7vh, 44px);
+  border-radius: 50%;
   background: radial-gradient(circle at 35% 35%, rgba(120,200,255,0.78), rgba(30,90,200,0.62));
   border: 2px solid rgba(140,210,255,0.88);
   position: absolute; top: 50%; left: 50%;
@@ -214,15 +254,17 @@ body.is-touch #throttle-display  { display: none !important; }
   box-shadow: 0 0 12px rgba(60,160,255,0.45);
 }
 
-/* ── Slider gazu (prawy dół) ──────────────────────────────────── */
+/* ── Slider gazu (dół-prawo) ──────────────────────────────────── */
 #thr-wrap {
-  position: fixed; bottom: 116px; right: 10px;
+  position: fixed;
+  bottom: clamp(78px, 17vh, 116px);
+  right: clamp(4px, 1.5vw, 10px);
   z-index: 50; pointer-events: all;
-  flex-direction: column; align-items: center; gap: 4px;
+  flex-direction: column; align-items: center; gap: clamp(2px, 0.5vh, 4px);
 }
-.thr-title { font-size: 7px; letter-spacing: 2px; color: rgba(80,160,240,0.55); }
+.thr-title { font-size: clamp(6px, 1.4vh, 7px); letter-spacing: 2px; color: rgba(80,160,240,0.55); }
 #thr-track {
-  width: 52px; height: 140px;
+  width: clamp(34px, 7vh, 52px); height: clamp(66px, 17vh, 140px);
   background: rgba(4,14,28,0.80);
   border: 1px solid #1c3a5a;
   border-radius: 26px;
@@ -257,44 +299,48 @@ body.is-touch #throttle-display  { display: none !important; }
 #thr-pct {
   position: absolute; top: 50%; left: 0; right: 0;
   transform: translateY(-50%);
-  text-align: center; font-size: 14px; font-weight: bold;
+  text-align: center; font-size: clamp(9px, 2.2vh, 14px); font-weight: bold;
   color: rgba(200,255,210,0.95);
   pointer-events: none;
   text-shadow: 0 0 8px #000, 0 0 16px #000;
 }
 /* Ruder Q/E pod sliderem */
-#rud-row { display: flex; gap: 5px; }
+#rud-row { display: flex; gap: clamp(3px, 1vw, 5px); }
 .rud-btn {
-  width: 50px; height: 38px; border-radius: 8px;
+  width: clamp(32px, 7vw, 50px); height: clamp(24px, 5.5vh, 38px);
+  border-radius: 8px;
   background: rgba(8,24,50,0.85); border: 1px solid #1a4a7a;
-  color: #c8e8ff; font-size: 13px; font-family: inherit;
+  color: #c8e8ff; font-size: clamp(9px, 2.2vh, 13px); font-family: inherit;
   display: flex; align-items: center; justify-content: center;
   pointer-events: all;
 }
 .rud-btn:active { background: rgba(50,120,200,0.45); }
 
-/* ── Pasek guzików (dół środek, 2 rzędy × 4) ─────────────────── */
+/* ── Pasek guzików (dół-środek, 2 rzędy) ──────────────────────── */
 #mob-bar {
-  position: fixed; bottom: 6px; left: 50%; transform: translateX(-50%);
+  position: fixed;
+  bottom: clamp(3px, 1vh, 6px);
+  left: 50%; transform: translateX(-50%);
   z-index: 50; pointer-events: all;
-  flex-direction: column; gap: 4px; align-items: center;
+  flex-direction: column; gap: clamp(2px, 0.5vh, 4px); align-items: center;
 }
 .mob-row {
-  display: flex; flex-direction: row; gap: 5px; align-items: center;
+  display: flex; flex-direction: row; gap: clamp(3px, 1vw, 5px); align-items: center;
 }
 .mb {
-  width: 72px; height: 46px; border-radius: 10px;
+  width: clamp(46px, 9vw, 72px); height: clamp(28px, 7.5vh, 46px);
+  border-radius: clamp(6px, 1.5vh, 10px);
   background: rgba(6,18,40,0.90); border: 1px solid #1a3a5c;
   color: #a0c8e8;
   display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: 2px; cursor: pointer;
+  gap: clamp(1px, 0.3vh, 2px); cursor: pointer;
 }
-.mb-i { font-size: 17px; line-height: 1; }
-.mb-t { font-size: 7px; letter-spacing: .5px; }
+.mb-i { font-size: clamp(11px, 2.8vh, 17px); line-height: 1; }
+.mb-t { font-size: clamp(5.5px, 1.3vh, 7px); letter-spacing: .5px; }
 .mb.active  { background: rgba(15,70,35,0.85); border-color: #44ff88; color: #44ff88; }
 .mb.pressed { background: rgba(30,70,160,0.75); border-color: #44aaff; color: #44aaff; }
 
-/* ── Airport picker ───────────────────────────────────────────── */
+/* ── Airport picker (legacy, nieużywane — zostaje ukryte) ─────── */
 #apt-picker {
   position: fixed; bottom: 116px; left: 50%; transform: translateX(-50%);
   z-index: 60; pointer-events: all;
@@ -320,66 +366,72 @@ body.is-touch #throttle-display  { display: none !important; }
 /* ═══════════════════════════════════════════════════════════════
    Mobile layout — gdy body.is-touch
    ═══════════════════════════════════════════════════════════════ */
-body.is-touch #statusbar { top: 5px; left: 5px; max-width: 170px; }
-body.is-touch .sb-row    { font-size: 7px; line-height: 1.45; }
-body.is-touch .phase     { font-size: 8px; padding: 3px 6px 1px; }
 
-/* Tapes: wąskie, środek ekranu (nie nachodzą na joystick/slider) */
+/* Statusbar — góra-lewo, kompaktowy */
+body.is-touch #statusbar {
+  top: clamp(3px, 1vh, 6px); left: clamp(3px, 1vw, 6px);
+  max-width: clamp(115px, 27vw, 165px);
+}
+body.is-touch .sb-row { font-size: clamp(6.5px, 1.5vh, 7px); line-height: 1.4; }
+body.is-touch .phase  { font-size: clamp(7px, 1.7vh, 8px); padding: clamp(2px,0.6vh,3px) 6px 1px; }
+/* h-tiles to licznik kafli terenu (debug wydajności) — bez wartości dla
+   gracza, zawsze zbędny na mobile; usunięcie oszczędza cenne miejsce w
+   pionie w górnej strefie. */
+body.is-touch #h-tiles { display: none !important; }
+
+/* Tapes: wąskie paski na krawędziach, POD górną strefą (nie na niej) */
 body.is-touch #speedtape {
-  left: 4px; width: 36px; height: 110px;
-  top: 38%; transform: translateY(-50%);
+  left: clamp(2px, 1vw, 4px); width: clamp(24px, 5vh, 34px);
+  height: clamp(46px, 16vh, 100px);
+  top: 47%; transform: translateY(-50%);
 }
 body.is-touch #alt-tape {
-  right: 4px; width: 36px; height: 110px;
-  top: 38%; transform: translateY(-50%);
+  right: clamp(2px, 1vw, 4px); width: clamp(24px, 5vh, 34px);
+  height: clamp(46px, 16vh, 100px);
+  top: 47%; transform: translateY(-50%);
 }
-body.is-touch .tape-wrap canvas { width: 36px; height: 110px; }
+body.is-touch .tape-wrap canvas { width: 100%; height: 100%; }
 
-/* PFD — lewy dół, nad paskiem, mały */
+/* PFD — PRZENIESIONY na górny środek (na mobile). Wcześniej dzielił
+   dokładnie te same współrzędne co joystick (bottom:116px;left:10px) —
+   realny błąd nakładania, nie tylko kwestia skalowania na różnych
+   ekranach. Tutaj, między statusbarem a ND, jest zawsze wolne miejsce. */
 body.is-touch #pfd {
-  left: 10px; bottom: 116px;
-  transform: none;
-  width: 130px;
+  top: clamp(3px, 1vh, 6px); left: 50%; bottom: auto;
+  transform: translateX(-50%);
+  width: clamp(92px, 20vw, 130px);
 }
-body.is-touch #attitude-canvas { width: 74px; height: 74px; margin: 3px auto 2px; }
-body.is-touch .pfd-grid { padding: 1px 6px 4px; gap: 0 4px; }
-body.is-touch .pl { font-size: 7px; }
-body.is-touch .pv { font-size: 9px; }
+body.is-touch #attitude-canvas {
+  width: clamp(48px, 11vh, 70px); height: clamp(48px, 11vh, 70px);
+  margin: clamp(2px, 0.5vh, 3px) auto clamp(1px, 0.3vh, 2px);
+}
+body.is-touch .pfd-grid { padding: 1px clamp(4px,1vw,6px) clamp(2px,0.6vh,4px); gap: 0 clamp(2px,0.8vw,4px); }
+body.is-touch .pl { font-size: clamp(6px, 1.4vh, 7px); }
+body.is-touch .pv { font-size: clamp(7px, 1.7vh, 9px); }
 
-/* ND — prawy górny, kompaktowy */
+/* ND — góra-prawo, kompaktowy */
 body.is-touch #nd {
-  top: 5px; right: 5px; bottom: auto;
-  width: 108px; transform: none;
+  top: clamp(3px, 1vh, 6px); right: clamp(3px, 1vw, 6px); bottom: auto;
+  width: clamp(82px, 20vw, 108px); transform: none;
 }
-body.is-touch #compass-canvas { width: 84px; height: 84px; }
-body.is-touch #nd .panel-title     { font-size: 7px; padding: 3px 6px; }
-body.is-touch #nd .panel-title span { font-size: 10px; }
-body.is-touch .nd-info { padding: 1px 6px 3px; }
-body.is-touch .nd-info .pv { font-size: 9px; }
-body.is-touch .nd-info .pl { font-size: 7px; }
+body.is-touch #compass-canvas { width: clamp(56px, 13vh, 84px); height: clamp(56px, 13vh, 84px); }
+body.is-touch #nd .panel-title      { font-size: clamp(6px, 1.4vh, 7px); padding: clamp(2px,0.6vh,3px) 6px; }
+body.is-touch #nd .panel-title span { font-size: clamp(8px, 1.8vh, 10px); }
+body.is-touch .nd-info { padding: 1px 6px clamp(2px,0.6vh,3px); }
+body.is-touch .nd-info .pv { font-size: clamp(7px, 1.7vh, 9px); }
+body.is-touch .nd-info .pl { font-size: clamp(6px, 1.4vh, 7px); }
 
-/* Bardzo wąskie ekrany — ukryj PFD (jest statusbar) */
-@media (max-width: 390px) {
+/* Siatka bezpieczeństwa: bardzo niskie ekrany w poziomie (małe telefony) —
+   zdejmij PFD całkowicie, zostaje statusbar+ND+tapes+kontrolki, żeby
+   środkowa strefa (tapes) miała zagwarantowany zapas miejsca z każdej
+   strony. To sprawdza WYSOKOŚĆ, nie szerokość — telefon w poziomie jest
+   wąski właśnie wysokościowo, dlatego stary breakpoint (max-width) prawie
+   nigdy nie trafiał w praktyce. */
+@media (max-height: 380px) and (orientation: landscape) {
   body.is-touch #pfd { display: none !important; }
-  .mb { width: 62px; height: 42px; }
-  .mb-i { font-size: 15px; }
-  .mob-row { gap: 4px; }
-  #mob-bar { gap: 3px; }
-  #thr-track { width: 46px; height: 120px; }
-  #fly-joy-base { width: 96px; height: 96px; }
-  #fly-joy-knob { width: 38px; height: 38px; }
 }
 
 /* ── Menu popup (mobile) ──────────────────────────────────────── */
-#mob-menu-popup {
-  display: none;
-  position: fixed; bottom: 116px; left: 50%; transform: translateX(-50%);
-  z-index: 60; pointer-events: all;
-  background: rgba(4,12,28,0.97); border: 1px solid #2a5a8c;
-  border-radius: 12px; padding: 14px;
-  flex-direction: column; gap: 8px; min-width: 280px;
-}
-body.is-touch #mob-menu-popup.open { display: flex; }
 .popup-title {
   font-size: 9px; letter-spacing: 2px; color: #3a7aaa;
   text-align: center; font-family: 'Courier New', monospace;
@@ -397,6 +449,35 @@ body.is-touch #mob-menu-popup.open { display: flex; }
 .popup-row button:active, #mpop-close:active { background: #1a3050; }
 .popup-row .airport-btn.active { background: #1a3a5c; border-color: #3a8abf; color: #fff; }
 #mpop-close { color: #667788; font-size: 10px; }
+
+/* ═══════════════════════════════════════════════════════════════════════════════
+   POPUP-y mobile (menu lotniska, pogoda, waga, autopilot) — WSPÓLNY WZORZEC:
+   każdy zewnętrzny #...-popup jest teraz pełnoekranowym, wyśrodkowanym
+   "backdropem" z przyciemnionym tłem, a właściwa karta z treścią to
+   .popup-card w środku. Dzięki temu popup NIGDY nie zależy od wysokości
+   paska przycisków pod spodem (wcześniej: bottom:116px na sztywno —
+   nakładało się na mob-bar, gdy karta była wyższa niż zakładano — patrz
+   zrzut z menu lotniska) i zawsze mieści się na ekranie niezależnie od
+   jego rozmiaru (karta ma własny max-height + scroll).
+   ═══════════════════════════════════════════════════════════════════════════════ */
+#mob-menu-popup, #weather-popup, #weight-popup, #ap-popup {
+  display: none;
+  position: fixed; inset: 0;
+  z-index: 200; pointer-events: all;
+  align-items: center; justify-content: center;
+  background: rgba(0,0,0,0.55);
+  padding: 16px;
+}
+body.is-touch #mob-menu-popup.open { display: flex; }
+
+.popup-card {
+  display: flex; flex-direction: column; gap: 8px;
+  width: min(90vw, 320px);
+  max-height: min(88vh, 640px);
+  overflow-y: auto;
+  background: rgba(4,12,28,0.97); border: 1px solid #2a5a8c;
+  border-radius: 12px; padding: 14px;
+}
 
 /* ═══════════════════════════════════════════════════════════════════════════════
    POGODA — panel desktop + popup mobile
@@ -440,36 +521,32 @@ body.is-touch #mob-menu-popup.open { display: flex; }
 }
 .w-presets button:hover { background: #1a3050; }
 
-/* Popup pogody (mobile) */
-#weather-popup {
-  display: none;
-  position: fixed; bottom: 125px; left: 50%; transform: translateX(-50%);
-  z-index: 200; pointer-events: all;
-  background: rgba(4,12,28,0.97); border: 1px solid #2a5a8c;
-  border-radius: 12px; padding: 12px;
-  flex-direction: column; gap: 7px;
-  min-width: 300px; max-width: calc(100vw - 24px); max-height: 65vh; overflow-y: auto;
+/* ── Lotniska świata (dowolne ICAO) — wyszukiwarka + wybór pasa/stanowiska ──
+   sim-airport-spawn.js wstrzykuje tu swój szablon (.wapt-mount → innerHTML).
+   #wapt-panel to zwijany panel desktopowy (ten sam wzorzec co #weather-panel
+   powyżej); .wapt-mount w mobilnym popupie nie ma kolapsu, bo popup i tak
+   trzeba jawnie otworzyć. */
+#wapt-panel { display: none; padding: 0 6px 4px; }
+.wapt-q {
+  flex: 1; min-width: 0; background: #0e1e35; border: 1px solid #1a3a5c; border-radius: 3px;
+  color: #c8e8ff; font-size: 7px; padding: 2px 4px; font-family: inherit;
 }
-/* Popup wagi/paliwa (mobile) — identyczny wzorzec co weather-popup */
-#weight-popup {
-  display: none;
-  position: fixed; bottom: 125px; left: 50%; transform: translateX(-50%);
-  z-index: 200; pointer-events: all;
-  background: rgba(4,12,28,0.97); border: 1px solid #2a5a8c;
-  border-radius: 12px; padding: 12px;
-  flex-direction: column; gap: 7px;
-  min-width: 300px; max-width: calc(100vw - 24px); max-height: 65vh; overflow-y: auto;
+.wapt-picker select { flex: 1; }
+.wapt-status { padding: 2px 8px; min-height: 9px; }
+.wapt-results { max-height: 80px; overflow-y: auto; margin: 0 8px 2px; }
+.wapt-result-item {
+  padding: 3px 5px; border-radius: 3px; cursor: pointer;
+  font-size: 7px; color: #c8e8ff;
 }
-/* Popup autopilota (mobile) — identyczny wzorzec co weight-popup */
-#ap-popup {
-  display: none;
-  position: fixed; bottom: 125px; left: 50%; transform: translateX(-50%);
-  z-index: 200; pointer-events: all;
-  background: rgba(4,12,28,0.97); border: 1px solid #2a5a8c;
-  border-radius: 12px; padding: 12px;
-  flex-direction: column; gap: 7px;
-  min-width: 300px; max-width: calc(100vw - 24px); max-height: 65vh; overflow-y: auto;
+.wapt-result-item:hover { background: rgba(79,168,255,.15); }
+.wapt-name { color: #7fd0ff !important; padding: 3px 8px 1px; }
+.wapt-picker { padding: 0 8px; }
+.spinner {
+  width: 7px; height: 7px; border: 1.5px solid rgba(255,255,255,.2); border-top-color: #4fa8ff;
+  border-radius: 50%; display: inline-block; animation: wapt-spin .8s linear infinite; margin-right: 4px; vertical-align: -1px;
 }
+@keyframes wapt-spin { to { transform: rotate(360deg); } }
+
 .wpop-title { font-size: 9px; letter-spacing: 2px; color: #3a7aaa; text-align: center; }
 .wpop-divider { height: 1px; background: #1a3a5c; }
 .wpop-row {

@@ -7,9 +7,16 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="sim-style.css">
+<link rel="stylesheet" href="sim-style.css?v=2">
 </head>
 <body>
+
+<!-- Prompt obrotu urzadzenia (tylko dotyk + portret; czysty CSS, dziala tez podczas ladowania) -->
+<div id="rotate-prompt">
+  <div class="rotate-icon">🔄</div>
+  <div class="rotate-text">OBROC URZADZENIE POZIOMO</div>
+  <div class="rotate-sub">Ten symulator wymaga trybu poziomego (landscape)</div>
+</div>
 
 <!-- ══ BOOT / LOADING ═══════════════════════════════════════════════════════
      Sekwencja: czarny ekran → logo studia (WKR GAMES) → autor (oOska4) →
@@ -110,7 +117,7 @@
     <div class="kb-only hint-row"><span class="k">↑↓←→</span> Pochylenie/Lotki</div>
     <div class="kb-only hint-row"><span class="k">W/S</span> Gaz/Hamulce &nbsp; <span class="k">Q/E</span> Ster kier.</div>
     <div class="kb-only hint-row"><span class="k">F</span> Klapy · <span class="k">G</span> Podwozie · <span class="k">B</span> Spoilery</div>
-    <div class="kb-only hint-row"><span class="k">C</span> Kamera · <span class="k">R</span> Reset</div>
+    <div class="kb-only hint-row"><span class="k">C</span> Kamera · <span class="k">R</span> Reset · <span class="k">M</span> Mute</div>
     <div class="ctrl-divider"></div>
     <div class="hint-row dim">LOTNISKO</div>
     <div class="btn-row">
@@ -127,6 +134,12 @@
       <button id="btn-camera">📷 Kamera</button>
       <button id="btn-orbit-free">🌍 Wolna mapa</button>
     </div>
+    <div class="ctrl-divider"></div>
+    <div class="hint-row" style="display:flex;justify-content:space-between;align-items:center">
+      <span class="dim">LOTNISKA ŚWIATA</span>
+      <button id="btn-wapt-toggle" style="width:auto;padding:1px 6px;font-size:9px">▼</button>
+    </div>
+    <div id="wapt-panel" class="wapt-mount" style="display:none"></div>
     <div class="ctrl-divider"></div>
     <div class="hint-row dim">V1 <b class="col-orange">135kt</b> · VR <b class="col-orange">145kt</b> · V2 <b class="col-green">155kt</b></div>
     <div class="ctrl-divider"></div>
@@ -171,6 +184,14 @@
         <button data-qual="low">Niska</button>
         <button data-qual="med" class="active">Średnia</button>
         <button data-qual="high">Wysoka</button>
+      </div>
+      <div class="ctrl-divider"></div>
+      <div class="hint-row dim">CIENIE I OŚWIETLENIE TERENU</div>
+      <div class="w-presets">
+        <button data-shadowqual="off">Wył.</button>
+        <button data-shadowqual="low">Niska</button>
+        <button data-shadowqual="med" class="active">Średnia</button>
+        <button data-shadowqual="high">Wysoka</button>
       </div>
       <div class="ctrl-divider"></div>
       <div class="hint-row dim">TRENING</div>
@@ -312,12 +333,16 @@
 
 <!-- Menu popup (lotniska + więcej akcji) -->
 <div id="mob-menu-popup">
+ <div class="popup-card">
   <div class="popup-title">LOTNISKO</div>
   <div class="popup-row">
     <button class="airport-btn active" data-apt="EPWR">✈ WROCŁAW (EPWR)</button>
     <button class="airport-btn"        data-apt="LOWI">✈ INNSBRUCK (LOWI)</button>
     <button class="airport-btn"        data-apt="EDDF">✈ FANKFURT (EDDF)</button>
   </div>
+  <div class="popup-divider"></div>
+  <div class="popup-title">LOTNISKA ŚWIATA</div>
+  <div class="wapt-mount"></div>
   <div class="popup-divider"></div>
   <div class="popup-row">
     <button id="mpop-reset">↺ Reset</button>
@@ -339,12 +364,21 @@
   <div class="popup-row">
     <button id="mpop-ap">🅰 Autopilot</button>
   </div>
+  <div class="popup-row">
+    <button id="mpop-tilt-toggle">📱 Tilt: <span id="mpop-tilt-val">OFF</span></button>
+    <button id="mpop-tilt-calib" style="margin-left:5px">⌖ Kalibruj</button>
+  </div>
+  <div class="popup-row">
+    <button id="mpop-mute">🔊 Dźwięki: <span id="mpop-mute-val">ON</span></button>
+  </div>
   <div class="popup-divider"></div>
   <button id="mpop-close">✕ Zamknij</button>
+ </div>
 </div>
 
 <!-- Weather popup (mobile) -->
 <div id="weather-popup">
+ <div class="popup-card">
   <div class="wpop-title">🌤 POGODA</div>
   <div class="wpop-row"><label>Godzina</label><input type="range" id="w-time" min="0" max="1440" step="1" value="720"><span class="wlbl" id="w-time-lbl">12:00</span></div>
   <div class="wpop-row"><label>Dzień roku</label><input type="range" id="w-date" min="1" max="365" step="1" value="172"><span class="wlbl" id="w-date-lbl">21 cze</span></div>
@@ -385,12 +419,22 @@
     <button data-qual="high">Wysoka</button>
   </div>
   <div class="wpop-divider"></div>
+  <div class="wpop-title" style="font-size:8px">CIENIE TERENU</div>
+  <div class="wpop-presets">
+    <button data-shadowqual="off">Wył.</button>
+    <button data-shadowqual="low">Niska</button>
+    <button data-shadowqual="med" class="active">Średnia</button>
+    <button data-shadowqual="high">Wysoka</button>
+  </div>
+  <div class="wpop-divider"></div>
   <button id="mwpop-windshear-test">⚡ Test windshear</button>
   <button id="wpop-close">✕ Zamknij</button>
+ </div>
 </div>
 
 <!-- Weight popup (mobile) -->
 <div id="weight-popup">
+ <div class="popup-card">
   <div class="wpop-title">⚖ WAGA I PALIWO</div>
   <div class="wpop-row"><label>Paliwo</label><input type="range" id="mw-fuel" min="0" max="23700" step="100" value="14500"><span class="wlbl" id="mw-fuel-lbl">14500 kg</span></div>
   <div class="wpop-row"><label>Payload</label><input type="range" id="mw-payload" min="0" max="22000" step="100" value="12000"><span class="wlbl" id="mw-payload-lbl">12000 kg</span></div>
@@ -407,10 +451,12 @@
   </div>
   <div class="wpop-row" style="font-style:italic;justify-content:center;color:#4a8fbf">Zastosowane przy najbliższym Reset</div>
   <button id="mwpop-close">✕ Zamknij</button>
+ </div>
 </div>
 
 <!-- Autopilot popup (mobile) -->
 <div id="ap-popup">
+ <div class="popup-card">
   <div class="wpop-title">🅰 AUTOPILOT</div>
   <div class="wpop-row" style="justify-content:center">
     <button id="mw-ap-master" style="flex:1">WYŁĄCZONY</button>
@@ -446,6 +492,7 @@
   </div>
   <div class="wpop-row" style="font-style:italic;justify-content:center;color:#4a8fbf">ALT/V-S wykluczają się. Ręczny ster rozłącza oś.</div>
   <button id="apwpop-close">✕ Zamknij</button>
+ </div>
 </div>
 
 <!-- Orbit joy i zoom — ukryte (nieużywane) -->
@@ -456,21 +503,27 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/OBJLoader.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/MTLLoader.js"></script>
-<script src="js/sim-constants.js"></script>
-<script src="js/sim-scene.js"></script>
-<script src="js/sim-terrain.js"></script>
-<script src="js/sim-buildings.js"></script>
-<script src="js/sim-entity.js"></script>
-<script src="js/sim-physics.js"></script>
-<script src="js/sim-camera.js"></script>
-<script src="js/sim-hud.js"></script>
-<script src="js/sim-weather.js"></script>
-<script src="js/sim-sky.js"></script>
-<script src="js/sim-weather-ui.js"></script>
-<script src="js/sim-weight-ui.js"></script>
-<script src="js/sim-ap-ui.js"></script>
-<script src="js/sim-contrails.js"></script>
-<script src="js/sim-controls.js"></script>
-<script src="js/sim-main.js"></script>
+<script src="js/sim-constants.js?v=2"></script>
+<script src="js/sim-scene.js?v=2"></script>
+<script src="js/sim-terrain.js?v=2"></script>
+<script src="js/sim-buildings.js?v=2"></script>
+<script src="js/sim-ground-tint.js?v=2"></script>
+<script src="js/sim-entity.js?v=2"></script>
+<script src="js/sim-physics.js?v=2"></script>
+<script src="js/sim-camera.js?v=2"></script>
+<script src="js/sim-hud.js?v=2"></script>
+<script src="js/sim-weather.js?v=2"></script>
+<script src="js/sim-sky.js?v=2"></script>
+<script src="js/sim-shadows.js?v=2"></script>
+<script src="js/sim-airport-lights.js?v=2"></script>
+<script src="js/sim-weather-ui.js?v=2"></script>
+<script src="js/sim-weight-ui.js?v=2"></script>
+<script src="js/sim-ap-ui.js?v=2"></script>
+<script src="js/sim-contrails.js?v=2"></script>
+<script src="js/sim-controls.js?v=2"></script>
+<script src="js/sim-airport-spawn.js?v=2"></script>
+<script src="js/sim-sound.js?v=2"></script>
+<script src="js/sim-main.js?v=2"></script>
+
 </body>
 </html>
