@@ -541,6 +541,11 @@ function selectAirport(code) {
   currentAirport=code;
   const apt=AIRPORTS[code];
   refLat=apt.refLat; refLon=apt.refLon;
+  // Stare kafelki terenu/budynki zbudowane względem POPRZEDNIEGO refLat/refLon
+  // mają teraz błędną pozycję ("zawieszone w powietrzu") — czyść od razu,
+  // zamiast czekać aż dogoni je naturalne czyszczenie oparte na odległości.
+  if (typeof clearAllTiles === 'function') clearAllTiles();
+  if (typeof clearAllBldg  === 'function') clearAllBldg();
   // Fotorealistyczne światła lotniskowe (sim-airport-lights.js) — ładowane/
   // przełączane leniwie per lotnisko, buforowane, więc powrót do wcześniej
   // odwiedzonego lotniska jest natychmiastowy.

@@ -238,6 +238,12 @@ async function waptLoad(icao) {
     // teren/budynki/satelita zaczęły się ładować wokół nowego miejsca.
     currentAirport = icao;
     refLat = refPointLat; refLon = refPointLon;
+    // Stare kafelki terenu/budynki zbudowane względem POPRZEDNIEGO refLat/refLon
+    // mają teraz błędną pozycję ("zawieszone w powietrzu") — czyść od razu,
+    // zamiast czekać aż dogoni je naturalne czyszczenie oparte na odległości
+    // (przy skoku na drugi kraniec świata bywa zauważalnie opóźnione).
+    if (typeof clearAllTiles === 'function') clearAllTiles();
+    if (typeof clearAllBldg  === 'function') clearAllBldg();
     orb.lat = refPointLat; orb.lon = refPointLon;
     for (const [r, z] of [[2, 17], [3, 15], [4, 13], [5, 11]]) prefetchDEM(refPointLat, refPointLon, r, z);
     document.querySelectorAll('[data-apt]').forEach(b => b.classList.remove('active'));

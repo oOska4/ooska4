@@ -92,6 +92,22 @@ async function loadA321Model() {
         // gĂ„â„˘stej mgle albo nocĂ„â€¦, gdy sunLight/hemiLight sĂ„â€¦ sÄąâ€šabe. emissive
         // dodaje staÄąâ€šĂ„â€¦ jasnoÄąâ€şĂ„â€ˇ niezaleÄąÄ˝nie od padajĂ„â€¦cego Äąâ€şwiatÄąâ€ša.
         if (mat.emissive) mat.emissive.addScalar(20 / 255);
+
+        // Lekki, realistyczny metaliczny połysk kadłuba/skrzydeł — subtelny,
+        // przesuwający się wraz z kątem Słońca connected highlight (Phong
+        // specular+shininess), a nie płaski plastikowy blask. Pomijamy części,
+        // które w realu NIE są błyszczącym metalem (szyby, opony, wnętrze) —
+        // rozpoznawane po nazwie materiału z .mtl; jeśli nazwa nie pasuje do
+        // żadnego z tych słów kluczowych, dostaje ten sam delikatny połysk co
+        // reszta (i tak subtelny, nie razi na wnętrzu/oponach).
+        if (mat.shininess !== undefined) {
+          const partLC = (mat.name || '').toLowerCase();
+          const notMetal = /glass|window|tire|rubber|wheel|seat|carpet|interior|cockpit/.test(partLC);
+          if (!notMetal) {
+            mat.specular = new THREE.Color(0x808080);
+            mat.shininess = Math.max(mat.shininess, 85);
+          }
+        }
       }
     });
     if (child.name.startsWith(A321_GEAR_PREFIX)) gearGroup.add(child); // .add() sam usuwa z poprzedniego rodzica

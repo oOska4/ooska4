@@ -513,6 +513,17 @@ function abortAndRemove(key) {
   if (mesh) { disposeMesh(mesh); tileMeshes.delete(key); }
 }
 
+// Jawne wyczyszczenie WSZYSTKICH kafelków terenu (załadowanych i w trakcie
+// ładowania) — wołane przy przełączeniu lotniska (selectAirport() w
+// sim-controls.js, waptLoad() w sim-airport-spawn.js). Bez tego stare kafelki
+// (zbudowane względem POPRZEDNIEGO refLat/refLon) potrafią zostać w scenie
+// z błędną, "zawieszoną w powietrzu" pozycją do czasu, aż naturalne
+// czyszczenie oparte na odległości w updateTiles() je dogoni — co po nagłym
+// teleporcie na drugi kraniec świata bywa zauważalnie opóźnione.
+function clearAllTiles() {
+  for (const key of new Set([...tileMeshes.keys(), ...loadingTiles])) abortAndRemove(key);
+}
+
 function collectRing(zoom, cx, cy, outerR, innerBoundsZ17) {
   const n     = 1 << zoom;
   const tiles = new Map();
