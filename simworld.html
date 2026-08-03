@@ -20,8 +20,9 @@
 
 <!-- ══ BOOT / LOADING ═══════════════════════════════════════════════════════
      Sekwencja: czarny ekran → logo studia (WKR GAMES) → autor (oOska4) →
-     właściwy ekran ładowania z realnym statusem wczytywanych zasobów.
-     Sterowanie fazami: sim-main.js (klasa .show przełącza fade in/out). ═════ -->
+     wybór lotniska → właściwy ekran ładowania z realnym statusem wczytywanych
+     zasobów. Sterowanie fazami: sim-main.js (klasa .show przełącza fade
+     in/out). ═══════════════════════════════════════════════════════════════ -->
 <div id="loading">
 
   <div class="boot-phase" id="phase-studio">
@@ -33,11 +34,38 @@
     <div class="boot-tagline">FLIGHT&nbsp;SIMULATION</div>
   </div>
 
+  <div class="boot-phase" id="phase-select">
+    <div class="asel-radar"><div class="asel-sweep"></div><div class="asel-ring"></div><div class="asel-ring r2"></div><div class="asel-ring r3"></div></div>
+    <div class="asel-col">
+      <div class="asel-kicker">A321 · WORLD FLIGHT SIMULATOR</div>
+      <h1 class="asel-h1">WYBIERZ LOTNISKO</h1>
+      <div class="asel-searchbar">
+        <span class="asel-ic">🔎</span>
+        <input type="text" id="asel-input" placeholder="ICAO / IATA / nazwa lotniska…" autocomplete="off">
+      </div>
+      <div class="asel-status" id="asel-status"></div>
+      <div id="asel-results"></div>
+      <div class="asel-section-lbl">SZYBKI START</div>
+      <div class="asel-quick-grid" id="asel-quick"></div>
+      <div class="asel-section-lbl" id="asel-recent-lbl" style="display:none">OSTATNIO ODWIEDZONE</div>
+      <div class="asel-recent-row" id="asel-recent"></div>
+      <div class="asel-foot">Dane: WKR API (OurAirports) + OpenStreetMap/Overpass · <a href="#" id="asel-skip">pomiń, leć z domyślnego (EPWR) →</a></div>
+    </div>
+  </div>
+
   <div class="boot-phase" id="phase-load">
     <h1>A321</h1>
     <p class="boot-sub">WORLD FLIGHT SIMULATOR</p>
-    <div class="load-bar-bg"><div class="load-bar" id="loadbar"></div></div>
-    <p class="boot-status" id="loading-text">Inicjalizacja…</p>
+    <div class="ltrack">
+      <div class="ltrack-lbl"><span>🗺 TEREN I ZDJĘCIA SATELITARNE</span></div>
+      <div class="load-bar-bg"><div class="load-bar" id="loadbar"></div></div>
+      <p class="boot-status" id="loading-text">Inicjalizacja…</p>
+    </div>
+    <div class="ltrack">
+      <div class="ltrack-lbl"><span>🛰 DANE LOTNISKA (pasy, OSM)</span></div>
+      <div class="load-bar-bg"><div class="load-bar load-bar2" id="loadbar2"></div></div>
+      <p class="boot-status" id="loading-text2">Oczekiwanie…</p>
+    </div>
   </div>
 
 </div>
@@ -111,157 +139,188 @@
     <div id="sat-z-val"     style="display:none"></div>
   </div>
 
-  <!-- ── Desktop controls panel (góra prawa) ─────────────────────────────── -->
-  <div id="controls" class="panel">
-    <div class="panel-title">STEROWANIE</div>
-    <div class="kb-only hint-row"><span class="k">↑↓←→</span> Pochylenie/Lotki</div>
-    <div class="kb-only hint-row"><span class="k">W/S</span> Gaz/Hamulce &nbsp; <span class="k">Q/E</span> Ster kier.</div>
-    <div class="kb-only hint-row"><span class="k">F</span> Klapy · <span class="k">G</span> Podwozie · <span class="k">B</span> Spoilery</div>
-    <div class="kb-only hint-row"><span class="k">C</span> Kamera · <span class="k">R</span> Reset · <span class="k">M</span> Mute</div>
-    <div class="ctrl-divider"></div>
-    <div class="hint-row dim">LOTNISKO</div>
-    <div class="btn-row">
-      <button class="airport-btn active" data-apt="EPWR">✈ WROCŁAW</button>
-      <button class="airport-btn"        data-apt="LOWI">✈ INNSBRUCK</button>
-      <button class="airport-btn"        data-apt="EDDF">✈ FANKFURT</button>
-    </div>
-    <div class="ctrl-divider"></div>
-    <div class="btn-row">
-      <button id="btn-reset">↺ Reset</button>
-      <button id="btn-approach">⬇ Approach</button>
-    </div>
-    <div class="btn-row">
-      <button id="btn-camera">📷 Kamera</button>
-      <button id="btn-orbit-free">🌍 Wolna mapa</button>
-    </div>
-    <div class="ctrl-divider"></div>
-    <div class="hint-row" style="display:flex;justify-content:space-between;align-items:center">
-      <span class="dim">LOTNISKA ŚWIATA</span>
-      <button id="btn-wapt-toggle" style="width:auto;padding:1px 6px;font-size:9px">▼</button>
-    </div>
-    <div id="wapt-panel" class="wapt-mount" style="display:none"></div>
-    <div class="ctrl-divider"></div>
-    <div class="hint-row dim">V1 <b class="col-orange">135kt</b> · VR <b class="col-orange">145kt</b> · V2 <b class="col-green">155kt</b></div>
-    <div class="ctrl-divider"></div>
-    <div class="hint-row" style="display:flex;justify-content:space-between;align-items:center">
-      <span class="dim">POGODA</span>
-      <button id="btn-weather-toggle" style="width:auto;padding:1px 6px;font-size:9px">▼</button>
-    </div>
-    <div id="weather-panel">
-      <div class="w-row"><label>Godzina</label><input type="range" id="dw-time" min="0" max="1440" step="1" value="720"><span class="w-lbl" id="dw-time-lbl">12:00</span></div>
-      <div class="w-row"><label>Dzień roku</label><input type="range" id="dw-date" min="1" max="365" step="1" value="172"><span class="w-lbl" id="dw-date-lbl">21 cze</span></div>
-      <div class="w-row">
-        <button id="dw-anim" style="flex:1">▶ Animuj czas</button>
-        <select id="dw-anim-speed">
-          <option value="60">1 min = 1 h</option>
-          <option value="10">1 min = 10 min</option>
-          <option value="240">1 min = 4 h</option>
-          <option value="1440">1 min = 1 dzień</option>
-        </select>
-      </div>
-      <div class="ctrl-divider"></div>
-      <div class="w-row"><label>Zachmurzenie</label><input type="range" id="dw-coverage" min="0" max="100" value="30"><span class="w-lbl" id="dw-coverage-lbl">30%</span></div>
-      <div class="w-row"><label>Wys. chmur</label><input type="range" id="dw-alt" min="100" max="6000" step="100" value="2000"><span class="w-lbl" id="dw-alt-lbl">2000 m</span></div>
-      <div class="w-row"><label>Opady</label>
-        <select id="dw-precip"><option value="none">Brak</option><option value="rain">Deszcz</option></select>
-      </div>
-      <div class="w-row"><label>Intensywność</label><input type="range" id="dw-precip-int" min="0" max="100" value="60"><span class="w-lbl" id="dw-precip-int-lbl">60%</span></div>
-      <div class="w-row"><label>Wiatr (m/s)</label><input type="range" id="dw-wind" min="0" max="40" value="5"><span class="w-lbl" id="dw-wind-lbl">5 m/s</span></div>
-      <div class="w-row"><label>Kierunek</label><input type="range" id="dw-wdir" min="0" max="359" value="270"><span class="w-lbl" id="dw-wdir-lbl">W 270°</span></div>
-      <div class="w-row"><label>Porywy (m/s)</label><input type="range" id="dw-gust" min="0" max="15" value="2"><span class="w-lbl" id="dw-gust-lbl">2 m/s</span></div>
-      <div class="w-row"><label>Turbulencja</label><input type="range" id="dw-turb" min="0" max="100" value="10"><span class="w-lbl" id="dw-turb-lbl">10%</span></div>
-      <div class="w-presets">
-        <button data-preset="clear">☀ Clear</button>
-        <button data-preset="cloudy">⛅ Cloudy</button>
-        <button data-preset="overcast">☁ Overcast</button>
-        <button data-preset="rain">🌧 Rain</button>
-        <button data-preset="storm">⛈ Storm</button>
-        <button data-preset="fog">🌫 Fog</button>
-      </div>
-      <div class="ctrl-divider"></div>
-      <div class="hint-row dim">JAKOŚĆ CHMUR</div>
-      <div class="w-presets">
-        <button data-qual="low">Niska</button>
-        <button data-qual="med" class="active">Średnia</button>
-        <button data-qual="high">Wysoka</button>
-      </div>
-      <div class="ctrl-divider"></div>
-      <div class="hint-row dim">CIENIE I OŚWIETLENIE TERENU</div>
-      <div class="w-presets">
-        <button data-shadowqual="off">Wył.</button>
-        <button data-shadowqual="low">Niska</button>
-        <button data-shadowqual="med" class="active">Średnia</button>
-        <button data-shadowqual="high">Wysoka</button>
-      </div>
-      <div class="ctrl-divider"></div>
-      <div class="hint-row dim">TRENING</div>
-      <div class="w-presets">
-        <button id="btn-windshear-test">⚡ Test windshear</button>
-      </div>
-    </div>
+  <!-- ── MCDU: przycisk-odznaka + ujednolicona szuflada (JEDNA definicja dla
+       desktop i mobile — sim-style.css zmienia tylko dokowanie: panel z
+       prawej na desktopie, dolna szuflada na mobile). Zastępuje dawny
+       #controls (desktop, zagnieżdżony akordeon) + #mob-menu-popup +
+       #weather-popup + #weight-popup + #ap-popup (mobile, cztery osobne
+       okna dublujące te same suwaki w dwóch miejscach). ─────────────────── -->
+  <div id="mcdu-toggle" class="panel">
+    <span class="mcdu-dot"></span><b id="mcdu-apt-lbl">EPWR</b><span class="mcdu-chev">▾</span>
+  </div>
 
-    <div class="ctrl-divider"></div>
-    <div class="hint-row" style="display:flex;justify-content:space-between;align-items:center">
-      <span class="dim">WAGA I PALIWO</span>
-      <button id="btn-weight-toggle" style="width:auto;padding:1px 6px;font-size:9px">▼</button>
+  <div id="mcdu-drawer" class="panel">
+    <div class="mcdu-tabs">
+      <div class="mcdu-tab active" data-page="mcdu-apt">✈<span>LOTNISKO</span></div>
+      <div class="mcdu-tab" data-page="mcdu-wx">🌦<span>POGODA</span></div>
+      <div class="mcdu-tab" data-page="mcdu-wt">⚖<span>WAGA</span></div>
+      <div class="mcdu-tab" data-page="mcdu-ap">🅰<span>AUTOPILOT</span></div>
+      <div class="mcdu-tab" data-page="mcdu-q">⚙<span>JAKOŚĆ</span></div>
     </div>
-    <div id="weight-panel">
-      <div class="w-row"><label>Paliwo</label><input type="range" id="dg-fuel" min="0" max="23700" step="100" value="14500"><span class="w-lbl" id="dg-fuel-lbl">14500 kg</span></div>
-      <div class="w-row"><label>Payload</label><input type="range" id="dg-payload" min="0" max="22000" step="100" value="12000"><span class="w-lbl" id="dg-payload-lbl">12000 kg</span></div>
-      <div class="ctrl-divider"></div>
-      <div class="w-row"><label>Masa całk.</label><span class="w-lbl" id="dg-total-lbl" style="flex:1">75000 kg</span></div>
-      <div class="w-row"><label>MTOW</label><span class="w-lbl" style="flex:1">93500 kg</span></div>
-      <div class="w-row"><label>Przesunięcie CG</label><span class="w-lbl" id="dg-cg-lbl" style="flex:1">0.0 m</span></div>
-      <div class="hint-row" id="dg-mtow-warn" style="display:none;color:#ff5a4a">⚠ MTOW przekroczone — masa ograniczona</div>
-      <div class="w-presets">
-        <button data-wpreset="empty">Pusty</button>
-        <button data-wpreset="default" class="active">Domyślny</button>
-        <button data-wpreset="full">Pełny</button>
-      </div>
-      <div class="hint-row dim" style="font-style:italic">Zastosowane przy najbliższym Reset</div>
-    </div>
+    <div class="mcdu-body">
 
-    <div class="ctrl-divider"></div>
-    <div class="hint-row" style="display:flex;justify-content:space-between;align-items:center">
-      <span class="dim">AUTOPILOT</span>
-      <button id="btn-ap-toggle" style="width:auto;padding:1px 6px;font-size:9px">▼</button>
+      <div class="mcdu-page active" id="mcdu-apt">
+        <div class="hint-row dim">AKCJE</div>
+        <div class="btn-row">
+          <button id="btn-reset">↺ Reset</button>
+          <button id="btn-approach">⬇ Approach</button>
+        </div>
+        <div class="btn-row">
+          <button id="btn-orbit-free">🌍 Wolna mapa</button>
+          <button id="btn-parkbrake">🅿 Park: <span id="parkbrake-val">OFF</span></button>
+        </div>
+        <div class="ctrl-divider"></div>
+        <div class="hint-row dim">SZYBKI WYBÓR</div>
+        <div class="btn-row">
+          <button class="airport-btn active" data-apt="EPWR">✈ WROCŁAW</button>
+          <button class="airport-btn"        data-apt="LOWI">✈ INNSBRUCK</button>
+          <button class="airport-btn"        data-apt="EDDF">✈ FRANKFURT</button>
+        </div>
+        <div class="ctrl-divider"></div>
+        <div class="hint-row dim">LOTNISKA ŚWIATA</div>
+        <div class="wapt-mount"></div>
+        <div class="ctrl-divider"></div>
+        <div class="hint-row dim">V1 <b class="col-orange">135kt</b> · VR <b class="col-orange">145kt</b> · V2 <b class="col-green">155kt</b></div>
+        <div class="ctrl-divider"></div>
+        <div class="hint-row dim">STEROWANIE (klawiatura)</div>
+        <div class="kb-only hint-row"><span class="k">↑↓←→</span> Pochylenie/Lotki</div>
+        <div class="kb-only hint-row"><span class="k">W/S</span> Gaz/Hamulce &nbsp; <span class="k">Q/E</span> Ster kier.</div>
+        <div class="kb-only hint-row"><span class="k">F</span> Klapy · <span class="k">G</span> Podwozie · <span class="k">B</span> Spoilery</div>
+        <div class="kb-only hint-row"><span class="k">C</span> Kamera · <span class="k">R</span> Reset · <span class="k">M</span> Mute</div>
+      </div>
+
+      <div class="mcdu-page" id="mcdu-wx">
+        <div class="w-row"><label>Godzina</label><input type="range" id="dw-time" min="0" max="1440" step="1" value="720"><span class="w-lbl" id="dw-time-lbl">12:00</span></div>
+        <div class="w-row"><label>Dzień roku</label><input type="range" id="dw-date" min="1" max="365" step="1" value="172"><span class="w-lbl" id="dw-date-lbl">21 cze</span></div>
+        <div class="w-row">
+          <button id="dw-anim" style="flex:1">▶ Animuj czas</button>
+          <select id="dw-anim-speed">
+            <option value="60">1 min = 1 h</option>
+            <option value="10">1 min = 10 min</option>
+            <option value="240">1 min = 4 h</option>
+            <option value="1440">1 min = 1 dzień</option>
+          </select>
+        </div>
+        <div class="ctrl-divider"></div>
+        <div class="w-row"><label>Zachmurzenie</label><input type="range" id="dw-coverage" min="0" max="100" value="30"><span class="w-lbl" id="dw-coverage-lbl">30%</span></div>
+        <div class="w-row"><label>Wys. chmur</label><input type="range" id="dw-alt" min="100" max="6000" step="100" value="2000"><span class="w-lbl" id="dw-alt-lbl">2000 m</span></div>
+        <div class="w-row"><label>Opady</label>
+          <select id="dw-precip"><option value="none">Brak</option><option value="rain">Deszcz</option></select>
+        </div>
+        <div class="w-row"><label>Intensywność</label><input type="range" id="dw-precip-int" min="0" max="100" value="60"><span class="w-lbl" id="dw-precip-int-lbl">60%</span></div>
+        <div class="w-row"><label>Wiatr (m/s)</label><input type="range" id="dw-wind" min="0" max="40" value="5"><span class="w-lbl" id="dw-wind-lbl">5 m/s</span></div>
+        <div class="w-row"><label>Kierunek</label><input type="range" id="dw-wdir" min="0" max="359" value="270"><span class="w-lbl" id="dw-wdir-lbl">W 270°</span></div>
+        <div class="w-row"><label>Porywy (m/s)</label><input type="range" id="dw-gust" min="0" max="15" value="2"><span class="w-lbl" id="dw-gust-lbl">2 m/s</span></div>
+        <div class="w-row"><label>Turbulencja</label><input type="range" id="dw-turb" min="0" max="100" value="10"><span class="w-lbl" id="dw-turb-lbl">10%</span></div>
+        <div class="w-presets">
+          <button data-preset="clear">☀ Clear</button>
+          <button data-preset="cloudy">⛅ Cloudy</button>
+          <button data-preset="overcast">☁ Overcast</button>
+          <button data-preset="rain">🌧 Rain</button>
+          <button data-preset="storm">⛈ Storm</button>
+          <button data-preset="fog">🌫 Fog</button>
+        </div>
+      </div>
+
+      <div class="mcdu-page" id="mcdu-wt">
+        <div class="w-row"><label>Paliwo</label><input type="range" id="dg-fuel" min="0" max="23700" step="100" value="14500"><span class="w-lbl" id="dg-fuel-lbl">14500 kg</span></div>
+        <div class="w-row"><label>Payload</label><input type="range" id="dg-payload" min="0" max="22000" step="100" value="12000"><span class="w-lbl" id="dg-payload-lbl">12000 kg</span></div>
+        <div class="ctrl-divider"></div>
+        <div class="w-row"><label>Masa całk.</label><span class="w-lbl" id="dg-total-lbl" style="flex:1">75000 kg</span></div>
+        <div class="w-row"><label>MTOW</label><span class="w-lbl" style="flex:1">93500 kg</span></div>
+        <div class="w-row"><label>Przesunięcie CG</label><span class="w-lbl" id="dg-cg-lbl" style="flex:1">0.0 m</span></div>
+        <div class="hint-row" id="dg-mtow-warn" style="display:none;color:#ff5a4a">⚠ MTOW przekroczone — masa ograniczona</div>
+        <div class="w-presets">
+          <button data-wpreset="empty">Pusty</button>
+          <button data-wpreset="default" class="active">Domyślny</button>
+          <button data-wpreset="full">Pełny</button>
+        </div>
+        <div class="hint-row dim" style="font-style:italic">Zastosowane przy najbliższym Reset</div>
+      </div>
+
+      <div class="mcdu-page" id="mcdu-ap">
+        <div class="w-row">
+          <label>AP</label>
+          <button id="dg-ap-master" style="flex:1">WYŁĄCZONY</button>
+        </div>
+        <div class="ctrl-divider"></div>
+        <div class="w-row">
+          <label>HDG</label>
+          <button class="ap-step" data-ap="hdg" data-dir="-1" style="width:22px">−</button>
+          <span class="w-lbl" id="dg-ap-hdg-val" style="flex:0 0 40px">360°</span>
+          <button class="ap-step" data-ap="hdg" data-dir="1" style="width:22px">+</button>
+          <button class="ap-eng" data-mode="hdgHold" id="dg-ap-hdg-eng" style="flex:0 0 44px">ON</button>
+        </div>
+        <div class="w-row">
+          <label>ALT</label>
+          <button class="ap-step" data-ap="alt" data-dir="-1" style="width:22px">−</button>
+          <span class="w-lbl" id="dg-ap-alt-val" style="flex:0 0 52px">3000ft</span>
+          <button class="ap-step" data-ap="alt" data-dir="1" style="width:22px">+</button>
+          <button class="ap-eng" data-mode="altHold" id="dg-ap-alt-eng" style="flex:0 0 44px">ON</button>
+        </div>
+        <div class="w-row">
+          <label>V/S</label>
+          <button class="ap-step" data-ap="vs" data-dir="-1" style="width:22px">−</button>
+          <span class="w-lbl" id="dg-ap-vs-val" style="flex:0 0 52px">0fpm</span>
+          <button class="ap-step" data-ap="vs" data-dir="1" style="width:22px">+</button>
+          <button class="ap-eng" data-mode="vsHold" id="dg-ap-vs-eng" style="flex:0 0 44px">ON</button>
+        </div>
+        <div class="w-row">
+          <label>SPD</label>
+          <button class="ap-step" data-ap="spd" data-dir="-1" style="width:22px">−</button>
+          <span class="w-lbl" id="dg-ap-spd-val" style="flex:0 0 40px">250kt</span>
+          <button class="ap-step" data-ap="spd" data-dir="1" style="width:22px">+</button>
+          <button class="ap-eng" data-mode="spdHold" id="dg-ap-spd-eng" style="flex:0 0 44px">A/THR</button>
+        </div>
+        <div class="hint-row dim" style="font-style:italic">ALT i V/S wykluczają się. Ręczny ster rozłącza daną oś. Klawisz X = pełne rozłączenie.</div>
+      </div>
+
+      <div class="mcdu-page" id="mcdu-q">
+        <div class="hint-row dim">JAKOŚĆ CHMUR</div>
+        <div class="w-presets">
+          <button data-qual="low">Niska</button>
+          <button data-qual="med" class="active">Średnia</button>
+          <button data-qual="high">Wysoka</button>
+        </div>
+        <div class="ctrl-divider"></div>
+        <div class="hint-row dim">CIENIE I OŚWIETLENIE TERENU</div>
+        <div class="w-presets">
+          <button data-shadowqual="off">Wył.</button>
+          <button data-shadowqual="low">Niska</button>
+          <button data-shadowqual="med" class="active">Średnia</button>
+          <button data-shadowqual="high">Wysoka</button>
+        </div>
+        <div class="ctrl-divider"></div>
+        <div class="hint-row dim">TRENING</div>
+        <div class="w-presets">
+          <button id="btn-windshear-test">⚡ Test windshear</button>
+        </div>
+        <div class="ctrl-divider"></div>
+        <div class="btn-row">
+          <button id="btn-mute">🔊 Dźwięki: <span id="mute-val">ON</span></button>
+        </div>
+        <div id="tilt-block" style="display:none">
+          <div class="ctrl-divider"></div>
+          <div class="hint-row dim">URZĄDZENIE (żyroskop)</div>
+          <div class="btn-row">
+            <button id="btn-tilt-toggle">📱 Tilt: <span id="tilt-val">OFF</span></button>
+            <button id="btn-tilt-calib">⌖ Kalibruj</button>
+          </div>
+        </div>
+      </div>
+
     </div>
-    <div id="ap-panel">
-      <div class="w-row">
-        <label>AP</label>
-        <button id="dg-ap-master" style="flex:1">WYŁĄCZONY</button>
-      </div>
-      <div class="ctrl-divider"></div>
-      <div class="w-row">
-        <label>HDG</label>
-        <button class="ap-step" data-ap="hdg" data-dir="-1" style="width:22px">−</button>
-        <span class="w-lbl" id="dg-ap-hdg-val" style="flex:0 0 40px">360°</span>
-        <button class="ap-step" data-ap="hdg" data-dir="1" style="width:22px">+</button>
-        <button class="ap-eng" data-mode="hdgHold" id="dg-ap-hdg-eng" style="flex:0 0 44px">ON</button>
-      </div>
-      <div class="w-row">
-        <label>ALT</label>
-        <button class="ap-step" data-ap="alt" data-dir="-1" style="width:22px">−</button>
-        <span class="w-lbl" id="dg-ap-alt-val" style="flex:0 0 52px">3000ft</span>
-        <button class="ap-step" data-ap="alt" data-dir="1" style="width:22px">+</button>
-        <button class="ap-eng" data-mode="altHold" id="dg-ap-alt-eng" style="flex:0 0 44px">ON</button>
-      </div>
-      <div class="w-row">
-        <label>V/S</label>
-        <button class="ap-step" data-ap="vs" data-dir="-1" style="width:22px">−</button>
-        <span class="w-lbl" id="dg-ap-vs-val" style="flex:0 0 52px">0fpm</span>
-        <button class="ap-step" data-ap="vs" data-dir="1" style="width:22px">+</button>
-        <button class="ap-eng" data-mode="vsHold" id="dg-ap-vs-eng" style="flex:0 0 44px">ON</button>
-      </div>
-      <div class="w-row">
-        <label>SPD</label>
-        <button class="ap-step" data-ap="spd" data-dir="-1" style="width:22px">−</button>
-        <span class="w-lbl" id="dg-ap-spd-val" style="flex:0 0 40px">250kt</span>
-        <button class="ap-step" data-ap="spd" data-dir="1" style="width:22px">+</button>
-        <button class="ap-eng" data-mode="spdHold" id="dg-ap-spd-eng" style="flex:0 0 44px">A/THR</button>
-      </div>
-      <div class="hint-row dim" style="font-style:italic">ALT i V/S wykluczają się. Ręczny ster rozłącza daną oś. Klawisz X = pełne rozłączenie.</div>
-    </div>
+  </div>
+
+  <div id="action-rail">
+    <div class="arbtn" id="ar-flaps"><span class="ar-i">⛶</span><span class="ar-t" id="ar-flaps-lbl">FLAP 1</span></div>
+    <div class="arbtn active" id="ar-gear"><span class="ar-i">⬇</span><span class="ar-t">GEAR</span></div>
+    <div class="arbtn" id="ar-splr"><span class="ar-i">🛑</span><span class="ar-t">SPLR</span></div>
+    <div class="arbtn" id="ar-brakes"><span class="ar-i">🅱</span><span class="ar-t">BRAKES</span></div>
+    <div class="arbtn" id="ar-ap"><span class="ar-i">🅰</span><span class="ar-t">AUTOPILOT</span></div>
+    <div class="arbtn" id="ar-abrk"><span class="ar-i">Ⓑ</span><span class="ar-t" id="ar-abrk-lbl">A/BRK OFF</span></div>
+    <div class="arbtn" id="ar-cam"><span class="ar-i">📷</span><span class="ar-t">KAMERA</span></div>
+    <div class="arbtn" id="ar-menu"><span class="ar-i">☰</span><span class="ar-t">MENU</span></div>
   </div>
 
 </div><!-- /#hud -->
@@ -296,204 +355,10 @@
   </div>
 </div>
 
-<!-- Pasek guzików (dół środek) — 2 rzędy × 4 -->
-<div id="mob-bar">
-  <div class="mob-row">
-    <div class="mb" id="mb-flaps">
-      <span class="mb-i">⛶</span><span class="mb-t" id="mb-flaps-lbl">FLAP 1</span>
-    </div>
-    <div class="mb active" id="mb-gear">
-      <span class="mb-i">⬇</span><span class="mb-t">GEAR</span>
-    </div>
-    <div class="mb" id="mb-splr">
-      <span class="mb-i">🛑</span><span class="mb-t">SPLR</span>
-    </div>
-    <div class="mb" id="mb-brakes">
-      <span class="mb-i">🅱</span><span class="mb-t">BRAKES</span>
-    </div>
-  </div>
-  <div class="mob-row">
-    <div class="mb" id="mb-reset">
-      <span class="mb-i">↺</span><span class="mb-t">RESET</span>
-    </div>
-    <div class="mb" id="mb-appr">
-      <span class="mb-i">⬇✈</span><span class="mb-t">APPR</span>
-    </div>
-    <div class="mb" id="mb-cam">
-      <span class="mb-i">📷</span><span class="mb-t">CAM</span>
-    </div>
-    <div class="mb" id="mb-weather">
-      <span class="mb-i">🌤</span><span class="mb-t">WTHR</span>
-    </div>
-    <div class="mb" id="mb-menu">
-      <span class="mb-i">☰</span><span class="mb-t">MENU</span>
-    </div>
-  </div>
-</div>
-
-<!-- Menu popup (lotniska + więcej akcji) -->
-<div id="mob-menu-popup">
- <div class="popup-card">
-  <div class="popup-title">LOTNISKO</div>
-  <div class="popup-row">
-    <button class="airport-btn active" data-apt="EPWR">✈ WROCŁAW (EPWR)</button>
-    <button class="airport-btn"        data-apt="LOWI">✈ INNSBRUCK (LOWI)</button>
-    <button class="airport-btn"        data-apt="EDDF">✈ FANKFURT (EDDF)</button>
-  </div>
-  <div class="popup-divider"></div>
-  <div class="popup-title">LOTNISKA ŚWIATA</div>
-  <div class="wapt-mount"></div>
-  <div class="popup-divider"></div>
-  <div class="popup-row">
-    <button id="mpop-reset">↺ Reset</button>
-    <button id="mpop-appr">⬇ Approach</button>
-  </div>
-  <div class="popup-row">
-    <button id="mpop-cam">📷 Kamera</button>
-    <button id="mpop-map">🌍 Wolna mapa</button>
-  </div>
-  <div class="popup-row">
-    <button id="mpop-weight">⚖ Waga i paliwo</button>
-  </div>
-  <div class="popup-row">
-    <button id="mpop-park">🅿 Parking brake: <span id="mpop-park-val">OFF</span></button>
-  </div>
-  <div class="popup-row">
-    <button id="mpop-autobrake">A/BRK: <span id="mpop-autobrake-val">OFF</span></button>
-  </div>
-  <div class="popup-row">
-    <button id="mpop-ap">🅰 Autopilot</button>
-  </div>
-  <div class="popup-row">
-    <button id="mpop-tilt-toggle">📱 Tilt: <span id="mpop-tilt-val">OFF</span></button>
-    <button id="mpop-tilt-calib" style="margin-left:5px">⌖ Kalibruj</button>
-  </div>
-  <div class="popup-row">
-    <button id="mpop-mute">🔊 Dźwięki: <span id="mpop-mute-val">ON</span></button>
-  </div>
-  <div class="popup-divider"></div>
-  <button id="mpop-close">✕ Zamknij</button>
- </div>
-</div>
-
-<!-- Weather popup (mobile) -->
-<div id="weather-popup">
- <div class="popup-card">
-  <div class="wpop-title">🌤 POGODA</div>
-  <div class="wpop-row"><label>Godzina</label><input type="range" id="w-time" min="0" max="1440" step="1" value="720"><span class="wlbl" id="w-time-lbl">12:00</span></div>
-  <div class="wpop-row"><label>Dzień roku</label><input type="range" id="w-date" min="1" max="365" step="1" value="172"><span class="wlbl" id="w-date-lbl">21 cze</span></div>
-  <div class="wpop-row">
-    <button id="w-anim" style="flex:1">▶ Animuj czas</button>
-    <select id="w-anim-speed">
-      <option value="60">1 min = 1 h</option>
-      <option value="10">1 min = 10 min</option>
-      <option value="240">1 min = 4 h</option>
-      <option value="1440">1 min = 1 dzień</option>
-    </select>
-  </div>
-  <div class="wpop-divider"></div>
-  <div class="wpop-presets">
-    <button data-preset-mob="clear">☀ Clear</button>
-    <button data-preset-mob="cloudy">⛅ Cloudy</button>
-    <button data-preset-mob="overcast">☁ Overcast</button>
-    <button data-preset-mob="rain">🌧 Rain</button>
-    <button data-preset-mob="storm">⛈ Storm</button>
-    <button data-preset-mob="fog">🌫 Fog</button>
-  </div>
-  <div class="wpop-divider"></div>
-  <div class="wpop-row"><label>Zachmurzenie</label><input type="range" id="w-coverage" min="0" max="100" value="30"><span class="wlbl" id="w-coverage-lbl">30%</span></div>
-  <div class="wpop-row"><label>Wys. chmur</label><input type="range" id="w-alt" min="100" max="6000" step="100" value="2000"><span class="wlbl" id="w-alt-lbl">2000 m</span></div>
-  <div class="wpop-row"><label>Opady</label>
-    <select id="w-precip"><option value="none">Brak</option><option value="rain">Deszcz</option></select>
-  </div>
-  <div class="wpop-row"><label>Intensywność</label><input type="range" id="w-precip-int" min="0" max="100" value="60"><span class="wlbl" id="w-precip-int-lbl">60%</span></div>
-  <div class="wpop-row"><label>Wiatr (m/s)</label><input type="range" id="w-wind" min="0" max="40" value="5"><span class="wlbl" id="w-wind-lbl">5 m/s</span></div>
-  <div class="wpop-row"><label>Kierunek</label><input type="range" id="w-wdir" min="0" max="359" value="270"><span class="wlbl" id="w-wdir-lbl">270°</span></div>
-  <div class="wpop-row"><label>Porywy (m/s)</label><input type="range" id="w-gust" min="0" max="15" value="2"><span class="wlbl" id="w-gust-lbl">2 m/s</span></div>
-  <div class="wpop-row"><label>Turbulencja</label><input type="range" id="w-turb" min="0" max="100" value="10"><span class="wlbl" id="w-turb-lbl">10%</span></div>
-  <div class="wpop-divider"></div>
-  <div class="wpop-title" style="font-size:8px">JAKOŚĆ CHMUR</div>
-  <div class="wpop-presets">
-    <button data-qual="low">Niska</button>
-    <button data-qual="med" class="active">Średnia</button>
-    <button data-qual="high">Wysoka</button>
-  </div>
-  <div class="wpop-divider"></div>
-  <div class="wpop-title" style="font-size:8px">CIENIE TERENU</div>
-  <div class="wpop-presets">
-    <button data-shadowqual="off">Wył.</button>
-    <button data-shadowqual="low">Niska</button>
-    <button data-shadowqual="med" class="active">Średnia</button>
-    <button data-shadowqual="high">Wysoka</button>
-  </div>
-  <div class="wpop-divider"></div>
-  <button id="mwpop-windshear-test">⚡ Test windshear</button>
-  <button id="wpop-close">✕ Zamknij</button>
- </div>
-</div>
-
-<!-- Weight popup (mobile) -->
-<div id="weight-popup">
- <div class="popup-card">
-  <div class="wpop-title">⚖ WAGA I PALIWO</div>
-  <div class="wpop-row"><label>Paliwo</label><input type="range" id="mw-fuel" min="0" max="23700" step="100" value="14500"><span class="wlbl" id="mw-fuel-lbl">14500 kg</span></div>
-  <div class="wpop-row"><label>Payload</label><input type="range" id="mw-payload" min="0" max="22000" step="100" value="12000"><span class="wlbl" id="mw-payload-lbl">12000 kg</span></div>
-  <div class="wpop-divider"></div>
-  <div class="wpop-row"><label>Masa całk.</label><span class="wlbl" id="mw-total-lbl" style="flex:1;text-align:right">75000 kg</span></div>
-  <div class="wpop-row"><label>MTOW</label><span class="wlbl" style="flex:1;text-align:right">93500 kg</span></div>
-  <div class="wpop-row"><label>Przesun. CG</label><span class="wlbl" id="mw-cg-lbl" style="flex:1;text-align:right">0.0 m</span></div>
-  <div class="wpop-row" id="mw-mtow-warn" style="display:none;color:#ff5a4a;justify-content:center">⚠ MTOW przekroczone — masa ograniczona</div>
-  <div class="wpop-divider"></div>
-  <div class="wpop-presets">
-    <button data-wpreset-mob="empty">Pusty</button>
-    <button data-wpreset-mob="default" class="active">Domyślny</button>
-    <button data-wpreset-mob="full">Pełny</button>
-  </div>
-  <div class="wpop-row" style="font-style:italic;justify-content:center;color:#4a8fbf">Zastosowane przy najbliższym Reset</div>
-  <button id="mwpop-close">✕ Zamknij</button>
- </div>
-</div>
-
-<!-- Autopilot popup (mobile) -->
-<div id="ap-popup">
- <div class="popup-card">
-  <div class="wpop-title">🅰 AUTOPILOT</div>
-  <div class="wpop-row" style="justify-content:center">
-    <button id="mw-ap-master" style="flex:1">WYŁĄCZONY</button>
-  </div>
-  <div class="wpop-divider"></div>
-  <div class="wpop-row">
-    <label>HDG</label>
-    <button class="ap-step" data-ap="hdg" data-dir="-1" style="width:26px">−</button>
-    <span class="wlbl" id="mw-ap-hdg-val" style="flex:0 0 44px">360°</span>
-    <button class="ap-step" data-ap="hdg" data-dir="1" style="width:26px">+</button>
-    <button class="ap-eng" data-mode="hdgHold" id="mw-ap-hdg-eng" style="flex:0 0 48px">ON</button>
-  </div>
-  <div class="wpop-row">
-    <label>ALT</label>
-    <button class="ap-step" data-ap="alt" data-dir="-1" style="width:26px">−</button>
-    <span class="wlbl" id="mw-ap-alt-val" style="flex:0 0 56px">3000ft</span>
-    <button class="ap-step" data-ap="alt" data-dir="1" style="width:26px">+</button>
-    <button class="ap-eng" data-mode="altHold" id="mw-ap-alt-eng" style="flex:0 0 48px">ON</button>
-  </div>
-  <div class="wpop-row">
-    <label>V/S</label>
-    <button class="ap-step" data-ap="vs" data-dir="-1" style="width:26px">−</button>
-    <span class="wlbl" id="mw-ap-vs-val" style="flex:0 0 56px">0fpm</span>
-    <button class="ap-step" data-ap="vs" data-dir="1" style="width:26px">+</button>
-    <button class="ap-eng" data-mode="vsHold" id="mw-ap-vs-eng" style="flex:0 0 48px">ON</button>
-  </div>
-  <div class="wpop-row">
-    <label>SPD</label>
-    <button class="ap-step" data-ap="spd" data-dir="-1" style="width:26px">−</button>
-    <span class="wlbl" id="mw-ap-spd-val" style="flex:0 0 44px">250kt</span>
-    <button class="ap-step" data-ap="spd" data-dir="1" style="width:26px">+</button>
-    <button class="ap-eng" data-mode="spdHold" id="mw-ap-spd-eng" style="flex:0 0 48px">A/THR</button>
-  </div>
-  <div class="wpop-row" style="font-style:italic;justify-content:center;color:#4a8fbf">ALT/V-S wykluczają się. Ręczny ster rozłącza oś.</div>
-  <button id="apwpop-close">✕ Zamknij</button>
- </div>
-</div>
+<!-- Pasek guzików, menu i cztery osobne popupy (mob-bar / mob-menu-popup /
+     weather-popup / weight-popup / ap-popup) zostały zastąpione przez
+     #action-rail + #mcdu-drawer wewnątrz #hud (patrz wyżej) — jedna
+     definicja dla desktop i mobile zamiast dublowanych paneli/popupów. -->
 
 <!-- Orbit joy i zoom — ukryte (nieużywane) -->
 <div id="orbit-joy-wrap" style="display:none!important"></div>
@@ -523,6 +388,7 @@
 <script src="js/sim-controls.js?v=2"></script>
 <script src="js/sim-airport-spawn.js?v=2"></script>
 <script src="js/sim-sound.js?v=2"></script>
+<script src="js/sim-airport-select.js?v=2"></script>
 <script src="js/sim-main.js?v=2"></script>
 
 </body>
