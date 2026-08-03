@@ -1,61 +1,20 @@
 'use strict';
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// Natychmiastowy binding guzika popup — nie czeka na weatherUI.init()
-// Działa niezależnie od tego czy WeatherSystem się zainicjował
-// ═══════════════════════════════════════════════════════════════════════════════
-(function bindWeatherPopupEarly() {
-  function tryBind() {
-    const btn   = document.getElementById('mb-weather');
-    const popup = document.getElementById('weather-popup');
-    const close = document.getElementById('wpop-close');
-    if (!btn || !popup) return;
-
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const isOpen = popup.style.display === 'flex';
-      popup.style.display = isOpen ? 'none' : 'flex';
-      btn.classList.toggle('active', !isOpen);
-    });
-
-    if (close) {
-      close.addEventListener('click', () => {
-        popup.style.display = 'none';
-        btn.classList.remove('active');
-      });
-    }
-
-    // Zamknij po kliknieciu poza popupem LUB bezposrednio na przyciemnione
-    // tlo (#weather-popup jest teraz peloekranowym backdropem — kliknieciem
-    // "poza karta" jest wiec e.target===popup, nie tylko !contains).
-    document.addEventListener('click', (e) => {
-      if (popup.style.display === 'flex' &&
-          (e.target === popup || (!popup.contains(e.target) && e.target !== btn))) {
-        popup.style.display = 'none';
-        btn.classList.remove('active');
-      }
-    });
-  }
-
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', tryBind);
-  } else {
-    tryBind();
-  }
-})();
-
-// ═══════════════════════════════════════════════════════════════════════════════
 // sim-weather-ui.js  —  UI do sterowania pogodą + niebem (czas/data/jakość)
 // Zależy od: sim-weather.js (WeatherState, WeatherPresets, weather)
 //            sim-sky.js     (TimeState, formatTimeHHMM, formatDayOfYear,
 //                             setSkyQuality, QualityPresets)
+//
+// Jedna zakładka (🌦 POGODA) w szufladzie MCDU (sim-mcdu.js) — jeden zestaw
+// elementów (dw-*), bez oddzielnego panelu desktop + popupu mobile jak
+// wcześniej (dublowanie usunięte razem z konsolidacją menu — patrz #mcdu-drawer
+// w simworld.html). Widoczność strony steruje sama szuflada (.mcdu-page.active),
+// więc nie ma tu już własnego collapse/toggle.
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const weatherUI = {
-  _open: false,
-
   init() {
-    // Definiuj setter-y raz, binduj do obu zestawów (desktop dw- i mobile w-)
     const bindings = [
       ['coverage', v => { WeatherState.cloudCoverage = v / 100; },          v => Math.round(v) + '%'],
       ['alt',      v => { WeatherState.cloudAltitudeM = +v; },              v => v + ' m'],
@@ -69,44 +28,17 @@ const weatherUI = {
       ['turb',     v => { WeatherState.turbulence = v / 100; },              v => Math.round(v) + '%'],
       ['precip-int', v => { WeatherState.precipIntensity = v / 100; },       v => Math.round(v) + '%'],
     ];
-    for (const [name, setter, fmt] of bindings) {
-      this._bind('dw-' + name, setter, fmt);  // desktop
-      this._bind('w-'  + name, setter, fmt);  // mobile
-    }
+    for (const [name, setter, fmt] of bindings) this._bind('dw-' + name, setter, fmt);
 
     // Opady (select + intensywność) — tylko "Brak"/"Deszcz" (śnieg nieobsługiwany)
-    for (const id of ['w-precip', 'dw-precip']) {
-      const el = document.getElementById(id);
-      if (el) el.addEventListener('change', () => {
-        WeatherState.precipitation = el.value !== 'none';
-        WeatherState.precipType    = 'rain';
-      });
-    }
+    const precipEl = document.getElementById('dw-precip');
+    if (precipEl) precipEl.addEventListener('change', () => {
+      WeatherState.precipitation = precipEl.value !== 'none';
+      WeatherState.precipType    = 'rain';
+    });
 
-    // Presety desktop
     document.querySelectorAll('[data-preset]').forEach(btn => {
       btn.addEventListener('click', () => weather?.applyPreset(btn.dataset.preset));
-    });
-
-    // Toggle panelu pogody (desktop)
-    document.getElementById('btn-weather-toggle')?.addEventListener('click', () => {
-      const panel = document.getElementById('weather-panel');
-      if (!panel) return;
-      this._open = !this._open;
-      panel.style.display = this._open ? 'block' : 'none';
-      document.getElementById('btn-weather-toggle').textContent = this._open ? '▲' : '▼';
-    });
-
-    // Mobile popup binding — obsługiwany przez bindWeatherPopupEarly() powyżej
-
-    // Presety w mobile popup
-    document.querySelectorAll('[data-preset-mob]').forEach(btn => {
-      btn.addEventListener('click', () => {
-        weather?.applyPreset(btn.dataset.presetMob);
-        // Aktualizuj wygląd aktywnego presetu
-        document.querySelectorAll('[data-preset-mob]').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-      });
     });
 
     // ── NIEBO: czas / data / animacja / jakość chmur ──────────────────────────
@@ -128,62 +60,49 @@ const weatherUI = {
 
   // ── Sterowanie niebem (czas/data/animacja/jakość) — sim-sky.js ──────────────
   _bindSkyControls() {
-    const timeBind = (id) => {
-      const el = document.getElementById(id);
-      if (!el) return;
-      el.addEventListener('input', () => {
-        TimeState.animating = false;
-        this._setAnimBtnLabel(false);
-        TimeState.minutesOfDay = parseFloat(el.value);
-        this._setTimeLabel(id, TimeState.minutesOfDay);
-      });
-    };
-    const dateBind = (id) => {
-      const el = document.getElementById(id);
-      if (!el) return;
-      el.addEventListener('input', () => {
-        TimeState.dayOfYear = parseInt(el.value, 10);
-        this._setDateLabel(id, TimeState.dayOfYear);
-      });
-    };
-    timeBind('dw-time'); timeBind('w-time');
-    dateBind('dw-date'); dateBind('w-date');
+    const timeEl = document.getElementById('dw-time');
+    if (timeEl) timeEl.addEventListener('input', () => {
+      TimeState.animating = false;
+      this._setAnimBtnLabel(false);
+      TimeState.minutesOfDay = parseFloat(timeEl.value);
+      this._setTimeLabel('dw-time', TimeState.minutesOfDay);
+    });
+    const dateEl = document.getElementById('dw-date');
+    if (dateEl) dateEl.addEventListener('input', () => {
+      TimeState.dayOfYear = parseInt(dateEl.value, 10);
+      this._setDateLabel('dw-date', TimeState.dayOfYear);
+    });
 
-    // Animacja czasu — przycisk toggle (desktop + mobile)
-    for (const id of ['dw-anim', 'w-anim']) {
-      document.getElementById(id)?.addEventListener('click', () => {
-        TimeState.animating = !TimeState.animating;
-        this._setAnimBtnLabel(TimeState.animating);
-      });
-    }
+    // Animacja czasu — przycisk toggle
+    document.getElementById('dw-anim')?.addEventListener('click', () => {
+      TimeState.animating = !TimeState.animating;
+      this._setAnimBtnLabel(TimeState.animating);
+    });
     // Prędkość animacji (minuty symulacji na sekundę realnego czasu)
-    for (const id of ['dw-anim-speed', 'w-anim-speed']) {
-      const el = document.getElementById(id);
-      if (!el) continue;
-      el.addEventListener('change', () => {
-        TimeState.animMinutesPerSecond = parseFloat(el.value);
+    const speedEl = document.getElementById('dw-anim-speed');
+    if (speedEl) {
+      speedEl.addEventListener('change', () => {
+        TimeState.animMinutesPerSecond = parseFloat(speedEl.value);
       });
-      TimeState.animMinutesPerSecond = parseFloat(el.value);
+      TimeState.animMinutesPerSecond = parseFloat(speedEl.value);
     }
 
-    // Jakość chmur (Niska/Średnia/Wysoka)
+    // Jakość chmur (Niska/Średnia/Wysoka) — teraz w zakładce ⚙ JAKOŚĆ, ale
+    // logika zostaje tu (ten sam atrybut data-qual, niezależnie od tego w
+    // której zakładce fizycznie leży w HTML).
     document.querySelectorAll('[data-qual]').forEach(btn => {
       btn.addEventListener('click', () => setSkyQuality(btn.dataset.qual));
     });
 
     this._setTimeLabel('dw-time', TimeState.minutesOfDay);
-    this._setTimeLabel('w-time',  TimeState.minutesOfDay);
     this._setDateLabel('dw-date', TimeState.dayOfYear);
-    this._setDateLabel('w-date',  TimeState.dayOfYear);
   },
 
   _setAnimBtnLabel(animating) {
-    for (const id of ['dw-anim', 'w-anim']) {
-      const el = document.getElementById(id);
-      if (!el) continue;
-      el.textContent = animating ? '⏸ Zatrzymaj' : '▶ Animuj czas';
-      el.classList.toggle('active', animating);
-    }
+    const el = document.getElementById('dw-anim');
+    if (!el) return;
+    el.textContent = animating ? '⏸ Zatrzymaj' : '▶ Animuj czas';
+    el.classList.toggle('active', animating);
   },
 
   _setTimeLabel(id, minutes) {
@@ -204,9 +123,7 @@ const weatherUI = {
   // aktualizuje położenie suwaków bez wywoływania ich 'input' (brak pętli).
   syncSkyUI() {
     this._setTimeLabel('dw-time', TimeState.minutesOfDay);
-    this._setTimeLabel('w-time',  TimeState.minutesOfDay);
     this._setDateLabel('dw-date', TimeState.dayOfYear);
-    this._setDateLabel('w-date',  TimeState.dayOfYear);
   },
 
   // Synchronizuj UI z WeatherState (np. po zmianie presetu)
@@ -222,14 +139,9 @@ const weatherUI = {
       'turb':       Math.round(s.turbulence * 100),
       'precip-int': Math.round(s.precipIntensity * 100),
     };
-    for (const [name, val] of Object.entries(vals)) {
-      this._setSlider('dw-' + name, val);
-      this._setSlider('w-'  + name, val);
-    }
-    for (const id of ['w-precip', 'dw-precip']) {
-      const el = document.getElementById(id);
-      if (el) el.value = s.precipitation ? 'rain' : 'none';
-    }
+    for (const [name, val] of Object.entries(vals)) this._setSlider('dw-' + name, val);
+    const precipEl = document.getElementById('dw-precip');
+    if (precipEl) precipEl.value = s.precipitation ? 'rain' : 'none';
   },
 
   _setSlider(id, val) {

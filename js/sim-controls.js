@@ -51,7 +51,7 @@ window.addEventListener('keyup', e => {
     case 'KeyN': if (p) { p.autobrakeLevel = _nextAutobrakeLevel(p.autobrakeLevel); _syncAutobrakeBtn(); } break;
     case 'KeyX': if (p) { p.ap.master = false; p.ap.hdgHold = false; p.ap.altHold = false; p.ap.vsHold = false; p.ap.spdHold = false; } break;
     case 'KeyR': resetPlane(); break;
-    case 'KeyM': if (typeof SimSound !== 'undefined') SimSound.toggleMute(); break;
+    case 'KeyM': if (typeof SimSound !== 'undefined') { SimSound.toggleMute(); _syncMuteBtn(); } break;
     case 'KeyC': cycleCameraMode(); break;
     case 'Digit1': setCameraMode(CameraMode.ORBIT); break;
     case 'Digit2': setCameraMode(CameraMode.COCKPIT); break;
@@ -331,16 +331,16 @@ function _btn(id, fn) {
 }
 function _syncFlapsLabel() {
   const p = activeEntity; if (!p) return;
-  const l = document.getElementById('mb-flaps-lbl');
+  const l = document.getElementById('ar-flaps-lbl');
   if (l) l.textContent = 'FLAP ' + p.flaps;
 }
 function _syncGearBtn() {
   const p = activeEntity; if (!p) return;
-  document.getElementById('mb-gear')?.classList.toggle('active', p.gearDown);
+  document.getElementById('ar-gear')?.classList.toggle('active', p.gearDown);
 }
 function _syncSplrBtn() {
   const p = activeEntity; if (!p) return;
-  document.getElementById('mb-splr')?.classList.toggle('active', p.spoilers);
+  document.getElementById('ar-splr')?.classList.toggle('active', p.spoilers);
 }
 const AUTOBRAKE_CYCLE = ['OFF', 'LOW', 'MED', 'MAX'];
 function _nextAutobrakeLevel(cur) {
@@ -349,15 +349,20 @@ function _nextAutobrakeLevel(cur) {
 }
 function _syncParkBtn() {
   const p = activeEntity; if (!p) return;
-  const val = document.getElementById('mpop-park-val');
+  const val = document.getElementById('parkbrake-val');
   if (val) val.textContent = p.parkingBrake ? 'ON' : 'OFF';
-  document.getElementById('mpop-park')?.classList.toggle('active', p.parkingBrake);
+  document.getElementById('btn-parkbrake')?.classList.toggle('active', p.parkingBrake);
 }
 function _syncAutobrakeBtn() {
   const p = activeEntity; if (!p) return;
-  const val = document.getElementById('mpop-autobrake-val');
-  if (val) val.textContent = p.autobrakeLevel;
-  document.getElementById('mpop-autobrake')?.classList.toggle('active', p.autobrakeLevel !== 'OFF');
+  const lbl = document.getElementById('ar-abrk-lbl');
+  if (lbl) lbl.textContent = 'A/BRK ' + p.autobrakeLevel;
+  document.getElementById('ar-abrk')?.classList.toggle('active', p.autobrakeLevel !== 'OFF');
+}
+function _syncMuteBtn() {
+  if (typeof SimSound === 'undefined') return;
+  const val = document.getElementById('mute-val');
+  if (val) val.textContent = SimSound.muted ? 'OFF' : 'ON';
 }
 
 // ── Guziki lotnisk — działają przez data-apt, bez duplikatów ID ────────────────
@@ -365,99 +370,99 @@ document.querySelectorAll('[data-apt]').forEach(btn => {
   btn.addEventListener('click', () => selectAirport(btn.dataset.apt));
 });
 
-// ── Guziki desktop ─────────────────────────────────────────────────────────────
-_btn('btn-reset',      resetPlane);
-_btn('btn-approach',   spawnApproach);
-_btn('btn-camera',     cycleCameraMode);
+// ── Guziki desktop (teraz wewnątrz szuflady MCDU, patrz #mcdu-drawer w
+// simworld.html) ────────────────────────────────────────────────────────────
+_btn('btn-reset',      () => { resetPlane();    _setDrawer(false); });
+_btn('btn-approach',   () => { spawnApproach(); _setDrawer(false); });
 _btn('btn-orbit-free', () => {
   if (activeEntity) { orb.lat=activeEntity.lat; orb.lon=activeEntity.lon; orb.y=activeEntity.worldPos.y; }
   orb.dist=8000; orb.pitch=40; orb.free=true;
   setCameraMode(CameraMode.ORBIT);
+  _setDrawer(false);
+});
+_btn('btn-parkbrake', () => {
+  const p = activeEntity; if (!p) return;
+  p.parkingBrake = !p.parkingBrake; _syncParkBtn();
+});
+_btn('btn-mute', () => {
+  if (typeof SimSound !== 'undefined') { SimSound.toggleMute(); _syncMuteBtn(); }
+});
+_btn('btn-tilt-toggle', () => {
+  tiltEnabled = !tiltEnabled;
+  const val = document.getElementById('tilt-val');
+  if (val) val.textContent = tiltEnabled ? 'ON' : 'OFF';
+  if (!tiltEnabled && flyId < 0) flyKnob.style.transform = 'translate(-50%,-50%)';
+});
+_btn('btn-tilt-calib', () => {
+  tiltPitchCalib = tiltPitchRaw;
+  tiltRollCalib = tiltRollRaw;
 });
 
-// ── Guziki mobilne (pasek) ─────────────────────────────────────────────────────
-_btn('mb-flaps', () => {
+// ── Pasek akcji (#action-rail) — JEDNA definicja dla desktop i mobile (patrz
+// #action-rail w simworld.html i .arbtn w sim-style.css). Zastępuje dawny
+// #mob-bar (tylko-mobile, dwa rzędy) + osobne btn-camera (desktop) +
+// mb-cam/mpop-cam (mobile, zdublowane) — teraz jeden zestaw przycisków,
+// klikalny myszą i dotykiem identycznie. ─────────────────────────────────────
+_btn('ar-flaps', () => {
   if (!activeEntity) return;
   activeEntity.flaps = (activeEntity.flaps+1)%4;
   _syncFlapsLabel();
 });
-_btn('mb-gear', () => {
+_btn('ar-gear', () => {
   const p=activeEntity; if(!p||p.onGround) return;
   p.gearDown=!p.gearDown; p.updateGearVisibility(); _syncGearBtn();
 });
-_btn('mb-splr', () => {
+_btn('ar-splr', () => {
   const p=activeEntity; if(!p) return;
   p.spoilers=!p.spoilers; _syncSplrBtn();
 });
-_btn('mb-reset',  resetPlane);
-_btn('mb-appr',   spawnApproach);
-_btn('mb-cam',    cycleCameraMode);
+_btn('ar-ap', () => { if (typeof apUI !== 'undefined') apUI.toggleMaster(); });
+_btn('ar-abrk', () => {
+  const p = activeEntity; if (!p) return;
+  p.autobrakeLevel = _nextAutobrakeLevel(p.autobrakeLevel); _syncAutobrakeBtn();
+});
+_btn('ar-cam', cycleCameraMode);
 
-// Hamulce — trzymane
-const brakeEl = document.getElementById('mb-brakes');
+// Hamulce (trzymane) — pointerdown/up zamiast touchstart/touchend, żeby
+// działały identycznie myszą (desktop, przytrzymanie LPM) i dotykiem
+// (mobile) na TYM SAMYM przycisku — patrz komentarz przy #action-rail wyżej.
+const brakeEl = document.getElementById('ar-brakes');
 if (brakeEl) {
-  brakeEl.addEventListener('touchstart',  e=>{ brakesHeld=true;  brakeEl.classList.add('pressed');    e.preventDefault(); },{passive:false});
-  brakeEl.addEventListener('touchend',    ()=>{ brakesHeld=false; brakeEl.classList.remove('pressed'); });
-  brakeEl.addEventListener('touchcancel', ()=>{ brakesHeld=false; brakeEl.classList.remove('pressed'); });
+  brakeEl.addEventListener('pointerdown',  e => { brakesHeld=true;  brakeEl.classList.add('pressed');    e.preventDefault(); });
+  brakeEl.addEventListener('pointerup',    () => { brakesHeld=false; brakeEl.classList.remove('pressed'); });
+  brakeEl.addEventListener('pointercancel',() => { brakesHeld=false; brakeEl.classList.remove('pressed'); });
+  brakeEl.addEventListener('pointerleave', () => { brakesHeld=false; brakeEl.classList.remove('pressed'); });
 }
 
-// Menu popup
-let menuOpen = false;
-function _setMenu(open) {
-  menuOpen = open;
-  const popup = document.getElementById('mob-menu-popup');
-  if (popup) popup.classList.toggle('open', open);
-  document.getElementById('mb-menu')?.classList.toggle('active', open);
+// ── Szuflada MCDU (#mcdu-drawer) — JEDNA definicja dla desktop (dokowana z
+// prawej, patrz sim-style.css) i mobile (dolna szuflada). Zastępuje dawny
+// zestaw: #controls (desktop, zagnieżdżony akordeon) + #mob-menu-popup +
+// #weather-popup + #weight-popup + #ap-popup (mobile, cztery osobne
+// wyskakujące okna dublujące te same suwaki). ───────────────────────────────
+let drawerOpen = false;
+function _setDrawer(open) {
+  drawerOpen = open;
+  document.getElementById('mcdu-drawer')?.classList.toggle('open', open);
+  document.getElementById('mcdu-toggle')?.classList.toggle('open', open);
+  document.getElementById('ar-menu')?.classList.toggle('active', open);
 }
-_btn('mb-menu',   () => _setMenu(!menuOpen));
-_btn('mpop-close',() => _setMenu(false));
-// Zamknij po kliknieciu w przyciemnione tlo (poza karta .popup-card) --
-// #mob-menu-popup to teraz peloekranowy backdrop, wiec e.target===popup
-// znaczy klikniecie POZA karta z trescia.
-document.getElementById('mob-menu-popup')?.addEventListener('click', (e) => {
-  if (e.target.id === 'mob-menu-popup') _setMenu(false);
+document.getElementById('mcdu-toggle')?.addEventListener('click', () => _setDrawer(!drawerOpen));
+document.getElementById('ar-menu')?.addEventListener('click', () => _setDrawer(!drawerOpen));
+document.querySelectorAll('.mcdu-tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.mcdu-tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.mcdu-page').forEach(p => p.classList.remove('active'));
+    tab.classList.add('active');
+    document.getElementById(tab.dataset.page)?.classList.add('active');
+  });
 });
-_btn('mpop-reset',() => { resetPlane();     _setMenu(false); });
-_btn('mpop-appr', () => { spawnApproach();  _setMenu(false); });
-_btn('mpop-cam',  () => { cycleCameraMode(); _setMenu(false); });
-_btn('mpop-map',  () => {
-  if (activeEntity) { orb.lat=activeEntity.lat; orb.lon=activeEntity.lon; orb.y=activeEntity.worldPos.y; }
-  orb.dist=8000; orb.pitch=40; orb.free=true;
-  setCameraMode(CameraMode.ORBIT);
-  _setMenu(false);
-});
-_btn('mpop-weight', () => { openWeightPopup(); _setMenu(false); });
-_btn('mpop-ap', () => { openApPopup(); _setMenu(false); });
-_btn('mpop-park', () => {
-  const p = activeEntity; if (!p) return;
-  p.parkingBrake = !p.parkingBrake; _syncParkBtn(); _setMenu(false);
-});
-_btn('mpop-autobrake', () => {
-  const p = activeEntity; if (!p) return;
-  p.autobrakeLevel = _nextAutobrakeLevel(p.autobrakeLevel); _syncAutobrakeBtn(); _setMenu(false);
-});
-_btn('mpop-mute', () => {
-  if (typeof SimSound !== 'undefined') {
-    SimSound.toggleMute();
-    const val = document.getElementById('mpop-mute-val');
-    if (val) val.textContent = SimSound.muted ? 'OFF' : 'ON';
-    const btn = document.getElementById('mpop-mute');
-    if (btn) btn.querySelector('.mb-i') || (btn.textContent = (SimSound.muted ? '🔇' : '🔊') + ' Dźwięki: ' + (SimSound.muted ? 'OFF' : 'ON'));
-  }
-});
-
-_btn('mpop-tilt-toggle', () => {
-  tiltEnabled = !tiltEnabled;
-  const val = document.getElementById('mpop-tilt-val');
-  if (val) val.textContent = tiltEnabled ? 'ON' : 'OFF';
-  if (!tiltEnabled && flyId < 0) flyKnob.style.transform = 'translate(-50%,-50%)';
-  _setMenu(false);
-});
-
-_btn('mpop-tilt-calib', () => {
-  tiltPitchCalib = tiltPitchRaw;
-  tiltRollCalib = tiltRollRaw;
-  _setMenu(false);
+// Klik poza szufladą i poza przyciskiem-odznaką ją zamyka (działa tak samo
+// dla dokowanego panelu desktop i dolnej szuflady mobile).
+document.addEventListener('click', (e) => {
+  if (!drawerOpen) return;
+  const drawer = document.getElementById('mcdu-drawer');
+  const toggle = document.getElementById('mcdu-toggle');
+  if (drawer && !drawer.contains(e.target) && toggle && !toggle.contains(e.target)) _setDrawer(false);
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -554,7 +559,7 @@ function selectAirport(code) {
   document.querySelectorAll('[data-apt]').forEach(b => {
     b.classList.toggle('active', b.dataset.apt===code);
   });
-  thrValue=null; _setMenu(false);
+  thrValue=null; _setDrawer(false);
   if (activeEntity) {
     activeEntity.reset({ lat:apt.spawnLat,lon:apt.spawnLon,yawRad:Units.degToRad((180-apt.heading+360)%360) });
     if (typeof SimSound !== 'undefined') SimSound.resetCallouts();

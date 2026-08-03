@@ -336,12 +336,22 @@ function apltClassifyElements(elements) {
 
 // ── Pełne dane lotniska (API + Overpass) — używane przez światła I przez
 // sim-airport-spawn.js (jedno zapytanie sieciowe obsługuje oba systemy). ────
-async function fetchAirportFullData(icao) {
+async function fetchAirportFullData(icao, onProgress) {
   const airportObj = await apltApiSearchByCode(icao);
+  if (onProgress) onProgress('searched', airportObj);
   const apiId = airportObj ? apltGetId(airportObj) : null;
-  let validRunways = await apltResolveRunways(airportObj, apiId);
 
-  const elements = await apltOverpassRun(apltAreaQuery(icao));
+  // NAPRAWA WYDAJNOŚCI: pasy (WKR API) i Overpass (drogi kołowania/płyty/
+  // stanowiska/PAPI) nie zależą od siebie nawzajem — wcześniej czekały na
+  // siebie PO KOLEI (najpierw pasy, dopiero potem Overpass), co przy wolnym
+  // Overpass (do ~60s przy kilku nieudanych przejściach) niepotrzebnie
+  // opóźniało też start pobierania terenu w miejscach czekających na cały
+  // komplet danych (patrz waptLoad() w sim-airport-spawn.js). Teraz lecą
+  // RÓWNOLEGLE — realny czas oczekiwania to max(pasy, Overpass), nie suma.
+  let [validRunways, elements] = await Promise.all([
+    apltResolveRunways(airportObj, apiId),
+    apltOverpassRun(apltAreaQuery(icao)),
+  ]);
   const classified = apltClassifyElements(elements);
 
   if (!validRunways.length && classified.runways.length) {
@@ -361,6 +371,7 @@ async function fetchAirportFullData(icao) {
       };
     });
   }
+  if (onProgress) onProgress('done');
   return { airportObj, validRunways, classified };
 }
 
@@ -749,7 +760,7 @@ let apltLoadEpoch      = 0;
 // `preFetched` (opcjonalne) — gotowe dane z fetchAirportFullData(), gdy
 // wywołujący (np. sim-airport-spawn.js) już je pobrał dla WŁASNYCH potrzeb
 // (lista pasów/stanowisk) i nie chcemy odpytywać API/Overpass dwa razy.
-async function loadAirportLights(icao, preFetched) {
+async function loadAirportLights(icao, preFetched, onProgress) {
   if (!icao) return;
   const epoch = ++apltLoadEpoch;
 
@@ -785,7 +796,7 @@ async function loadAirportLights(icao, preFetched) {
     ]);
     if (epoch !== apltLoadEpoch) return; // w międzyczasie wybrano inne lotnisko
 
-    const data = preFetched || await fetchAirportFullData(icao);
+    const data = preFetched || await fetchAirportFullData(icao, onProgress);
     if (epoch !== apltLoadEpoch) return;
 
     const built = apltBuildAll(data.validRunways, data.classified);

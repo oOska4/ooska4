@@ -75,21 +75,32 @@ function animate(t) {
 
 const bootStudio = document.getElementById('phase-studio');
 const bootAuthor = document.getElementById('phase-author');
+const bootSelect = document.getElementById('phase-select');
 const bootLoad   = document.getElementById('phase-load');
-const loadbar     = document.getElementById('loadbar');
-const loadingText = document.getElementById('loading-text');
+const loadbar      = document.getElementById('loadbar');
+const loadingText  = document.getElementById('loading-text');
+const loadbar2     = document.getElementById('loadbar2');
+const loadingText2 = document.getElementById('loading-text2');
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-// ── Sekwencja intro: czarny ekran → logo studia → nick autora → loading ──────
+// ── Sekwencja intro: czarny ekran → logo studia → nick autora → WYBÓR
+// LOTNISKA → loading ──────────────────────────────────────────────────────
 // Czas trwania fade in/fade out (900ms) MUSI zgadzać się z `transition: opacity`
 // na .boot-phase w sim-style.css — zmieniaj oba razem.
 // WAŻNE: zwracamy tu promise (bootIntroDone) i init() na niego czeka przed
 // ukryciem #loading — inaczej, gdy realne zasoby wczytają się błyskawicznie
 // (np. kafelki terenu/model samolotu już w cache przeglądarki po
 // wcześniejszych testach), init() chowałby cały ekran startowy ZANIM intro
-// zdążyłoby pokazać logo — dokładnie to, co się właśnie stało (czarny ekran
-// na sekundę i od razu gra, bez żadnych animacji).
+// zdążyłoby pokazać logo.
+//
+// Wybór lotniska (patrz sim-airport-select.js) jest teraz CZĘŚCIĄ tej samej
+// sekwencji intro, między nickiem autora a paskiem ładowania — ale init()
+// NIE czeka na bootIntroDone, żeby zacząć pobierać teren (patrz niżej:
+// init() czeka na `airportSelectDone` OSOBNO i od razu, równolegle z resztą
+// animacji intro/fade-out tej fazy — dokładnie taki jest sens tej zmiany:
+// gracz wybiera lotnisko i TEREN ZACZYNA SIĘ ŁADOWAĆ NATYCHMIAST, jeszcze
+// zanim ekran wyboru zdąży zniknąć).
 const bootIntroDone = (async function bootIntro() {
   await sleep(200);                 // chwila czystej czerni na starcie
   if (bootStudio) bootStudio.classList.add('show');
@@ -102,10 +113,15 @@ const bootIntroDone = (async function bootIntro() {
   if (bootAuthor) bootAuthor.classList.remove('show');
   await sleep(900);                 // fade-out autora
 
+  if (bootSelect) bootSelect.classList.add('show');
+  await airportSelectDone;          // czeka na wybór gracza (sim-airport-select.js)
+  if (bootSelect) bootSelect.classList.remove('show');
+  await sleep(500);                 // fade-out ekranu wyboru
+
   if (bootLoad) bootLoad.classList.add('show');   // od teraz widoczny prawdziwy pasek postępu
 })();
 
-// ── Realny postęp ładowania ───────────────────────────────────────────────────
+// ── Realny postęp ładowania (teren/model/pogoda) ──────────────────────────────
 // Zamiast losowego paska "na oko" — każdy etap ma wagę i zapala się dopiero
 // gdy odpowiadająca mu prawdziwa operacja (sieć/parsowanie/inicjalizacja)
 // faktycznie się zakończy. Tekst statusu przewija etykiety etapów wciąż
@@ -137,20 +153,68 @@ const statusTimer = setInterval(() => {
   statusRotIdx++;
 }, 900);
 
+// ── Drugi, NIEZALEŻNY pasek: dane lotniska (WKR API + Overpass) ──────────────
+// Leci RÓWNOLEGLE z paskiem terenu powyżej — nie wchodzi do LOAD_TOTAL_WEIGHT
+// i NIE blokuje ukrycia ekranu ładowania (dokładnie jak wcześniej
+// loadAirportLights() dla domyślnego lotniska: "może potrwać do minuty, gra
+// jest grywalna zanim się doładuje", tylko teraz WIDOCZNE na pasku zamiast
+// cichego "wskoczenia" świateł po fakcie). Trzy zgrubne etapy zamiast
+// realnego % — fetchAirportFullData to w praktyce dwa równoległe zapytania
+// sieciowe (patrz sim-airport-lights.js), trudno zmierzyć postęp w środku.
+function aptTrackProgress(phase) {
+  if (!loadbar2) return;
+  const pct = phase === 'searched' ? 45 : phase === 'done' ? 100 : 8;
+  loadbar2.style.width = pct + '%';
+  if (loadingText2) {
+    loadingText2.textContent = phase === 'searched'
+      ? 'Pasy znalezione — pobieranie dróg kołowania (Overpass)…'
+      : phase === 'done'
+      ? 'Dane lotniska gotowe.'
+      : 'Zapytanie do WKR API…';
+  }
+}
+
 (async function init() {
+  // Wybór gracza z ekranu startowego (sim-airport-select.js) —
+  // { icao, lat, lon, name, isPreset, searchObj }. Czekamy na TO, nie na
+  // bootIntroDone, żeby teren zaczął się ładować OD RAZU po wyborze, a nie
+  // dopiero po zakończeniu animacji fade-out ekranu wyboru.
+  const choice = await airportSelectDone;
+
+  // Punkt odniesienia CAŁEGO układu współrzędnych świata — ustawiany PRZED
+  // czymkolwiek innym, żeby DEM/kafle/budynki/spawn liczyły się od razu
+  // względem wybranego lotniska (nie zawsze-domyślnego EPWR jak wcześniej).
+  currentAirport = choice.icao;
+  refLat = choice.lat; refLon = choice.lon;
+
   try {
     await Promise.all([
-      prefetchDEM(SPAWN_LAT, SPAWN_LON, 2, 17),
-      prefetchDEM(SPAWN_LAT, SPAWN_LON, 3, 15),
-      prefetchDEM(SPAWN_LAT, SPAWN_LON, 4, 13),
-      prefetchDEM(SPAWN_LAT, SPAWN_LON, 5, 11),
-      prefetchDEM(SPAWN_LAT, SPAWN_LON, 6,  9),
+      prefetchDEM(refLat, refLon, 2, 17),
+      prefetchDEM(refLat, refLon, 3, 15),
+      prefetchDEM(refLat, refLon, 4, 13),
+      prefetchDEM(refLat, refLon, 5, 11),
+      prefetchDEM(refLat, refLon, 6,  9),
     ]);
   } catch (e) { console.error('[init] DEM prefetch failed', e); }
   completeStage('dem');
 
   const plane = new A321Entity({ id: 'a321' });
-  plane.reset({});
+  if (choice.isPreset) {
+    const apt = AIRPORTS[choice.icao];
+    plane.reset({ lat: apt.spawnLat, lon: apt.spawnLon, yawRad: apltHeadingToYawRad(apt.heading) });
+    // Zsynchronizuj podświetlenie przycisku lotniska w panelu — domyślnie w
+    // HTML aktywny jest EPWR, ale start mógł paść na LOWI/EDDF (patrz ekran
+    // wyboru lotniska), więc bez tego przycisk pokazywałby złe lotnisko.
+    document.querySelectorAll('[data-apt]').forEach(b => {
+      b.classList.toggle('active', b.dataset.apt === choice.icao);
+    });
+  } else {
+    // Dokładny próg pasa jeszcze nieznany (czeka na fetchAirportFullData
+    // poniżej, w aptDataP) — startujemy na przybliżonym punkcie odniesienia
+    // lotniska; worldSpawnAtRunway() (wołane z waptLoad()) doprecyzuje
+    // pozycję, gdy dane dojdą — zwykle kilka sekund, nie blokuje startu.
+    plane.reset({ lat: refLat, lon: refLon });
+  }
   scene.add(plane.mesh);
   addEntity(plane);
   activeEntity = plane;
@@ -164,17 +228,25 @@ const statusTimer = setInterval(() => {
   // updateTiles() zwraca teraz obietnice kafelków satelitarnych właśnie
   // uruchomionych (patrz sim-terrain.js) — czekamy na pierwszy komplet, żeby
   // pasek odzwierciedlał realne wczytanie terenu wokół miejsca startu.
-  const satTilesP = Promise.allSettled(updateTiles(SPAWN_LAT, SPAWN_LON, initialGroundDist))
+  const satTilesP = Promise.allSettled(updateTiles(refLat, refLon, initialGroundDist))
     .then(() => completeStage('sat'));
 
-  const buildingsP = loadBuildings(SPAWN_LAT, SPAWN_LON, initialGroundDist)
+  const buildingsP = loadBuildings(refLat, refLon, initialGroundDist)
     .then(() => completeStage('osm'))
     .catch(e => { console.error('[init] loadBuildings failed', e); completeStage('osm'); });
 
-  // Światła lotniskowe dla domyślnego lotniska — ładowane w tle, NIE blokują
-  // paska postępu (mogą potrwać do minuty przez wolne API/Overpass, a gra
-  // jest grywalna zanim się doładują — światła po prostu "wskoczą" po chwili).
-  if (typeof loadAirportLights !== 'undefined') loadAirportLights(currentAirport);
+  // Dane lotniska (pasy dokładne + Overpass: kołowanie/płyty/stanowiska/PAPI) —
+  // RÓWNOLEGLE z terenem powyżej (patrz aptTrackProgress powyżej), NIE
+  // blokują paska terenu. Dla lotniska świata to jednocześnie źródło
+  // dokładnego progu pasa (worldSpawnAtRunway wywoła się automatycznie na
+  // końcu waptLoad, patrz sim-airport-spawn.js).
+  aptTrackProgress('start');
+  const aptDataP = choice.isPreset
+    ? (typeof loadAirportLights !== 'undefined'
+        ? loadAirportLights(choice.icao, null, aptTrackProgress)
+        : Promise.resolve())
+    : waptLoad(choice.icao, choice.searchObj, aptTrackProgress);
+  aptDataP.catch(e => console.error('[init] dane lotniska', e));
 
   // Model A321 (obj+mtl) ładuje się w tle od razu w konstruktorze encji —
   // modelReadyPromise (patrz sim-physics.js) pozwala tu na niego poczekać.

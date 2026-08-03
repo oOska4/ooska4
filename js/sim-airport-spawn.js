@@ -112,7 +112,7 @@ function waptSetResults(list) {
       const div = document.createElement('div');
       div.className = 'wapt-result-item';
       div.textContent = `${apltGetIdent(c) || '?'} — ${apltGetName(c)} (${apltGetCountry(c)})`;
-      div.addEventListener('click', () => waptLoad(apltGetIdent(c)));
+      div.addEventListener('click', () => waptLoad(apltGetIdent(c), c));
       container.appendChild(div);
     }
   });
@@ -153,7 +153,7 @@ async function waptSearch(queryRaw) {
   const looksLikeIcao = /^[A-Za-z]{4}$/.test(q);
   if (looksLikeIcao) {
     const obj = await apltApiSearchByCode(q.toUpperCase());
-    if (obj) { await waptLoad(apltGetIdent(obj) || q.toUpperCase()); return; }
+    if (obj) { await waptLoad(apltGetIdent(obj) || q.toUpperCase(), obj); return; }
   }
 
   const candidates = await apltApiSearchText(q);
@@ -167,20 +167,41 @@ async function waptSearch(queryRaw) {
     waptSetStatus('Nie znaleziono lotniska. Spróbuj kodu ICAO, np. KJFK.');
     return;
   }
-  if (candidates.length === 1) { await waptLoad(apltGetIdent(candidates[0])); return; }
+  if (candidates.length === 1) { await waptLoad(apltGetIdent(candidates[0]), candidates[0]); return; }
   waptSetStatus(`Znaleziono ${candidates.length} lotnisk — wybierz:`);
   waptSetResults(candidates);
 }
 
 // ── Ładowanie lotniska (dane + światła + listy pas/stanowisko + auto-spawn) ──
-async function waptLoad(icao) {
+async function waptLoad(icao, hintObj, onProgress) {
   if (!icao) return;
   const myEpoch = ++waptLoadEpoch;
   waptSetStatus(`Ładowanie ${icao} (API+OSM, może potrwać do minuty)...`, true);
   waptSetResults([]);
 
+  // NATYCHMIASTOWY START TERENU: jeśli mamy już przybliżone lat/lon tego
+  // lotniska (np. z wyniku wyszukiwania — apltApiSearchText/apltApiSearchByCode
+  // już je zwróciły, albo z ekranu wyboru przy starcie — sim-airport-select.js),
+  // nie ma powodu czekać na fetchAirportFullData (pasy+Overpass, do ~60s)
+  // zanim zacznie się ciągnąć teren/satelitę/budynki — ten sam punkt i tak
+  // zostanie za chwilę doprecyzowany (patrz niżej). Pomijamy to, gdy punkt
+  // jest identyczny z bieżącym refLat/refLon (np. przy wyborze na starcie,
+  // gdzie init() w sim-main.js już to samo ustawił przed wywołaniem) —
+  // inaczej clearAllTiles() wyzerowałoby kafle, które właśnie zaczęły się
+  // ładować dla tego samego miejsca.
+  const hintLat = hintObj ? apltGetLat(hintObj) : NaN;
+  const hintLon = hintObj ? apltGetLon(hintObj) : NaN;
+  if (!isNaN(hintLat) && !isNaN(hintLon) && (hintLat !== refLat || hintLon !== refLon)) {
+    currentAirport = icao;
+    refLat = hintLat; refLon = hintLon;
+    if (typeof clearAllTiles === 'function') clearAllTiles();
+    if (typeof clearAllBldg  === 'function') clearAllBldg();
+    orb.lat = hintLat; orb.lon = hintLon;
+    for (const [r, z] of [[2, 17], [3, 15], [4, 13], [5, 11]]) prefetchDEM(hintLat, hintLon, r, z);
+  }
+
   try {
-    const data = await fetchAirportFullData(icao);
+    const data = await fetchAirportFullData(icao, onProgress);
     if (myEpoch !== waptLoadEpoch) return; // w międzyczasie wybrano coś innego
 
     const validRunways = data.validRunways.filter(r =>

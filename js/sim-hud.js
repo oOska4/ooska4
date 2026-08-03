@@ -176,6 +176,7 @@ const hudEl = {
   brakes:     document.getElementById('brakes-val'),
   park:       document.getElementById('park-val'),
   autobrake:  document.getElementById('autobrake-val'),
+  mcduAptLbl: document.getElementById('mcdu-apt-lbl'),
 };
 
 function updateHUD() {
@@ -286,6 +287,15 @@ function updateHUD() {
     hudEl.fmaSpd.classList.toggle('active', plane.ap.spdHold);
   }
   if (typeof apUI !== 'undefined') apUI.syncFromEntity(plane); // złap autonomiczne rozłączenia (ręczny ster) w panelu
+
+  // Etykieta ICAO na przycisku szuflady MCDU (logika otwierania/zakladek w
+  // sim-controls.js, sekcja "Szuflada MCDU") — dla lotniska swiata pokazuje
+  // jego ICAO zamiast ostatniego wbudowanego presetu (EPWR/LOWI/EDDF).
+  if (hudEl.mcduAptLbl) {
+    hudEl.mcduAptLbl.textContent = (typeof worldAirportActive === 'function' && worldAirportActive()
+      && typeof WorldAirport !== 'undefined' && WorldAirport && WorldAirport.icao)
+      ? WorldAirport.icao : currentAirport;
+  }
 
   // Windshear — ostrzeżenie widoczne DOKŁADNIE podczas scenariusza testowego
   // (patrz weather.triggerWindshearTest / getWindshearDelta).

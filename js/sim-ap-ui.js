@@ -11,6 +11,11 @@
 // co klatkę z HUD (patrz sim-hud.js) — żeby panel odzwierciedlał też
 // AUTONOMICZNE rozłączenia trybów (np. ręczne przejęcie steru odłącza oś w
 // fizyce, a UI musi to pokazać bez czekania na kolejne kliknięcie).
+//
+// Jedna zakładka (🅰 AUTOPILOT) w szufladzie MCDU (sim-mcdu.js) — jeden zestaw
+// elementów (dg-ap-*). Szybki master toggle na pasku akcji (#ar-ap, patrz
+// sim-controls.js) woła te same _toggleMaster()/syncFromEntity() co przycisk
+// w szufladzie, więc oba miejsca są zawsze zsynchronizowane.
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const AP_STEP = { hdg: 1, alt: 100, vs: 100, spd: 5 };
@@ -20,53 +25,9 @@ const AP_RANGE = {
   spd: [90, 350],
 };
 
-// Popup mobile: natychmiastowy bind niezależny od reszty UI — ten sam wzorzec
-// co bindWeightPopupEarly() w sim-weight-ui.js.
-(function bindApPopupEarly() {
-  function tryBind() {
-    const popup = document.getElementById('ap-popup');
-    const close = document.getElementById('apwpop-close');
-    if (!popup) return;
-    if (close) close.addEventListener('click', () => { popup.style.display = 'none'; });
-    // Zamknij tez po kliknieciu bezposrednio na przyciemnione tlo
-    // (#ap-popup to teraz peloekranowy backdrop, e.target===popup znaczy
-    // klikniecie poza karta .popup-card).
-    document.addEventListener('click', (e) => {
-      if (popup.style.display === 'flex' && e.target.id !== 'mpop-ap' &&
-          (e.target === popup || !popup.contains(e.target))) {
-        popup.style.display = 'none';
-      }
-    });
-  }
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', tryBind);
-  } else {
-    tryBind();
-  }
-})();
-
-// Otwiera popup autopilota na mobile — wołane z sim-controls.js (przycisk
-// mpop-ap w menu mobilnym).
-function openApPopup() {
-  const popup = document.getElementById('ap-popup');
-  if (popup) popup.style.display = 'flex';
-  apUI.syncFromEntity(activeEntity);
-}
-
 const apUI = {
-  _open: false,
-
   init() {
-    document.getElementById('btn-ap-toggle')?.addEventListener('click', () => {
-      const panel = document.getElementById('ap-panel');
-      if (!panel) return;
-      this._open = !this._open;
-      panel.style.display = this._open ? 'block' : 'none';
-      document.getElementById('btn-ap-toggle').textContent = this._open ? '▲' : '▼';
-    });
-
     document.getElementById('dg-ap-master')?.addEventListener('click', () => this._toggleMaster());
-    document.getElementById('mw-ap-master')?.addEventListener('click', () => this._toggleMaster());
 
     document.querySelectorAll('.ap-step').forEach(btn => {
       btn.addEventListener('click', () => this._step(btn.dataset.ap, +btn.dataset.dir));
@@ -76,10 +37,11 @@ const apUI = {
     });
 
     document.getElementById('btn-windshear-test')?.addEventListener('click', () => weather?.triggerWindshearTest());
-    document.getElementById('mwpop-windshear-test')?.addEventListener('click', () => weather?.triggerWindshearTest());
 
     this.syncFromEntity(activeEntity);
   },
+
+  toggleMaster() { this._toggleMaster(); }, // wołane też z #ar-ap (pasek akcji, sim-controls.js)
 
   _toggleMaster() {
     const p = activeEntity; if (!p) return;
@@ -114,18 +76,19 @@ const apUI = {
     this.syncFromEntity(p);
   },
 
-  // Odświeża CAŁY panel (desktop + mobile) na podstawie stanu encji — wołane
-  // po każdej interakcji UI ORAZ co klatkę z HUD (patrz komentarz na górze
-  // pliku), żeby złapać autonomiczne rozłączenia trybów przez fizykę.
+  // Odświeża panel na podstawie stanu encji — wołane po każdej interakcji UI
+  // ORAZ co klatkę z HUD (patrz komentarz na górze pliku), żeby złapać
+  // autonomiczne rozłączenia trybów przez fizykę. Odświeża też #ar-ap (szybki
+  // toggle na pasku akcji), żeby oba miejsca zawsze pokazywały to samo.
   syncFromEntity(p) {
     if (!p) return;
-    const masterTxt = p.ap.master ? 'WŁĄCZONY' : 'WYŁĄCZONY';
-    for (const id of ['dg-ap-master', 'mw-ap-master']) {
-      const el = document.getElementById(id);
-      if (!el) continue;
-      el.textContent = masterTxt;
-      el.classList.toggle('active', p.ap.master);
+    const masterEl = document.getElementById('dg-ap-master');
+    if (masterEl) {
+      masterEl.textContent = p.ap.master ? 'WŁĄCZONY' : 'WYŁĄCZONY';
+      masterEl.classList.toggle('active', p.ap.master);
     }
+    const railEl = document.getElementById('ar-ap');
+    if (railEl) railEl.classList.toggle('active', p.ap.master);
 
     const vals = {
       hdg: Math.round(p.ap.targetHdgDeg) + '°',
@@ -133,19 +96,12 @@ const apUI = {
       vs:  (p.ap.targetVsFpm >= 0 ? '+' : '') + Math.round(p.ap.targetVsFpm) + 'fpm',
       spd: Math.round(p.ap.targetSpdKt) + 'kt',
     };
-    for (const key of ['hdg', 'alt', 'vs', 'spd']) {
-      for (const prefix of ['dg-ap-', 'mw-ap-']) {
-        const el = document.getElementById(prefix + key + '-val');
-        if (el) el.textContent = vals[key];
-      }
-    }
-
     const modeOf = { hdg: 'hdgHold', alt: 'altHold', vs: 'vsHold', spd: 'spdHold' };
     for (const key of ['hdg', 'alt', 'vs', 'spd']) {
-      for (const prefix of ['dg-ap-', 'mw-ap-']) {
-        const el = document.getElementById(prefix + key + '-eng');
-        if (el) el.classList.toggle('active', !!p.ap[modeOf[key]]);
-      }
+      const valEl = document.getElementById('dg-ap-' + key + '-val');
+      if (valEl) valEl.textContent = vals[key];
+      const engEl = document.getElementById('dg-ap-' + key + '-eng');
+      if (engEl) engEl.classList.toggle('active', !!p.ap[modeOf[key]]);
     }
   },
 };
