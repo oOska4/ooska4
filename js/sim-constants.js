@@ -1,12 +1,12 @@
 'use strict';
 
-// ── Stałe świata ─────────────────────────────────────────────────────────────
+// World constants
 const EARTH_RADIUS     = 6_371_000;
 const DEM_EXAG         = 3.0;
 const Y_SCALE          = 0.4;
 const BUILDING_H_SCALE = 2.0;
 
-// ── Lotniska ──────────────────────────────────────────────────────────────────
+// Airports
 const AIRPORTS = {
   EPWR: { name: 'Wrocław',    refLat: 51.10219, refLon: 16.88560,
           spawnLat: 51.09919149901774,  spawnLon: 16.897240753263095,  heading: 296 },
@@ -24,7 +24,7 @@ const SPAWN_LAT         = AIRPORTS.EPWR.spawnLat;
 const SPAWN_LON         = AIRPORTS.EPWR.spawnLon;
 const SPAWN_HEADING_DEG = AIRPORTS.EPWR.heading;
 
-// ── Konwersje jednostek ───────────────────────────────────────────────────────
+// Unit conversions
 const Units = {
   mToFt:    m   => m   * 3.28084,
   ftToM:    ft  => ft  * 0.3048,
@@ -36,7 +36,7 @@ const Units = {
   degToRad: d   => d   * Math.PI / 180,
 };
 
-// ── Projekcja geo ↔ world ─────────────────────────────────────────────────────
+// Geo ↔ world projection
 
 function geoToWorld(lat, lon, altM = 0) {
   const cosRef = Math.cos(Units.degToRad(refLat));
@@ -53,8 +53,7 @@ function worldToGeo(p) {
   return { lat, lon, altM };
 }
 
-// Uwaga: domyślny argument `orb.dist` jest ewaluowany w momencie wywołania,
-// więc `orb` musi istnieć do czasu pierwszego wywołania (nie w chwili definicji).
+// Handle function cameraGroundDistanceM().
 function cameraGroundDistanceM(fallback) {
   if (fallback === undefined) fallback = orb.dist;
   const { lat, lon, altM } = worldToGeo(camera.position);

@@ -1,33 +1,6 @@
 'use strict';
 
-// ════════════════════════════════════════════════════════════════════════════════
-// sim-contrails.js  —  Smugi kondensacyjne (contrails) silników A321
-//
-// Renderowanie 1:1 przeniesione z referencyjnego prototypu (GemContrails.html):
-// te same shadery (vertex/fragment), ten sam THREE.Points + NormalBlending +
-// depthWrite:false, ten sam sposób "starzenia" cząsteczek (uTime/aSpawnTime).
-// NIE zmieniamy tego potoku renderowania — tylko podłączamy go do prawdziwych
-// pozycji silników A321 (dwa punkty emisji zamiast jednego) w skali świata
-// simworld (Y_SCALE / DEM_EXAG jak reszta sceny — patrz sim-constants.js).
-//
-// UWAGA log-depth: renderer.js (sim-scene.js) używa logarithmicDepthBuffer:true.
-// Próba ręcznego dopisania logiki logarytmicznej głębi do tego custom
-// ShaderMaterial (przez #include Three.js LUB przez ręczny zapis do
-// gl_FragDepthEXT) okazała się kruche i psuło kompilację shadera na części
-// konfiguracji GPU/przeglądarek. Zamiast tego — dokładnie tak jak sim-sky.js
-// robi to dla chmur wolumetrycznych i sky dome (depthTest:false, depthWrite:
-// false, renderOrder ustawiony tak by rysować się na wierzchu) — smugi mają
-// depthTest:false: zawsze widoczne, niezależnie od tego co jest "przed" nimi
-// w buforze głębi. To rozwiązuje problem "smuga renderuje się za terenem" w
-// najprostszy, najbardziej niezawodny sposób kosztem tego, że teoretycznie
-// smuga schowana za górą/budynkiem też by "prześwitywała" — w praktyce
-// smugi lecą na wysokości przelotowej dużo ponad terenem, więc to nie
-// występuje w normalnym użytkowaniu.
-//
-// Na razie smugi są ZAWSZE aktywne (emitowane niezależnie od warunków
-// atmosferycznych) — later TODO: kryterium Schmidt-Appleman (temperatura,
-// wilgotność, ciśnienie na wysokości przelotu) do włączania/wyłączania emisji.
-// ════════════════════════════════════════════════════════════════════════════════
+// Section: CONTRAIL_VERT.
 
 const CONTRAIL_VERT = `
     #include <common>
@@ -54,10 +27,10 @@ const CONTRAIL_VERT = `
             return;
         }
 
-        // Bardzo subtelne, kontrolowane puchnięcie chmury w czasie
+        // Very subtle, controlled cloud growth over time.
         float expansion = 1.0 + pow(age, 0.45) * 4.0;
 
-        // Pozycja z lekkim turbulencyjnym rozrzutem bocznym
+        // Position with slight lateral turbulence.
         vec3 currentPos = aSpawnPosition;
         currentPos.x += sin(age * 1.5 + aRandom * 20.0) * 0.15 * age;
         currentPos.y += cos(age * 1.0 + aRandom * 20.0) * 0.15 * age;
@@ -68,10 +41,10 @@ const CONTRAIL_VERT = `
         gl_Position = projectionMatrix * mvPosition;
         #include <logdepthbuf_vertex>
 
-        // Rozmiar bazowy skalowany do metrycznej skali świata simworld (kamera
-        // bywa setki metrów od smugi) — na tyle duży, by smuga (średnica rzędu
-        // kilku metrów przy dyszy, rosnąca z wiekiem) była widoczna z typowego
-        // dystansu orbitu/kokpitu, ale bez zamieniania jej w plamę.
+        // Scale the base size to simworld units (camera
+        // can be hundreds of metres from the contrail) — large enough for the contrail (roughly
+        // A few metres near the nozzle and increasing with age) was visible from a typical
+        // and cockpit distance, without turning it into a blob.
         gl_PointSize = uBaseSize * expansion * (700.0 / -mvPosition.z);
     }
 `;
@@ -93,7 +66,7 @@ const CONTRAIL_FRAG = `
                    mix(hash(i + vec2(0.0,1.0)), hash(i + vec2(1.0,1.0)), u.x), u.y);
     }
 
-    // 3-warstwowy szum FBM dla uzyskania wyraźnej tekstury kłębów dymu
+    // Three-layer FBM noise for distinct contrail texture.
     float fbm(vec2 p) {
         float v = 0.0; float a = 0.5;
         for (int i = 0; i < 3; ++i) {
@@ -105,26 +78,26 @@ const CONTRAIL_FRAG = `
     void main() {
         vec2 uv = gl_PointCoord;
 
-        // Zaokrąglenie cząsteczki
+        // Round the particle.
         float dist = length(uv - vec2(0.5));
         if (dist > 0.5) discard;
         float sphereShape = smoothstep(0.5, 0.1, dist);
 
-        // Miks lokalnego UV z pozycją w świecie generuje unikalną strukturę chmury
+        // Mix local UV with world position to generate a unique cloud pattern.
         vec2 noiseUV = uv * 2.2 + vWorldPos.xz * 0.4 + vec2(vRandom * 30.0, vAge * 0.3);
         float cloudNoise = fbm(noiseUV);
 
-        // Przerwa kondensacyjna tuż za dyszą silnika
+        // Condensation gap directly behind the engine nozzle.
         float fadeIn = smoothstep(0.08, 0.4, vAge);
         float fadeOut = smoothstep(uMaxLife, uMaxLife * 0.75, vAge);
 
-        // Obliczanie finalnej gęstości z wysokim kontrastem szumu
+        // Compute final density with high-contrast noise.
         float density = sphereShape * (cloudNoise * 1.8) * fadeIn * fadeOut;
 
-        // Porzucamy renderowanie przezroczystych pikseli chmury (anti-lag)
+    // Skip transparent cloud pixels to reduce lag.
         if (density < 0.22) discard;
 
-        // Trójwymiarowe cieniowanie wewnętrzne kłębów (przestrzenność)
+    // Add volumetric internal shading.
         vec3 iceColor = vec3(1.0, 1.0, 1.0);
         vec3 shadowColor = vec3(0.78, 0.83, 0.9);
         vec3 finalColor = mix(shadowColor, iceColor, smoothstep(0.2, 0.6, cloudNoise * sphereShape));
@@ -134,7 +107,7 @@ const CONTRAIL_FRAG = `
     }
 `;
 
-// ── Manager pojedynczej smugi (jeden silnik) — identyczny z prototypem ───────
+// Single-contrail manager, matching the prototype.
 class ContrailEmitter {
   constructor(maxParticles = 1000) {
     this.maxParticles = maxParticles;
@@ -174,7 +147,7 @@ class ContrailEmitter {
     scene.add(this.mesh);
   }
 
-  // Emitujemy tylko 1-2 cząsteczki na klatkę, żeby smuga nie zlewała się w gruby pas
+  // Airport lighting note.
   emit(worldPosition, clockTime, count = 1) {
     for (let i = 0; i < count; i++) {
       const idx = this.particleIndex;
@@ -206,25 +179,17 @@ class ContrailEmitter {
   }
 }
 
-// ════════════════════════════════════════════════════════════════════════════════
-// SYSTEM SMUG SAMOLOTU — dwa emitery (silnik lewy/prawy), podpięte pod
-// world-space pozycje realnych punktów fan_L/fan_R modelu A321 (gdy model jest
-// już wczytany), z fallbackiem na przybliżony offset zanim model się załaduje.
-// ════════════════════════════════════════════════════════════════════════════════
+// Section: CONTRAIL_ENGINE_OFFSET_L.
 
-// Przybliżony offset silnika względem origin encji w LOKALNYM układzie
-// samolotu (ten sam co reszta fizyki: +X = prawe skrzydło, +Y = góra,
-// +Z = dziób) — używany zanim model jest wczytany / gdyby fan_L/fan_R nie
-// zostały odnalezione w scenie. Wartości przybliżone z geometrii A321
-// (silniki pod skrzydłem, nieco przed i poniżej linii kadłuba).
+// Configure CONTRAIL_ENGINE_OFFSET_L.
 const CONTRAIL_ENGINE_OFFSET_L = { x: -5.9, y: -2.0, z: 3.0 };
 const CONTRAIL_ENGINE_OFFSET_R = { x:  5.9, y: -2.0, z: 3.0 };
 
-// Domyślnie smugi generowane tylko gdy spełnione warunki fizyczne
+// Configure CONTRAIL_ALWAYS_ACTIVE.
 const CONTRAIL_ALWAYS_ACTIVE = false;
-// Włącz/wyłącz sprawdzanie kryterium Schmidt–Appleman
+// Configure CONTRAIL_SA_ENABLED.
 const CONTRAIL_SA_ENABLED = true;
-// Override w runtime: `window.CONTRAILS_ALWAYS_ON = true` wymusi emisję niezależnie od warunków
+// Configure CONTRAIL_RUNTIME_FORCE_FLAG.
 const CONTRAIL_RUNTIME_FORCE_FLAG = 'CONTRAILS_ALWAYS_ON';
 
 class AircraftContrailSystem {
@@ -237,11 +202,7 @@ class AircraftContrailSystem {
     this._emitAccumulator = 0;
   }
 
-  // Zwraca pozycję świata (world-space, ze skalą Y_SCALE/DEM_EXAG spójną z
-  // resztą sceny) danego silnika. W przypadku fan_L/fan_R używamy prawdziwej
-  // pozycji węzła w scenie, a w fallbackzie transformujemy offset lokalny przez
-  // pełną macierz świata samolotu. Dzięki temu punkty emisji pozostają stałe
-  // względem kadłuba niezależnie od orientacji (yaw/pitch/roll).
+  // Airport lighting note.
   _engineWorldPos(fanNode, localOffset, out) {
     const e = this.entity;
     e.mesh.updateMatrixWorld(true);
@@ -255,50 +216,38 @@ class AircraftContrailSystem {
     return out.copy(this._tmpOffset);
   }
 
-  // Proste, przybliżone (ale sensowne) sprawdzenie kryterium Schmidt–Appleman.
-  // Bazuje na temperaturze, ciśnieniu i przybliżonej relatywnej wilgotności
-  // dostarczonej przez WeatherSystem.getRelativeHumidity(alt). Nie jest to
-  // pełna numeryczna implementacja publikacji źródłowych z dokładnością
-  // do każdego termu spalania, ale dobrze sprawdza się w symulacji i jest
-  // konfigurowalne przez stałe powyżej.
+  // Implementation note.
   _schmidtAppleman() {
     if (typeof weather === 'undefined' || !weather) return true;
-    const T_C = weather.temperature; // w °C
-    const p_hPa = weather.pressure; // w hPa
+    const T_C = weather.temperature; // Temperature in °C.
+    const p_hPa = weather.pressure; // Pressure in hPa.
     const RH = (typeof weather.getRelativeHumidity === 'function') ? weather.getRelativeHumidity(this.entity.altM) : 0.45;
 
-    // Funkcje pomocnicze: nasycenie pary wodnej nad wodą / lodem (hPa)
+    // Handle function es_water().
     function es_water(T) { return 6.112 * Math.exp(17.62 * T / (243.12 + T)); }
     function es_ice(T)   { return 6.112 * Math.exp(22.46 * T / (272.62 + T)); }
 
     const esw = es_water(T_C);
     const esi = es_ice(T_C);
 
-    // Relative humidity w stosunku do lodu (RHi) — ważne dla kondensacji/sublimacji
+    // Configure RHi.
     const RHi = RH * (esw / Math.max(esi, 1e-6));
 
-    // Proste zasady decyzyjne — z tolerancją numeryczną oraz mniej restrykcyjne
-    // progi dla bardzo niskich temperatur (przydatne na dużych wysokościach).
-    // 1) Jeśli powietrze jest przesycone względem lodu → smugi powstają
+    // Configure if.
     if (RHi >= 1.0) return true;
 
-    // 2) Jeśli RHi jest bliskie nasycenia (>0.90) uznajemy to za wystarczające
-    //    (dotyczy to warunków, gdzie model RH może być przybliżony).
+    // Configure if.
     if (RHi >= 0.90) return true;
 
-    // 3) Dla bardzo niskich temperatur (głębokie przestworza) pozwólmy na
-    //    formację smug przy nieco niższych wartościach RHi (np. 0.85), ponieważ
-    //    fizyczne procesy i rozrzedzenie pary sprzyjają kondensacji przy -40°C i niżej.
+    // Configure if.
     if (T_C <= -40 && RHi >= 0.85) return true;
 
-    // 4) W pozostałych przypadkach brak formacji smug
+    // Configure return.
     return false;
   }
 
   emit(clockTime, dt = 1 / 60) {
-    // Runtime override: umożliwia wymuszenie smug z konsoli przez ustawienie
-    // `window.CONTRAILS_ALWAYS_ON = true`. Jeśli nie ma override'u, stosujemy
-    // kryterium Schmidt–Appleman (jeśli włączone) lub legacy flagę.
+    // Configure runtimeForce.
     const runtimeForce = (typeof window !== 'undefined') && (window[CONTRAIL_RUNTIME_FORCE_FLAG] === true);
     if (!runtimeForce) {
       if (CONTRAIL_SA_ENABLED) {

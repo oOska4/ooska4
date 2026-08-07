@@ -1,6 +1,6 @@
 'use strict';
 
-// ── Konfiguracja budynków OSM ─────────────────────────────────────────────────
+// OSM building config
 const BLDG_ZOOM      = 15;
 const BLDG_RADIUS    = 2;
 const BLDG_MAX_DIST  = 80_000;
@@ -14,7 +14,7 @@ const BLDG_KEY  = '59fcc2e8';
 const BLDG_URLS = ['a', 'b', 'c'].map(s =>
   `https://${s}.data.osmbuildings.org/0.2/${BLDG_KEY}/tile/{z}/{x}/{y}.json`);
 
-// Jeden materiał na wszystkie budynki (vertex colors)
+// One shared material for all buildings (vertex colors)
 const buildingMat = new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.FrontSide });
 
 const buildingMeshes = new Map();
@@ -24,7 +24,7 @@ let lastBldgKey = null;
 let bldgCtrl    = new AbortController();
 let bldgEpoch   = 0;
 
-// ── Zarządzanie kafelkami budynków ────────────────────────────────────────────
+// Building tile management
 
 function evictBldgTile(k) {
   const m = buildingMeshes.get(k);
@@ -54,7 +54,7 @@ function putBldgCache(k, items) {
     buildingCache.delete(buildingCache.keys().next().value);
 }
 
-// ── Pomocnicze ────────────────────────────────────────────────────────────────
+// Helpers
 
 function sampleDemHeight(dem, lat, lon, zoom) {
   if (!dem) return 0;
@@ -167,7 +167,7 @@ function parseBldgHeight(tags) {
   return 8;
 }
 
-// ── Główna funkcja ładowania budynków ─────────────────────────────────────────
+// Main building-loading function
 
 async function loadBuildings(lat, lon, camGroundDist) {
   const shouldShow = camGroundDist <= BLDG_MAX_DIST && camGroundDist >= BLDG_MIN_DIST;
@@ -184,7 +184,7 @@ async function loadBuildings(lat, lon, camGroundDist) {
   bldgEpoch++;
   const epoch = bldgEpoch, sig = bldgCtrl.signal;
 
-  // Szybka ścieżka: dane z cache
+  // Fast path: cached data
   if (buildingCache.has(bKey)) {
     const cached = buildingCache.get(bKey);
     buildingCache.delete(bKey);
@@ -211,7 +211,7 @@ async function loadBuildings(lat, lon, camGroundDist) {
     }));
     if (epoch !== bldgEpoch || sig.aborted) return;
 
-    // Parsuj GeoJSON budynków
+    // Parse building GeoJSON
     const raw = [];
     for (const res of jsonResults) {
       if (!res) continue;
@@ -236,7 +236,7 @@ async function loadBuildings(lat, lon, camGroundDist) {
     }
     if (epoch !== bldgEpoch || sig.aborted) return;
 
-    // Pobierz DEM + piksele kolorów dla budynków
+    // Fetch DEM + color pixels for buildings
     const satZ    = activeTileZoom ?? COLOR_SAT_ZOOM;
     const demKeys = new Set(), satKeys = new Set();
     for (const b of raw) {
@@ -252,7 +252,7 @@ async function loadBuildings(lat, lon, camGroundDist) {
     ]);
     if (epoch !== bldgEpoch || sig.aborted) return;
 
-    // Buduj dane gotowe do ekstrudowania
+    // Build data ready for extrusion
     const items = [];
     for (const b of raw) {
       const [cl, co] = b.center;

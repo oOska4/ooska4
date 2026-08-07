@@ -1,22 +1,6 @@
 'use strict';
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// sim-ap-ui.js — UI autopilota (HDG HOLD / ALT HOLD / V-S HOLD / autothrust)
-// Zależy od: sim-physics.js (activeEntity.ap — patrz konstruktor A321Entity)
-//
-// W przeciwieństwie do wagi/paliwa (sim-weight-ui.js), autopilot działa NA
-// ŻYWO — zmiana wartości na suwaku/przycisku widoczna jest w fizyce już w
-// następnej klatce (bo tak działa prawdziwy MCP: nakręcasz nową wysokość,
-// A/P od razu zaczyna do niej lecieć). Dlatego syncFromEntity() jest wołane
-// co klatkę z HUD (patrz sim-hud.js) — żeby panel odzwierciedlał też
-// AUTONOMICZNE rozłączenia trybów (np. ręczne przejęcie steru odłącza oś w
-// fizyce, a UI musi to pokazać bez czekania na kolejne kliknięcie).
-//
-// Jedna zakładka (🅰 AUTOPILOT) w szufladzie MCDU (sim-mcdu.js) — jeden zestaw
-// elementów (dg-ap-*). Szybki master toggle na pasku akcji (#ar-ap, patrz
-// sim-controls.js) woła te same _toggleMaster()/syncFromEntity() co przycisk
-// w szufladzie, więc oba miejsca są zawsze zsynchronizowane.
-// ═══════════════════════════════════════════════════════════════════════════════
+// Configure AP_STEP.
 
 const AP_STEP = { hdg: 1, alt: 100, vs: 100, spd: 5 };
 const AP_RANGE = {
@@ -41,7 +25,7 @@ const apUI = {
     this.syncFromEntity(activeEntity);
   },
 
-  toggleMaster() { this._toggleMaster(); }, // wołane też z #ar-ap (pasek akcji, sim-controls.js)
+  toggleMaster() { this._toggleMaster(); }, // also called from #ar-ap (action rail, sim-controls.js)
 
   _toggleMaster() {
     const p = activeEntity; if (!p) return;
@@ -54,8 +38,7 @@ const apUI = {
     const p = activeEntity; if (!p) return;
     p.ap[mode] = !p.ap[mode];
     if (p.ap[mode]) {
-      p.ap.master = true; // włączenie dowolnego trybu automatycznie włącza główny wyłącznik AP
-      // ALT i V/S wykluczają się (dokładnie jak na prawdziwym MCP)
+      p.ap.master = true; // Configure if.
       if (mode === 'altHold') p.ap.vsHold = false;
       if (mode === 'vsHold')  p.ap.altHold = false;
     }
@@ -76,10 +59,7 @@ const apUI = {
     this.syncFromEntity(p);
   },
 
-  // Odświeża panel na podstawie stanu encji — wołane po każdej interakcji UI
-  // ORAZ co klatkę z HUD (patrz komentarz na górze pliku), żeby złapać
-  // autonomiczne rozłączenia trybów przez fizykę. Odświeża też #ar-ap (szybki
-  // toggle na pasku akcji), żeby oba miejsca zawsze pokazywały to samo.
+  // Physics note.
   syncFromEntity(p) {
     if (!p) return;
     const masterEl = document.getElementById('dg-ap-master');

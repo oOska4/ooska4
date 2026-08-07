@@ -1,17 +1,6 @@
 'use strict';
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// sim-weather-ui.js  —  UI do sterowania pogodą + niebem (czas/data/jakość)
-// Zależy od: sim-weather.js (WeatherState, WeatherPresets, weather)
-//            sim-sky.js     (TimeState, formatTimeHHMM, formatDayOfYear,
-//                             setSkyQuality, QualityPresets)
-//
-// Jedna zakładka (🌦 POGODA) w szufladzie MCDU (sim-mcdu.js) — jeden zestaw
-// elementów (dw-*), bez oddzielnego panelu desktop + popupu mobile jak
-// wcześniej (dublowanie usunięte razem z konsolidacją menu — patrz #mcdu-drawer
-// w simworld.html). Widoczność strony steruje sama szuflada (.mcdu-page.active),
-// więc nie ma tu już własnego collapse/toggle.
-// ═══════════════════════════════════════════════════════════════════════════════
+// Configure weatherUI.
 
 const weatherUI = {
   init() {
@@ -30,7 +19,7 @@ const weatherUI = {
     ];
     for (const [name, setter, fmt] of bindings) this._bind('dw-' + name, setter, fmt);
 
-    // Opady (select + intensywność) — tylko "Brak"/"Deszcz" (śnieg nieobsługiwany)
+    // Precipitation (select + intensity) only "None"/"Rain" (snow unsupported)
     const precipEl = document.getElementById('dw-precip');
     if (precipEl) precipEl.addEventListener('change', () => {
       WeatherState.precipitation = precipEl.value !== 'none';
@@ -41,24 +30,24 @@ const weatherUI = {
       btn.addEventListener('click', () => weather?.applyPreset(btn.dataset.preset));
     });
 
-    // ── NIEBO: czas / data / animacja / jakość chmur ──────────────────────────
+    // SKY: time / date / animation / cloud quality
     this._bindSkyControls();
   },
 
-  // Bind slider → WeatherState + label
+  // Binds a slider to a WeatherState field + label.
   _bind(id, setter, unit, labelFn) {
     const el  = document.getElementById(id);
     const lbl = document.getElementById(id + '-lbl');
     if (!el) return;
     const fmt = labelFn || (v => v + (unit || ''));
     el.addEventListener('input', () => {
-      if (weather && weather._trans) weather._trans.t = 1.0;  // przerwij preset transition
+      if (weather && weather._trans) weather._trans.t = 1.0;  // cancel any preset transition
       setter(el.value);
       if (lbl) lbl.textContent = fmt(el.value);
     });
   },
 
-  // ── Sterowanie niebem (czas/data/animacja/jakość) — sim-sky.js ──────────────
+  // Sky controls (time/date/animation/quality) sim-sky.js
   _bindSkyControls() {
     const timeEl = document.getElementById('dw-time');
     if (timeEl) timeEl.addEventListener('input', () => {
@@ -73,12 +62,12 @@ const weatherUI = {
       this._setDateLabel('dw-date', TimeState.dayOfYear);
     });
 
-    // Animacja czasu — przycisk toggle
+    // Time animation toggle button
     document.getElementById('dw-anim')?.addEventListener('click', () => {
       TimeState.animating = !TimeState.animating;
       this._setAnimBtnLabel(TimeState.animating);
     });
-    // Prędkość animacji (minuty symulacji na sekundę realnego czasu)
+    // Animation speed (simulated minutes per real second)
     const speedEl = document.getElementById('dw-anim-speed');
     if (speedEl) {
       speedEl.addEventListener('change', () => {
@@ -87,9 +76,7 @@ const weatherUI = {
       TimeState.animMinutesPerSecond = parseFloat(speedEl.value);
     }
 
-    // Jakość chmur (Niska/Średnia/Wysoka) — teraz w zakładce ⚙ JAKOŚĆ, ale
-    // logika zostaje tu (ten sam atrybut data-qual, niezależnie od tego w
-    // której zakładce fizycznie leży w HTML).
+    // Rendering note.
     document.querySelectorAll('[data-qual]').forEach(btn => {
       btn.addEventListener('click', () => setSkyQuality(btn.dataset.qual));
     });
@@ -119,14 +106,13 @@ const weatherUI = {
     if (lbl) lbl.textContent = formatDayOfYear(doy);
   },
 
-  // Wołane z sim-sky.js co klatkę, TYLKO gdy animacja czasu jest aktywna —
-  // aktualizuje położenie suwaków bez wywoływania ich 'input' (brak pętli).
+  // Rendering note.
   syncSkyUI() {
     this._setTimeLabel('dw-time', TimeState.minutesOfDay);
     this._setDateLabel('dw-date', TimeState.dayOfYear);
   },
 
-  // Synchronizuj UI z WeatherState (np. po zmianie presetu)
+  // Syncs the UI from WeatherState (e.g.
   syncUI() {
     const s = WeatherState;
     const vals = {

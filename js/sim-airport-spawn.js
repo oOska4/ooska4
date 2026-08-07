@@ -1,33 +1,11 @@
 'use strict';
 
-// ════════════════════════════════════════════════════════════════════════════════
-// sim-airport-spawn.js
-//
-// Spawn na DOWOLNYM lotnisku świata (nie tylko EPWR/LOWI/EDDF z AIRPORTS{}):
-// wyszukiwarka po ICAO/nazwie (ten sam WKR API co airport.html), wybór
-// KONKRETNEJ końcówki pasa (np. "11" albo "29" — każdy pas ma dwie), spawn
-// NA PASIE (gotowy do startu), spawn NA STANOWISKU (numer z realnych danych
-// OSM parking_position) oraz spawn w PODEJŚCIU (na wybraną końcówkę, ten sam
-// profil co istniejące spawnApproach() dla lotnisk wbudowanych).
-//
-// Korzysta z warstwy danych sim-airport-lights.js (fetchAirportFullData,
-// apltXxx helpery) — MUSI się więc ładować PO tym pliku (patrz simworld.html).
-// Ładowanie lotniska świata jednocześnie odświeża światła nocne (reużywając
-// TYCH SAMYCH pobranych danych — jedno zapytanie sieciowe, nie dwa).
-//
-// Integracja z istniejącym "R"/Reset i "Approach": resetPlane()/spawnApproach()
-// w sim-controls.js sprawdzają worldAirportActive() i, gdy aktywne, delegują
-// tutaj (worldRespawnLast()/worldSpawnApproachLast()) zamiast czytać
-// AIRPORTS[currentAirport] (które dla dowolnego lotniska świata nie istnieje).
-// Wybór jednego z 3 szybkich przycisków EPWR/LOWI/EDDF wychodzi z trybu
-// świata (worldDeactivate(), wołane z selectAirport()).
-// ════════════════════════════════════════════════════════════════════════════════
+// Section: WorldAirport.
 
-let WorldAirport = null; // patrz waptLoad() — pełny stan załadowanego lotniska świata
+let WorldAirport = null; // Configure waptLoadEpoch.
 let waptLoadEpoch = 0;
 
-// ── Zgadywanie identyfikatora końca pasa z namiaru, gdy ani API, ani OSM go
-// nie podają (np. surowa geometria bez tagu ref) — najbliższe 10°, 1-36.
+// Section: function waptGuessIdent().
 function waptGuessIdent(bearingDeg) {
   let n = Math.round(bearingDeg / 10);
   if (n <= 0) n += 36;
@@ -35,9 +13,7 @@ function waptGuessIdent(bearingDeg) {
   return String(n).padStart(2, '0');
 }
 
-// ── Szablon panelu (wstrzykiwany do #wapt-panel (desktop) i .wapt-mount
-// (popup mobile) — patrz waptMountUI()). Ta sama treść w obu miejscach,
-// zsynchronizowana przez selektory klas (document.querySelectorAll). ───────
+// Section: WAPT_TEMPLATE.
 const WAPT_TEMPLATE = `
   <div class="w-row">
     <input type="text" class="wapt-q" placeholder="ICAO/nazwa, np. KJFK">
@@ -87,9 +63,7 @@ function waptMountUI() {
     btn.addEventListener('click', () => { if (WorldAirport) worldSpawnAtStand(WorldAirport.selectedStandIdx); });
   });
 
-  // Zwijany panel na desktopie (dokładnie ten sam wzorzec co #weather-panel
-  // w sim-weather-ui.js) — na mobile popup jest zawsze w pełni widoczny,
-  // bo sam popup już wymaga jawnego otwarcia.
+  // Configure waptOpen.
   let waptOpen = false;
   document.getElementById('btn-wapt-toggle')?.addEventListener('click', () => {
     const panel = document.getElementById('wapt-panel');
@@ -142,7 +116,7 @@ function waptSyncSelectValues() {
   document.querySelectorAll('.wapt-stand-select').forEach(sel => { sel.value = String(WorldAirport.selectedStandIdx); });
 }
 
-// ── Wyszukiwanie ──────────────────────────────────────────────────────────────
+// Search.
 async function waptSearch(queryRaw) {
   const q = (queryRaw || '').trim();
   if (!q) { waptSetStatus('Wpisz kod ICAO lub nazwę lotniska.'); return; }
@@ -159,8 +133,7 @@ async function waptSearch(queryRaw) {
   const candidates = await apltApiSearchText(q);
   if (!candidates.length) {
     if (looksLikeIcao) {
-      // API nic nie ma dla tego kodu, ale spróbujmy Overpass — może dane
-      // istnieją tylko w OSM (patrz fallback w fetchAirportFullData()).
+      // Configure await.
       await waptLoad(q.toUpperCase());
       return;
     }
@@ -172,23 +145,14 @@ async function waptSearch(queryRaw) {
   waptSetResults(candidates);
 }
 
-// ── Ładowanie lotniska (dane + światła + listy pas/stanowisko + auto-spawn) ──
+// Section: function waptLoad().
 async function waptLoad(icao, hintObj, onProgress) {
   if (!icao) return;
   const myEpoch = ++waptLoadEpoch;
   waptSetStatus(`Ładowanie ${icao} (API+OSM, może potrwać do minuty)...`, true);
   waptSetResults([]);
 
-  // NATYCHMIASTOWY START TERENU: jeśli mamy już przybliżone lat/lon tego
-  // lotniska (np. z wyniku wyszukiwania — apltApiSearchText/apltApiSearchByCode
-  // już je zwróciły, albo z ekranu wyboru przy starcie — sim-airport-select.js),
-  // nie ma powodu czekać na fetchAirportFullData (pasy+Overpass, do ~60s)
-  // zanim zacznie się ciągnąć teren/satelitę/budynki — ten sam punkt i tak
-  // zostanie za chwilę doprecyzowany (patrz niżej). Pomijamy to, gdy punkt
-  // jest identyczny z bieżącym refLat/refLon (np. przy wyborze na starcie,
-  // gdzie init() w sim-main.js już to samo ustawił przed wywołaniem) —
-  // inaczej clearAllTiles() wyzerowałoby kafle, które właśnie zaczęły się
-  // ładować dla tego samego miejsca.
+  // Configure hintLat.
   const hintLat = hintObj ? apltGetLat(hintObj) : NaN;
   const hintLon = hintObj ? apltGetLon(hintObj) : NaN;
   if (!isNaN(hintLat) && !isNaN(hintLon) && (hintLat !== refLat || hintLon !== refLon)) {
@@ -202,7 +166,7 @@ async function waptLoad(icao, hintObj, onProgress) {
 
   try {
     const data = await fetchAirportFullData(icao, onProgress);
-    if (myEpoch !== waptLoadEpoch) return; // w międzyczasie wybrano coś innego
+    if (myEpoch !== waptLoadEpoch) return; // Configure validRunways.
 
     const validRunways = data.validRunways.filter(r =>
       !isNaN(r.leLat) && !isNaN(r.leLon) && !isNaN(r.heLat) && !isNaN(r.heLon));
@@ -211,8 +175,7 @@ async function waptLoad(icao, hintObj, onProgress) {
       return;
     }
 
-    // Punkt odniesienia (recentruje CAŁY układ współrzędnych świata — jak w
-    // selectAirport()): metadane z API, w innym razie średnia progów pasów.
+    // Configure refPointLat.
     let refPointLat = data.airportObj ? apltGetLat(data.airportObj) : NaN;
     let refPointLon = data.airportObj ? apltGetLon(data.airportObj) : NaN;
     if (isNaN(refPointLat) || isNaN(refPointLon)) {
@@ -221,8 +184,7 @@ async function waptLoad(icao, hintObj, onProgress) {
       refPointLat = sLat / n; refPointLon = sLon / n;
     }
 
-    // Lista "końców pasów" do wyboru — po 2 na każdy pas fizyczny (LE i HE),
-    // każdy ze swoim namiarem/kursem startu-lądowania w TĄ stronę.
+    // Configure runwayEnds.
     const runwayEnds = [];
     validRunways.forEach((r, ri) => {
       const bearingDeg = geoBearing(r.leLat, r.leLon, r.heLat, r.heLon);
@@ -238,8 +200,7 @@ async function waptLoad(icao, hintObj, onProgress) {
       });
     });
 
-    // Stanowiska — realne numery z OSM (aeroway=parking_position, ref=...),
-    // posortowane naturalnie (1, 2, 10 zamiast 1, 10, 2).
+    // Configure stands.
     const stands = (data.classified.parkingPositions || [])
       .map(pp => ({ ref: pp.ref, lat: pp.lat, lon: pp.lon, headingDeg: pp.headingDeg }))
       .sort((a, b) => a.ref.localeCompare(b.ref, undefined, { numeric: true }));
@@ -253,32 +214,24 @@ async function waptLoad(icao, hintObj, onProgress) {
       active: true,
     };
 
-    // Przełącz aktywne lotnisko na ten (dowolny, spoza AIRPORTS{}) kod — jak
-    // selectAirport() dla lotnisk wbudowanych: recentruje CAŁY układ
-    // współrzędnych świata (refLat/refLon) na nowy punkt odniesienia, żeby
-    // teren/budynki/satelita zaczęły się ładować wokół nowego miejsca.
+    // Configure currentAirport.
     currentAirport = icao;
     refLat = refPointLat; refLon = refPointLon;
-    // Stare kafelki terenu/budynki zbudowane względem POPRZEDNIEGO refLat/refLon
-    // mają teraz błędną pozycję ("zawieszone w powietrzu") — czyść od razu,
-    // zamiast czekać aż dogoni je naturalne czyszczenie oparte na odległości
-    // (przy skoku na drugi kraniec świata bywa zauważalnie opóźnione).
+    // Configure if.
     if (typeof clearAllTiles === 'function') clearAllTiles();
     if (typeof clearAllBldg  === 'function') clearAllBldg();
     orb.lat = refPointLat; orb.lon = refPointLon;
     for (const [r, z] of [[2, 17], [3, 15], [4, 13], [5, 11]]) prefetchDEM(refPointLat, refPointLon, r, z);
     document.querySelectorAll('[data-apt]').forEach(b => b.classList.remove('active'));
 
-    // Fotorealistyczne światła — reużywają danych, które WŁAŚNIE pobraliśmy
-    // (data), więc to NIE jest drugie zapytanie sieciowe do API/Overpass.
+    // Configure if.
     if (typeof loadAirportLights !== 'undefined') loadAirportLights(icao, data);
 
     waptPopulateSelects();
     waptSetPickerVisible(true);
     waptSetStatus(`Wczytano: ${WorldAirport.name} (${icao}) — ${validRunways.length} pas(ów), ${stands.length} stanowisk (OSM).`);
 
-    // Od razu spawnuj na pierwszej końcówce pierwszego pasa — jak
-    // selectAirport() od razu przestawia samolot na nowe lotnisko.
+    // Airport lighting note.
     worldSpawnAtRunway(0);
   } catch (e) {
     console.error('[airport-spawn]', e);
@@ -286,7 +239,7 @@ async function waptLoad(icao, hintObj, onProgress) {
   }
 }
 
-// ── Funkcje spawnu ────────────────────────────────────────────────────────────
+// Funkcje spawnu
 function worldSpawnAtRunway(idx) {
   if (!WorldAirport || !activeEntity) return;
   const end = WorldAirport.runwayEnds[idx]; if (!end) return;
@@ -306,9 +259,7 @@ function worldSpawnAtStand(idx) {
   WorldAirport.selectedStandIdx = idx;
   WorldAirport.lastGroundSpawn = { type: 'stand', idx };
   thrValue = null;
-  // Kierunek nieznany dla węzłów-punktów (headingDeg=null) — domyślnie 0°;
-  // dla stanowisk zmapowanych jako linia dojazdu (patrz apltClassifyElements
-  // w sim-airport-lights.js) mamy realny kierunek "dziobem po dojechaniu".
+  // Configure headingDeg.
   const headingDeg = st.headingDeg != null ? st.headingDeg : 0;
   activeEntity.reset({ lat: st.lat, lon: st.lon, yawRad: apltHeadingToYawRad(headingDeg) });
   if (typeof SimSound !== 'undefined') SimSound.resetCallouts();
@@ -323,8 +274,7 @@ function worldSpawnApproach(idx) {
   WorldAirport.selectedRunwayEndIdx = idx;
   const plane = activeEntity;
   const yawRad = apltHeadingToYawRad(end.bearingDeg);
-  // Ten sam profil co spawnApproach() w sim-controls.js dla lotnisk
-  // wbudowanych: 6 km przed progiem, 300 m nad terenem, lekkie zniżanie.
+  // Configure D.
   const D = 6000, bear = (end.bearingDeg + 180) % 360;
   const p = apltMoveGeo(end.lat, end.lon, bear, D);
   const groundH = terrainHeightBest(p.lat, p.lon);
@@ -341,7 +291,7 @@ function worldSpawnApproach(idx) {
   waptSyncSelectValues();
 }
 
-// ── Integracja z resetPlane()/spawnApproach() (sim-controls.js) ─────────────
+// Integrates with resetPlane()/spawnApproach() in sim-controls.js.
 function worldAirportActive() { return !!(WorldAirport && WorldAirport.active); }
 function worldRespawnLast() {
   if (!WorldAirport) return;
@@ -352,8 +302,7 @@ function worldSpawnApproachLast() {
   if (!WorldAirport) return;
   worldSpawnApproach(WorldAirport.selectedRunwayEndIdx);
 }
-// Wołane z selectAirport() (sim-controls.js) przy wyborze jednego z 3
-// szybkich przycisków EPWR/LOWI/EDDF — wychodzi z trybu "lotnisko świata".
+// Handle function worldDeactivate().
 function worldDeactivate() {
   if (WorldAirport) WorldAirport.active = false;
   waptSetPickerVisible(false);

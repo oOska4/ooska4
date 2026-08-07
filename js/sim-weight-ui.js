@@ -1,24 +1,6 @@
 'use strict';
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// sim-weight-ui.js — UI do ustawiania wagi samolotu (paliwo + payload)
-// Zależy od: sim-physics.js (AircraftWeight, computeAircraftWeight,
-//            A321_DEFAULT_FUEL_KG, A321_DEFAULT_PAYLOAD_KG, A321_MAX_FUEL_KG,
-//            A321_MAX_PAYLOAD_KG)
-//
-// WAŻNE — zgodnie z decyzją projektową: te suwaki NIGDY nie dotykają fizyki
-// bezpośrednio. Przesunięcie suwaka zmienia tylko AircraftWeight.pendingFuelKg/
-// pendingPayloadKg — realnie stosowane jest to dopiero w A321Entity.reset()
-// (patrz sim-physics.js), czyli przy starcie/restarcie, tak jak tankowanie i
-// załadunek dzieją się w prawdziwym samolocie przed lotem, nie w trakcie.
-// Tutaj liczymy tylko PODGLĄD na żywo (computeAircraftWeight — czysta funkcja,
-// bez efektów ubocznych na fizyce) — masa całkowita / przesunięcie CG /
-// ostrzeżenie MTOW pod suwakiem, żeby było widać skutek PRZED Resetem.
-//
-// Jedna zakładka (⚖ WAGA) w szufladzie MCDU (sim-mcdu.js) — jeden zestaw
-// elementów (dg-*), bez oddzielnego panelu desktop + popupu mobile jak
-// wcześniej.
-// ═══════════════════════════════════════════════════════════════════════════════
+// Configure weightUI.
 
 const weightUI = {
   init() {
@@ -32,8 +14,7 @@ const weightUI = {
     this.syncUI();
   },
 
-  // Bind pojedynczego suwaka → setter (zapisuje do AircraftWeight.pending*) +
-  // własna etykieta w kg + odśwież readouty masy/CG/MTOW.
+  // Implementation note.
   _bind(id, setter) {
     const el  = document.getElementById(id);
     const lbl = document.getElementById(id + '-lbl');
@@ -55,8 +36,7 @@ const weightUI = {
     this.syncUI();
   },
 
-  // Ustawia wartości suwaków + etykiet na podstawie AircraftWeight.pending*
-  // (np. po zastosowaniu presetu, albo raz przy starcie gry) i odświeża readouty.
+  // Implementation note.
   syncUI() {
     const fuel = AircraftWeight.pendingFuelKg, payload = AircraftWeight.pendingPayloadKg;
     for (const [id, val] of [['dg-fuel', fuel], ['dg-payload', payload]]) {
@@ -68,9 +48,7 @@ const weightUI = {
     this._refreshReadouts();
   },
 
-  // Przelicza PODGLĄD przez computeAircraftWeight() (czysta funkcja z
-  // sim-physics.js, zero efektów ubocznych na fizyce) i pokazuje masę
-  // całkowitą / przesunięcie CG / ostrzeżenie MTOW.
+  // Physics note.
   _refreshReadouts() {
     const { total, cgShiftZ, exceededBy } = computeAircraftWeight(
       AircraftWeight.pendingFuelKg, AircraftWeight.pendingPayloadKg

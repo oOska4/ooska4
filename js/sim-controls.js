@@ -1,17 +1,13 @@
 'use strict';
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// sim-controls.js
-// Joystick + slider + guziki działają na WSZYSTKICH urządzeniach.
-// Kamera: dotyk canvasu = orbit obrót/zoom lub cockpit rozglądanie.
-// ═══════════════════════════════════════════════════════════════════════════════
+// Section: function _isMobile().
 
 function _isMobile() { return document.body.classList.contains('is-touch'); }
 
 const WASD_SPEED = 30, QE_SPEED = 30;
 const cv = document.getElementById('c');
 
-// ── Klawiatura ────────────────────────────────────────────────────────────────
+// Klawiatura
 const keys      = new Set();
 const planeKeys = {};
 let shiftPressed = false, ctrlPressed = false;
@@ -20,7 +16,7 @@ window.addEventListener('keydown', e => {
   shiftPressed = e.shiftKey;
   ctrlPressed = e.ctrlKey;
   
-  // Obsługa Shift/Ctrl dla FREE camera (mnożnik prędkości)
+  // Configure if.
   if (camMode === CameraMode.FREE) {
     if (e.shiftKey) freeCamera.speedMult = 2.0;
     if (e.ctrlKey) freeCamera.speedMult = 0.5;
@@ -35,7 +31,7 @@ window.addEventListener('keyup', e => {
   shiftPressed = e.shiftKey;
   ctrlPressed = e.ctrlKey;
   
-  // Reset mnożnika prędkości
+  // Configure if.
   if (camMode === CameraMode.FREE) {
     freeCamera.speedMult = 1.0;
   }
@@ -55,15 +51,16 @@ window.addEventListener('keyup', e => {
     case 'KeyC': cycleCameraMode(); break;
     case 'Digit1': setCameraMode(CameraMode.ORBIT); break;
     case 'Digit2': setCameraMode(CameraMode.COCKPIT); break;
-    case 'Digit3': setCameraMode(CameraMode.FREE); break;
-    case 'Digit4': setCameraMode(CameraMode.CINEMATIC); break;
-    case 'Digit5': setCameraMode(CameraMode.FLYBY); break;
-    case 'Digit6': setCameraMode(CameraMode.DOLLY); break;
-    case 'Digit7': setCameraMode(CameraMode.TOWER); break;
+    case 'Digit3': setCameraMode(CameraMode.HUD); break;
+    case 'Digit4': setCameraMode(CameraMode.FREE); break;
+    case 'Digit5': setCameraMode(CameraMode.CINEMATIC); break;
+    case 'Digit6': setCameraMode(CameraMode.FLYBY); break;
+    case 'Digit7': setCameraMode(CameraMode.DOLLY); break;
+    case 'Digit8': setCameraMode(CameraMode.TOWER); break;
   }
 });
 
-// ── Desktop: mysz ─────────────────────────────────────────────────────────────
+// Desktop: mouse input.
 let mDown = false, rDown = false, lx = 0, ly = 0;
 cv.addEventListener('mousedown', e => {
   if (e.button === 0) mDown = true;
@@ -79,7 +76,7 @@ window.addEventListener('mousemove', e => {
     if (camMode === CameraMode.ORBIT) {
       orb.yaw   -= dx * 0.3;
       orb.pitch  = Math.max(5, Math.min(89, orb.pitch + dy * 0.25));
-    } else if (camMode === CameraMode.COCKPIT) {
+    } else if (camMode === CameraMode.COCKPIT || camMode === CameraMode.HUD) {
       cockpitLook.yaw   = Math.max(-2.6, Math.min(2.6, cockpitLook.yaw   - dx * 0.006));
       cockpitLook.pitch = Math.max(-1.3, Math.min(1.3, cockpitLook.pitch + dy * 0.004));
     } else if (camMode === CameraMode.FREE) {
@@ -109,12 +106,14 @@ cv.addEventListener('wheel', e => {
     setDollyRadius(dollyCamera.orbitRadius * (1 + e.deltaY * 0.0015));
   } else if (camMode === CameraMode.TOWER) {
     setTowerHeight(towerCamera.height * (1 + e.deltaY * 0.002));
+  } else if (camMode === CameraMode.COCKPIT || camMode === CameraMode.HUD) {
+    setCockpitFOV(cockpitConfig.fov * (1 + e.deltaY * 0.001));
   }
   e.preventDefault();
 }, { passive: false });
 cv.addEventListener('contextmenu', e => e.preventDefault());
 
-// ── Desktop: klawiatura orbit i FREE camera ────────────────────────────────
+// Desktop: klawiatura orbit i FREE camera
 function updateOrbitKeyboard(dt) {
   if (camMode === CameraMode.ORBIT) {
     const fwd = (keys.has('s')?1:0) - (keys.has('w')?1:0);
@@ -142,11 +141,11 @@ function updateOrbitKeyboard(dt) {
   }
 }
 
-// stubs żeby sim-main.js się nie poskarżył
+// Handle function applyJoystick().
 function applyJoystick(dt)    {}
 function applyZoomButtons(dt) {}
 
-// ── Touch na canvasie (kamera) ────────────────────────────────────────────────
+// Touch input on the canvas (camera).
 const cvT = new Map();
 let cvPinch = null, cvMid = null;
 const _td = (m) => { const [a,b]=[...m.values()]; return Math.hypot(a.x-b.x,a.y-b.y); };
@@ -179,12 +178,16 @@ cv.addEventListener('touchmove', e => {
       }
       cvPinch=nd; cvMid=nm;
     }
-  } else if (camMode===CameraMode.COCKPIT&&cvT.size===1) {
+  } else if ((camMode===CameraMode.COCKPIT||camMode===CameraMode.HUD)&&cvT.size===1) {
     const id=cvT.keys().next().value,cur=cvT.get(id),old=prev.get(id);
     if (cur&&old){
       cockpitLook.yaw  =Math.max(-2.6,Math.min(2.6,cockpitLook.yaw  -(cur.x-old.x)*0.006));
       cockpitLook.pitch=Math.max(-1.3,Math.min(1.3,cockpitLook.pitch+(cur.y-old.y)*0.004));
     }
+  } else if ((camMode===CameraMode.COCKPIT||camMode===CameraMode.HUD)&&cvT.size===2) {
+    const nd=_td(cvT);
+    if (cvPinch&&nd) setCockpitFOV(cockpitConfig.fov*(cvPinch/nd));
+    cvPinch=nd;
   } else if (camMode===CameraMode.FREE&&cvT.size===1) {
     const id=cvT.keys().next().value,cur=cvT.get(id),old=prev.get(id);
     if (cur&&old){
@@ -197,9 +200,7 @@ cv.addEventListener('touchmove', e => {
 cv.addEventListener('touchend',    e => { for(const t of e.changedTouches) cvT.delete(t.identifier); if(cvT.size<2){cvPinch=null;cvMid=null;} });
 cv.addEventListener('touchcancel', e => { for(const t of e.changedTouches) cvT.delete(t.identifier); cvPinch=null;cvMid=null; });
 
-// ═══════════════════════════════════════════════════════════════════════════════
-//  JOYSTICK LOTU
-// ═══════════════════════════════════════════════════════════════════════════════
+// // JOYSTICK LOTU //
 const flyBase = document.getElementById('fly-joy-base');
 const flyKnob = document.getElementById('fly-joy-knob');
 const FLY_R   = 38;
@@ -233,9 +234,7 @@ function _flyReset() {
   if (!tiltEnabled) flyKnob.style.transform='translate(-50%,-50%)';
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-//  TILT CONTROLS
-// ═══════════════════════════════════════════════════════════════════════════════
+// // TILT CONTROLS //
 let tiltEnabled = false;
 let tiltPitchCalib = 0;
 let tiltRollCalib = 0;
@@ -243,37 +242,100 @@ let tiltPitchRaw = 0;
 let tiltRollRaw = 0;
 let tiltDelta = { x: 0, y: 0 };
 
-window.addEventListener('deviceorientation', e => {
-  if (e.beta === null || e.gamma === null) return;
-  
-  let p = e.beta; 
-  let r = e.gamma;
-  let angle = window.screen && window.screen.orientation ? window.screen.orientation.angle : window.orientation || 0;
-  
-  // Mapping standard device orientation to screen orientation
-  if (angle === 90) { p = -e.gamma; r = e.beta; }
-  else if (angle === -90 || angle === 270) { p = e.gamma; r = -e.beta; }
-  else if (angle === 180) { p = -e.beta; r = -e.gamma; }
-  
-  tiltPitchRaw = p;
-  tiltRollRaw = r;
-  
+// Sensitivity: this is the tilt angle (deg) needed for full ±1 input.
+// Lower = more sensitive (small phone tilt gives full deflection).
+// Controlled by the slider in Settings > tilt-block (see sim-main.js/simworld.html).
+let tiltMaxAngle = 30;
+const TILT_MAXANGLE_MIN = 10;
+const TILT_MAXANGLE_MAX = 45;
+
+// Smoothing (0 = no smoothing/instant, closer to 1 = heavier smoothing).
+// Raw sensor data is noisy; this keeps controls usable without killing responsiveness.
+const TILT_SMOOTHING = 0.25;
+let tiltSmoothPitch = 0;
+let tiltSmoothRoll = 0;
+
+// NOTE on the fix below (Android bug: tilt felt "unpredictable/weird even after calibrating"):
+// The old code read e.beta/e.gamma (Euler angles) from 'deviceorientation'. Holding the phone
+// landscape in front of you to fly — the normal way to use tilt controls — puts beta near ±90°,
+// which is exactly the gimbal-lock zone for that angle: alpha/beta/gamma become ill-conditioned
+// there and the browser's own reported values can swing wildly for a tiny real-world movement.
+// Calibration can't fix this because it's not an offset problem, it's noise at the source.
+//
+// Fix: derive pitch/roll from the raw gravity vector (accelerationIncludingGravity, from
+// 'devicemotion') instead of decomposed Euler angles. That pose (screen ~vertical facing you)
+// is a perfectly well-conditioned region for a gravity-vector calculation, so no gimbal lock.
+let tiltUsingMotion = false;
+
+function _tiltFromGravity(ax, ay, az, angleDeg) {
+  // Rotate the device-frame (portrait) gravity vector into screen-space to account for
+  // landscape/rotated holding, same idea as the old angle-based branching but as a rotation.
+  const rad = angleDeg * Math.PI / 180;
+  const cosA = Math.cos(rad), sinA = Math.sin(rad);
+  const sx =  ax * cosA + ay * sinA;   // screen-right axis
+  const sy = -ax * sinA + ay * cosA;   // screen-up axis
+  const sz = az;                        // screen-out axis (unchanged by z-rotation)
+
+  // roll: banking left/right (rotating around the screen-out axis, like turning a wheel)
+  const rollDeg  = Math.atan2(sx, sy) * 180 / Math.PI;
+  // pitch: nose up/down (tilting the screen's top away from / towards you)
+  const pitchDeg = Math.atan2(-sz, sy) * 180 / Math.PI;
+  return { pitchDeg, rollDeg };
+}
+
+function _applyTilt(pitchDeg, rollDeg) {
+  tiltPitchRaw = pitchDeg;
+  tiltRollRaw = rollDeg;
+
   if (tiltEnabled) {
-    let adjustedPitch = p - tiltPitchCalib;
-    let adjustedRoll = r - tiltRollCalib;
-    let maxAngle = 30; // Max tilt angle for full input
-    
-    tiltDelta.y = Math.max(-1, Math.min(1, adjustedPitch / maxAngle));
-    tiltDelta.x = Math.max(-1, Math.min(1, adjustedRoll / maxAngle));
+    const adjustedPitch = pitchDeg - tiltPitchCalib;
+    const adjustedRoll = rollDeg - tiltRollCalib;
+
+    const rawY = Math.max(-1, Math.min(1, adjustedPitch / tiltMaxAngle));
+    const rawX = Math.max(-1, Math.min(1, adjustedRoll / tiltMaxAngle));
+
+    // Exponential smoothing to cut down jitter from raw sensor noise.
+    tiltSmoothPitch += (rawY - tiltSmoothPitch) * TILT_SMOOTHING;
+    tiltSmoothRoll  += (rawX - tiltSmoothRoll)  * TILT_SMOOTHING;
+
+    tiltDelta.y = tiltSmoothPitch;
+    tiltDelta.x = tiltSmoothRoll;
   } else {
     tiltDelta.y = 0;
     tiltDelta.x = 0;
+    tiltSmoothPitch = 0;
+    tiltSmoothRoll = 0;
   }
+}
+
+// Primary path: gravity vector, no gimbal lock at the landscape-hold pose.
+window.addEventListener('devicemotion', e => {
+  const g = e.accelerationIncludingGravity;
+  if (!g || g.x === null || g.y === null || g.z === null) return;
+  tiltUsingMotion = true;
+
+  const angle = window.screen && window.screen.orientation ? window.screen.orientation.angle : window.orientation || 0;
+  const { pitchDeg, rollDeg } = _tiltFromGravity(g.x, g.y, g.z, angle);
+  _applyTilt(pitchDeg, rollDeg);
 }, { passive: true });
 
-// ═══════════════════════════════════════════════════════════════════════════════
-//  SLIDER GAZU
-// ═══════════════════════════════════════════════════════════════════════════════
+// Fallback for the rare browser without accelerationIncludingGravity — old Euler-angle method.
+window.addEventListener('deviceorientation', e => {
+  if (tiltUsingMotion) return; // devicemotion path already active, don't fight it
+  if (e.beta === null || e.gamma === null) return;
+
+  let p = e.beta;
+  let r = e.gamma;
+  const angle = window.screen && window.screen.orientation ? window.screen.orientation.angle : window.orientation || 0;
+
+  if (angle === 90) { p = -e.gamma; r = e.beta; }
+  else if (angle === -90 || angle === 270) { p = e.gamma; r = -e.beta; }
+  else if (angle === 180) { p = -e.beta; r = -e.gamma; }
+
+  _applyTilt(p, r);
+}, { passive: true });
+
+// // SLIDER GAZU //
 const thrTrack = document.getElementById('thr-track');
 const thrFill  = document.getElementById('thr-fill');
 const thrFillRev = document.getElementById('thr-fill-rev');
@@ -295,22 +357,20 @@ window.addEventListener('touchcancel', e => { for(const t of e.changedTouches) i
 
 function _thrY(cy) {
   const r = thrTrack.getBoundingClientRect();
-  const frac = Math.max(0, Math.min(1, 1 - (cy - r.top) / r.height)); // 0=dół, 1=góra
-  return frac * 2 - 1; // -1 (pełny reverse, dół) .. +1 (pełny gaz, góra); środek (50%) = idle
+  const frac = Math.max(0, Math.min(1, 1 - (cy - r.top) / r.height)); // Configure return.
+  return frac * 2 - 1; // Implementation note.
 }
 function _thrSet(v) { thrValue=v; _thrDraw(v); }
 function _thrDraw(v) {
   const revActive = v < 0;
   if (thrFill)    thrFill.style.height    = Math.max(0, v * 50) + '%';
   if (thrFillRev) thrFillRev.style.height = Math.max(0, -v * 50) + '%';
-  const thumbPct = 50 + v * 50; // 0..100% wysokości toru
+  const thumbPct = 50 + v * 50; // Configure if.
   if (thrThumb) thrThumb.style.bottom = `calc(${thumbPct}% - 11px)`;
   if (thrPct)   thrPct.textContent = (revActive ? 'REV ' : '') + Math.round(Math.abs(v) * 100) + '%';
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-//  RUDER
-// ═══════════════════════════════════════════════════════════════════════════════
+// // RUDER //
 const rudState = { L:false, R:false };
 function _holdBtn(id, key) {
   const el = document.getElementById(id); if (!el) return;
@@ -321,9 +381,7 @@ function _holdBtn(id, key) {
 _holdBtn('mob-rud-l','L');
 _holdBtn('mob-rud-r','R');
 
-// ═══════════════════════════════════════════════════════════════════════════════
-//  GUZIKI — helper
-// ═══════════════════════════════════════════════════════════════════════════════
+// // GUZIKI helper //
 let brakesHeld = false;
 
 function _btn(id, fn) {
@@ -365,13 +423,12 @@ function _syncMuteBtn() {
   if (val) val.textContent = SimSound.muted ? 'OFF' : 'ON';
 }
 
-// ── Guziki lotnisk — działają przez data-apt, bez duplikatów ID ────────────────
+// Airport lighting note.
 document.querySelectorAll('[data-apt]').forEach(btn => {
   btn.addEventListener('click', () => selectAirport(btn.dataset.apt));
 });
 
-// ── Guziki desktop (teraz wewnątrz szuflady MCDU, patrz #mcdu-drawer w
-// simworld.html) ────────────────────────────────────────────────────────────
+// UI layout note.
 _btn('btn-reset',      () => { resetPlane();    _setDrawer(false); });
 _btn('btn-approach',   () => { spawnApproach(); _setDrawer(false); });
 _btn('btn-orbit-free', () => {
@@ -387,22 +444,48 @@ _btn('btn-parkbrake', () => {
 _btn('btn-mute', () => {
   if (typeof SimSound !== 'undefined') { SimSound.toggleMute(); _syncMuteBtn(); }
 });
-_btn('btn-tilt-toggle', () => {
-  tiltEnabled = !tiltEnabled;
+function _applyTiltEnabled(on) {
+  tiltEnabled = on;
   const val = document.getElementById('tilt-val');
   if (val) val.textContent = tiltEnabled ? 'ON' : 'OFF';
   if (!tiltEnabled && flyId < 0) flyKnob.style.transform = 'translate(-50%,-50%)';
+}
+_btn('btn-tilt-toggle', () => {
+  // Turning OFF never needs permission.
+  if (tiltEnabled) { _applyTiltEnabled(false); return; }
+
+  // iOS 13+ requires an explicit permission prompt, triggered from a user gesture,
+  // before deviceorientation/devicemotion events fire at all (silently do nothing otherwise).
+  // Android has no such API, so both checks below just fall through immediately.
+  const needsOrientationPerm = typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function';
+  const needsMotionPerm      = typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function';
+
+  if (needsOrientationPerm || needsMotionPerm) {
+    const reqs = [];
+    if (needsOrientationPerm) reqs.push(DeviceOrientationEvent.requestPermission());
+    if (needsMotionPerm) reqs.push(DeviceMotionEvent.requestPermission());
+    Promise.all(reqs).then(states => {
+      if (states.every(s => s === 'granted')) _applyTiltEnabled(true);
+      else alert('Brak dostępu do czujników ruchu. Włącz go w ustawieniach przeglądarki, aby użyć sterowania tiltem.');
+    }).catch(() => alert('Nie udało się uzyskać dostępu do czujników ruchu.'));
+  } else {
+    _applyTiltEnabled(true);
+  }
 });
 _btn('btn-tilt-calib', () => {
   tiltPitchCalib = tiltPitchRaw;
   tiltRollCalib = tiltRollRaw;
 });
+const tiltSensSlider = document.getElementById('tilt-sens-slider');
+if (tiltSensSlider) {
+  tiltSensSlider.addEventListener('input', () => {
+    tiltMaxAngle = TILT_MAXANGLE_MIN + (TILT_MAXANGLE_MAX - TILT_MAXANGLE_MIN) * (1 - (+tiltSensSlider.value) / 100);
+    const lbl = document.getElementById('tilt-sens-val');
+    if (lbl) lbl.textContent = tiltSensSlider.value + '%';
+  });
+}
 
-// ── Pasek akcji (#action-rail) — JEDNA definicja dla desktop i mobile (patrz
-// #action-rail w simworld.html i .arbtn w sim-style.css). Zastępuje dawny
-// #mob-bar (tylko-mobile, dwa rzędy) + osobne btn-camera (desktop) +
-// mb-cam/mpop-cam (mobile, zdublowane) — teraz jeden zestaw przycisków,
-// klikalny myszą i dotykiem identycznie. ─────────────────────────────────────
+// Airport lighting note.
 _btn('ar-flaps', () => {
   if (!activeEntity) return;
   activeEntity.flaps = (activeEntity.flaps+1)%4;
@@ -423,9 +506,7 @@ _btn('ar-abrk', () => {
 });
 _btn('ar-cam', cycleCameraMode);
 
-// Hamulce (trzymane) — pointerdown/up zamiast touchstart/touchend, żeby
-// działały identycznie myszą (desktop, przytrzymanie LPM) i dotykiem
-// (mobile) na TYM SAMYM przycisku — patrz komentarz przy #action-rail wyżej.
+// Configure brakeEl.
 const brakeEl = document.getElementById('ar-brakes');
 if (brakeEl) {
   brakeEl.addEventListener('pointerdown',  e => { brakesHeld=true;  brakeEl.classList.add('pressed');    e.preventDefault(); });
@@ -434,11 +515,7 @@ if (brakeEl) {
   brakeEl.addEventListener('pointerleave', () => { brakesHeld=false; brakeEl.classList.remove('pressed'); });
 }
 
-// ── Szuflada MCDU (#mcdu-drawer) — JEDNA definicja dla desktop (dokowana z
-// prawej, patrz sim-style.css) i mobile (dolna szuflada). Zastępuje dawny
-// zestaw: #controls (desktop, zagnieżdżony akordeon) + #mob-menu-popup +
-// #weather-popup + #weight-popup + #ap-popup (mobile, cztery osobne
-// wyskakujące okna dublujące te same suwaki). ───────────────────────────────
+// Section: drawerOpen.
 let drawerOpen = false;
 function _setDrawer(open) {
   drawerOpen = open;
@@ -456,20 +533,20 @@ document.querySelectorAll('.mcdu-tab').forEach(tab => {
     document.getElementById(tab.dataset.page)?.classList.add('active');
   });
 });
-// Klik poza szufladą i poza przyciskiem-odznaką ją zamyka (działa tak samo
-// dla dokowanego panelu desktop i dolnej szuflady mobile).
+// UI layout note.
 document.addEventListener('click', (e) => {
   if (!drawerOpen) return;
   const drawer = document.getElementById('mcdu-drawer');
   const toggle = document.getElementById('mcdu-toggle');
-  if (drawer && !drawer.contains(e.target) && toggle && !toggle.contains(e.target)) _setDrawer(false);
+  const menuBtn = document.getElementById('ar-menu');
+  if (drawer && !drawer.contains(e.target)
+      && toggle && !toggle.contains(e.target)
+      && menuBtn && !menuBtn.contains(e.target)) _setDrawer(false);
 });
 
-// ═══════════════════════════════════════════════════════════════════════════════
-//  updatePlaneInput
-// ═══════════════════════════════════════════════════════════════════════════════
+// // updatePlaneInput //
 function updatePlaneInput() {
-  // W FREE camera mode, nie sterujemy samolotem za pomocą WASD
+  // Configure if.
   if (camMode === CameraMode.FREE) {
     planeInput.pitch=0; planeInput.roll=0; planeInput.yaw=0;
     planeInput.throttleUp=false; planeInput.throttleDown=false;
@@ -505,24 +582,20 @@ function updatePlaneInput() {
   planeInput.brakes=brakes;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-//  RESET / SPAWN / AIRPORT
-// ═══════════════════════════════════════════════════════════════════════════════
+// // RESET / SPAWN / AIRPORT //
 function resetPlane() {
   if (!activeEntity) return;
   thrValue=null;
-  // Lotnisko świata (sim-airport-spawn.js, dowolne ICAO spoza AIRPORTS{})
-  // aktywne — "R"/Reset odtwarza OSTATNIO wybrany spawn (pas albo
-  // stanowisko), bo AIRPORTS[currentAirport] dla takiego lotniska nie istnieje.
+  // Configure if.
   if (typeof worldAirportActive === 'function' && worldAirportActive()) { worldRespawnLast(); return; }
   const apt=AIRPORTS[currentAirport];
   activeEntity.reset({ lat:apt.spawnLat, lon:apt.spawnLon, yawRad:Units.degToRad((180-apt.heading+360)%360) });
   if (typeof SimSound !== 'undefined') SimSound.resetCallouts();
+  if (typeof SimEngineSound !== 'undefined') SimEngineSound.resetSound();
 }
 
 function spawnApproach() {
-  // Jak wyżej — dla lotniska świata podejscie liczy się względem AKTUALNIE
-  // wybranej końcówki pasa w panelu "Lotniska świata", nie z AIRPORTS{}.
+  // Configure if.
   if (typeof worldAirportActive === 'function' && worldAirportActive()) { worldSpawnApproachLast(); return; }
   const plane=activeEntity; if(!plane) return;
   const apt=AIRPORTS[currentAirport];
@@ -535,27 +608,23 @@ function spawnApproach() {
     velX:Math.sin(yawRad)*70,velY:-2,velZ:Math.cos(yawRad)*70,
     throttle:0.55,flaps:2,gearDown:true,onGround:false });
   if (typeof SimSound !== 'undefined') SimSound.resetCallouts();
+  if (typeof SimEngineSound !== 'undefined') SimEngineSound.resetSound();
   for (const[r,z] of [[2,17],[3,15],[4,13],[5,11]]) prefetchDEM(p.lat,p.lon,r,z);
 }
 
 function selectAirport(code) {
   if (!AIRPORTS[code]) return;
-  // Wyjście z trybu "lotnisko świata" (sim-airport-spawn.js) — od teraz
-  // Reset/Approach znowu czytają AIRPORTS[code] jak dawniej.
+  // Configure if.
   if (typeof worldDeactivate === 'function') worldDeactivate();
   currentAirport=code;
   const apt=AIRPORTS[code];
   refLat=apt.refLat; refLon=apt.refLon;
-  // Stare kafelki terenu/budynki zbudowane względem POPRZEDNIEGO refLat/refLon
-  // mają teraz błędną pozycję ("zawieszone w powietrzu") — czyść od razu,
-  // zamiast czekać aż dogoni je naturalne czyszczenie oparte na odległości.
+  // Configure if.
   if (typeof clearAllTiles === 'function') clearAllTiles();
   if (typeof clearAllBldg  === 'function') clearAllBldg();
-  // Fotorealistyczne światła lotniskowe (sim-airport-lights.js) — ładowane/
-  // przełączane leniwie per lotnisko, buforowane, więc powrót do wcześniej
-  // odwiedzonego lotniska jest natychmiastowy.
+  // Configure if.
   if (typeof loadAirportLights !== 'undefined') loadAirportLights(code);
-  // Zaktualizuj wszystkie guziki lotnisk (przez data-apt, bez duplikatów ID)
+  // Airport lighting note.
   document.querySelectorAll('[data-apt]').forEach(b => {
     b.classList.toggle('active', b.dataset.apt===code);
   });
@@ -563,6 +632,7 @@ function selectAirport(code) {
   if (activeEntity) {
     activeEntity.reset({ lat:apt.spawnLat,lon:apt.spawnLon,yawRad:Units.degToRad((180-apt.heading+360)%360) });
     if (typeof SimSound !== 'undefined') SimSound.resetCallouts();
+    if (typeof SimEngineSound !== 'undefined') SimEngineSound.resetSound();
     orb.lat=apt.spawnLat; orb.lon=apt.spawnLon;
     for (const[r,z] of [[2,17],[3,15],[4,13],[5,11]]) prefetchDEM(apt.spawnLat,apt.spawnLon,r,z);
   }

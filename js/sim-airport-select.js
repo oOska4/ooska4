@@ -1,45 +1,19 @@
 'use strict';
 
-// ════════════════════════════════════════════════════════════════════════════════
-// sim-airport-select.js
-//
-// Ekran wyboru lotniska na starcie (między intro studia/autora a paskiem
-// ładowania — patrz #phase-select w simworld.html i bootIntro() w
-// sim-main.js). Pozwala wybrać DOWOLNE lotnisko świata (ta sama wyszukiwarka
-// WKR API co "LOTNISKA ŚWIATA" w locie — apltApiSearchText/apltApiSearchByCode
-// z sim-airport-lights.js) albo jeden z 3 wbudowanych presetów, albo pominąć
-// i lecieć z domyślnego EPWR.
-//
-// Musi się ładować PO sim-airport-lights.js (korzysta z apltXxx helperów) i
-// PO sim-constants.js (AIRPORTS{}), a PRZED sim-main.js (patrz simworld.html) —
-// init() w sim-main.js czeka na `airportSelectDone` zanim ruszy jakiekolwiek
-// pobieranie terenu.
-//
-// Eksportuje `airportSelectDone` — Promise, na który czeka init() w
-// sim-main.js — rozwiązuje się DOPIERO gdy gracz coś wybierze, z obiektem:
-//   { icao, lat, lon, name, isPreset, searchObj }
-// `searchObj` (tylko dla wyszukanych/nie-presetowych) to surowy obiekt z WKR
-// API — przekazywany dalej do waptLoad() jako `hintObj`, żeby teren zaczął
-// się ładować z lat/lon które już mamy, RÓWNOLEGLE z fetchAirportFullData
-// (pasy+Overpass) zamiast po nim czekać — patrz komentarz w waptLoad()
-// (sim-airport-spawn.js).
-// ════════════════════════════════════════════════════════════════════════════════
+// Configure _aselResolve.
 
 let _aselResolve = null;
 const airportSelectDone = new Promise(resolve => { _aselResolve = resolve; });
 
 const ASEL_RECENT_KEY = 'simworld_recent_airports';
 const ASEL_RECENT_MAX = 5;
-// Pula dla przycisku "Losowe" — kilka zróżnicowanych geograficznie lotnisk
-// (w tym górskie, pasujące do tematyki studia). Same kody ICAO — pełne dane
-// (lat/lon/nazwa) i tak trzeba pobrać z API po wybraniu, jak przy zwykłym
-// wyszukiwaniu.
+// Configure ASEL_RANDOM_POOL.
 const ASEL_RANDOM_POOL = ['NZQN', 'VQPR', 'LSZH', 'KJFK', 'RJTT', 'OMDB', 'CYVR', 'SBGR'];
 
 function aselChoose(choice) {
   if (!_aselResolve) return;
   const resolve = _aselResolve;
-  _aselResolve = null; // pierwszy wybór wygrywa — kolejne kliknięcia (np. Enter i klik) są no-opem
+  _aselResolve = null; // first choice wins later clicks (e.g.
   resolve(choice);
 }
 
@@ -50,15 +24,14 @@ function aselSaveRecent(icao, name) {
     list.unshift({ icao, name });
     list = list.slice(0, ASEL_RECENT_MAX);
     localStorage.setItem(ASEL_RECENT_KEY, JSON.stringify(list));
-  } catch (e) { /* localStorage niedostępny (np. tryb prywatny) — pomijamy po cichu */ }
+  } catch (e) { /* localStorage unavailable (e.g. */ }
 }
 function aselLoadRecent() {
   try { return JSON.parse(localStorage.getItem(ASEL_RECENT_KEY) || '[]'); }
   catch (e) { return []; }
 }
 
-// ── Wybór: preset (AIRPORTS{}) — natychmiastowy, znamy dokładny refLat/refLon
-// bez żadnego zapytania sieciowego. ──────────────────────────────────────────
+// Pick: preset (AIRPORTS{}) instant, exact refLat/refLon already known, // no network request needed.
 function aselPickPreset(icao) {
   const apt = AIRPORTS[icao];
   if (!apt) return;
@@ -66,8 +39,7 @@ function aselPickPreset(icao) {
   aselChoose({ icao, lat: apt.refLat, lon: apt.refLon, name: apt.name, isPreset: true });
 }
 
-// ── Wybór: wynik wyszukiwania / lotnisko świata (obiekt z WKR API) — lat/lon
-// już znamy z samego wyszukiwania, więc init() może ruszyć teren od razu. ───
+// Section: function aselPickSearchObj().
 function aselPickSearchObj(obj) {
   const icao = apltGetIdent(obj);
   const lat = apltGetLat(obj), lon = apltGetLon(obj);
@@ -77,8 +49,7 @@ function aselPickSearchObj(obj) {
   aselChoose({ icao, lat, lon, name, isPreset: false, searchObj: obj });
 }
 
-// ── Wybór po samym ICAO (np. z "ostatnio odwiedzone"/losowe) — trzeba
-// doszukać pełny obiekt, żeby mieć lat/lon zanim cokolwiek ruszy. ───────────
+// Section: function aselPickByIcao().
 async function aselPickByIcao(icao) {
   if (AIRPORTS[icao]) { aselPickPreset(icao); return; }
   aselSetStatus('Wczytywanie…', true);
@@ -92,7 +63,7 @@ function aselSetStatus(text, loading) {
   if (el) el.innerHTML = (loading ? '<span class="spinner"></span>' : '') + text;
 }
 
-// ── Render: wyniki wyszukiwania ───────────────────────────────────────────────
+// Render: search results
 function aselRenderResults(list) {
   const container = document.getElementById('asel-results');
   if (!container) return;
@@ -108,8 +79,7 @@ function aselRenderResults(list) {
   }
 }
 
-// ── Wyszukiwanie (ta sama logika co waptSearch() w sim-airport-spawn.js, ale
-// tu tylko POKAZUJEMY wyniki do wyboru — nie ładujemy od razu). ─────────────
+// Section: aselSearchEpoch.
 let aselSearchEpoch = 0;
 async function aselSearch(queryRaw) {
   const q = (queryRaw || '').trim();
@@ -130,7 +100,7 @@ async function aselSearch(queryRaw) {
   aselRenderResults(candidates);
 }
 
-// ── Montaż UI ──────────────────────────────────────────────────────────────
+// UI mount
 function aselMount() {
   const quickGrid = document.getElementById('asel-quick');
   if (quickGrid) {

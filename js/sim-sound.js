@@ -1,58 +1,24 @@
 'use strict';
 
-// ══════════════════════════════════════════════════════════════════════════════
-//  sim-sound.js — System dźwięków kokpitowych (GPWS / Warnings / Callouts)
-//
-//  Dźwięki ładowane z folderu sounds/ (pliki .ogg). Cała logika opiera się na
-//  odczycie stanu z globalnego `activeEntity` (A321Entity) w każdej klatce.
-//
-//  Dwa NIEZALEŻNE kanały:
-//    • VOICE  — komunikaty słowne GPWS (PULL UP, STALL, SINK RATE, TOO LOW...,
-//               DON'T SINK, ENGINE FAILURE), callout V1 na rozbiegu oraz
-//               callouty wysokości/minimums/retard. Tylko JEDEN głos na raz —
-//               dwa nakładające się słowa brzmiałyby jak bełkot —
-//               priorytetyzowany, wyższy priorytet przerywa niższy.
-//    • TONE   — dzwonki/tony:
-//               - LOOP (bankAngle, overspeed, cautionWarn): odtwarzane przez
-//                 Web Audio API jako zdekodowany bufor PCM w
-//                 AudioBufferSourceNode z loop=true — PRAWDZIWIE bezszwowa
-//                 pętla, bez żadnej przerwy ani trzasku między powtórzeniami
-//                 (zwykły <audio loop> tego nie gwarantuje — OGG Vorbis ma
-//                 zazwyczaj mały padding na początku/końcu próbki, co dawało
-//                 słyszalną mikroprzerwę).
-//               - REPEAT (masterWarn): krótki "ding" powtarzany co kilka
-//                 sekund (odstęp > długość pliku) — tu przerwa MA być, to
-//                 zamierzony rytm dzwonka master warning.
-//               Każdy TONE gra na WŁASNYM, niezależnym kanale — mogą brzmieć
-//               razem ze sobą I razem z aktywnym komunikatem VOICE (dokładnie
-//               jak w prawdziwym kokpicie: dzwonek master caution nakłada
-//               się na głos GPWS, a bank angle może brzmieć równocześnie z
-//               SINK RATE).
-//
-//  Priorytet w kanale VOICE (od najwyższego):
-//    PULL UP > STALL > SINK RATE PULL UP > TOO LOW TERRAIN > SINK RATE >
-//    TOO LOW GEAR/FLAPS > DON'T SINK > ENGINE FAILURE > V1 / ALTITUDE CALLOUTS
-//
-//  Klawisz M — toggle mute.
-// ══════════════════════════════════════════════════════════════════════════════
+// Section: SimSound.
 
 const SimSound = (() => {
 
-  // ── Konwersje (identyczne jak w sim-hud.js) ────────────────────────────────
+  // Unit conversions, matching sim-hud.js.
   const MPS_KT  = 1.94384;
   const MPS_FPM = 196.85;
   const M_FT    = 3.28084;
 
-  // ── Konfiguracja ───────────────────────────────────────────────────────────
+  // Konfiguracja
 
-  // Progi calloutów wysokości (AGL w ft) — odtwarzane przy opadaniu
+  // Configure ALT_THRESHOLDS.
   const ALT_THRESHOLDS = [2500, 1000, 500, 400, 300, 200, 100, 50, 40, 30, 20, 10, 5];
 
-  // Mapowanie progów na nazwy plików
+  // Configure ALT_FILES.
   const ALT_FILES = {};
   ALT_THRESHOLDS.forEach(a => ALT_FILES[a] = `alt${a}`);
 
-  // ── Grupa VOICE — komunikaty słowne, jeden na raz, priorytetyzowane ────────
+  // Section: VOICE_PRIORITY.
   const VOICE_PRIORITY = {
     pullUp:         1,
     stall:          2,
@@ -63,8 +29,7 @@ const SimSound = (() => {
     toLowFlaps:     6,
     dontSink:       7,
     engineFailure:  8,
-    // V1 i callouty wysokości/minimums/retard — najniższy priorytet w kanale
-    // VOICE, nie przerywają żadnego "prawdziwego" ostrzeżenia GPWS
+    // Implementation note.
     v1:             9,
     minimums:       9,
     alt100above:    9,
@@ -72,9 +37,7 @@ const SimSound = (() => {
   };
   ALT_THRESHOLDS.forEach(a => { VOICE_PRIORITY[ALT_FILES[a]] = 9; });
 
-  // Cooldowny w kanale VOICE (sekundy) — tylko dla realnych ostrzeżeń GPWS;
-  // callouty pilnowane są osobno przez flagi *Announced (patrz niżej), więc
-  // nie potrzebują cooldownu.
+  // Configure VOICE_COOLDOWN.
   const VOICE_COOLDOWN = {
     pullUp:         2.0,
     stall:          2.0,
@@ -84,18 +47,16 @@ const SimSound = (() => {
     toLowFlaps:     4.0,
     toLowGear:      4.0,
     dontSink:       6.0,
-    engineFailure: 99.0,  // jednorazowe
+    engineFailure: 99.0,  // One-shot callout.
   };
 
-  // ── Grupa TONE (LOOP) — bezszwowa pętla Web Audio, bez przerwy ─────────────
+  // Section: LOOP_TONE_NAMES.
   const LOOP_TONE_NAMES = ['bankAngle', 'overspeed', 'cautionWarn'];
 
-  // ── Grupa TONE (REPEAT) — master warning, "ding" co X sekund (celowa przerwa)
+  // TONE group: repeated master warning with an intentional interval.
   const REPEAT_COOLDOWN = { masterWarn: 0.3 };
 
-  // Zwykłe pliki dźwiękowe (HTMLAudioElement) — VOICE + REPEAT tone.
-  // UWAGA: bankAngle/overspeed/cautionWarn NIE są tu — odtwarzane osobno
-  // przez Web Audio API (patrz niżej), żeby pętla była naprawdę bezszwowa.
+  // Configure SOUND_FILES.
   const SOUND_FILES = [
     'alt5','alt10','alt20','alt30','alt40','alt50','alt100',
     'alt200','alt300','alt400','alt500','alt1000','alt2500',
@@ -108,9 +69,9 @@ const SimSound = (() => {
     'masterWarn',
   ];
 
-  // ── Stan wewnętrzny ────────────────────────────────────────────────────────
+  // Section: sounds.
 
-  const sounds = {};         // nazwa -> HTMLAudioElement (VOICE + REPEAT)
+  const sounds = {};         // Name -> HTMLAudioElement (VOICE + REPEAT).
   let muted = false;
   let volume = 0.85;
   let contextUnlocked = false;
@@ -125,27 +86,27 @@ const SimSound = (() => {
   let engineFailAnnounced = false;
   let v1Announced = false;
 
-  // Cooldown tracking — wspólne dla VOICE (one-shot) i REPEAT tone
-  const lastPlayTime = {};  // nazwa -> timestamp (s)
+  // Configure lastPlayTime.
+  const lastPlayTime = {};  // Name -> timestamp in seconds.
 
-  // Aktualnie grający dźwięk w kanale VOICE (jeden na raz)
+  // Configure activeVoice.
   let activeVoice = null;
   let activeVoicePrio = 999;
-  let activeCallout = null; // ostatnio zakolejkowany callout (podzbiór activeVoice)
+  let activeCallout = null; // Configure prevAglFt.
 
   // Previous frame AGL for threshold crossing detection
   let prevAglFt = 0;
   let prevOnGround = true;
 
-  // Flaga: samolot dopiero wystartował (śledzenie dla DON'T SINK)
+  // Configure justTookOff.
   let justTookOff = false;
 
-  // ── Web Audio API — bezszwowe pętle (bankAngle, overspeed, cautionWarn) ────
+  // Section: audioCtx.
 
   let audioCtx = null;
-  const loopBuffers     = {}; // nazwa -> zdekodowany AudioBuffer (gotowy do gry)
-  const loopSourceNodes = {}; // nazwa -> aktualnie grający AudioBufferSourceNode | null
-  const loopGainNodes   = {}; // nazwa -> trwały GainNode (kontrola głośności)
+  const loopBuffers     = {}; // Name -> decoded AudioBuffer ready for playback.
+  const loopSourceNodes = {}; // Configure loopGainNodes.
+  const loopGainNodes   = {}; // Handle function ensureAudioCtx().
 
   function ensureAudioCtx() {
     if (!audioCtx) {
@@ -166,7 +127,7 @@ const SimSound = (() => {
   function startLoop(name) {
     if (muted) return;
     const buf = loopBuffers[name];
-    if (!buf) return; // jeszcze nie zdekodowany — setLoopTone spróbuje ponownie w kolejnej klatce
+    if (!buf) return; // Configure ctx.
     const ctx = ensureAudioCtx();
     if (ctx.state === 'suspended') ctx.resume();
 
@@ -179,7 +140,7 @@ const SimSound = (() => {
 
     const src = ctx.createBufferSource();
     src.buffer = buf;
-    src.loop = true; // bezszwowa pętla na poziomie próbek — bez przerwy
+    src.loop = true; // Implementation note.
     src.connect(loopGainNodes[name]);
     src.start(0);
     loopSourceNodes[name] = src;
@@ -188,16 +149,13 @@ const SimSound = (() => {
   function stopLoop(name) {
     const src = loopSourceNodes[name];
     if (src) {
-      try { src.stop(); } catch (e) { /* już zatrzymany */ }
+      try { src.stop(); } catch (e) { /* Implementation note. */ }
       src.disconnect();
       loopSourceNodes[name] = null;
     }
   }
 
-  // Włącz raz na zboczu narastającym, wyłącz raz na opadającym. Jeśli bufor
-  // nie był jeszcze gotowy (albo kontekst był zawieszony) przy pierwszej
-  // próbie, kolejne wywołanie z active=true (następna klatka) spróbuje
-  // ponownie — bo loopSourceNodes[name] wciąż jest null.
+  // Handle function setLoopTone().
   function setLoopTone(name, active) {
     if (active && !loopSourceNodes[name]) {
       startLoop(name);
@@ -206,7 +164,7 @@ const SimSound = (() => {
     }
   }
 
-  // ── Preload ────────────────────────────────────────────────────────────────
+  // Preload
 
   function preload() {
     for (const name of SOUND_FILES) {
@@ -215,18 +173,18 @@ const SimSound = (() => {
       audio.volume = volume;
       sounds[name] = audio;
     }
-    // Bufory do bezszwowej pętli (Web Audio) — dekodowane równolegle w tle
+    // Implementation note.
     LOOP_TONE_NAMES.forEach(loadLoopBuffer);
   }
 
-  // ── AudioContext unlock (wymagany przez przeglądarki) ──────────────────────
+  // Section: function unlockAudio().
 
   function unlockAudio() {
     if (contextUnlocked) return;
     try {
       const ctx = ensureAudioCtx();
       if (ctx.state === 'suspended') ctx.resume();
-      // Odtwórz cichy bufor żeby odblokować
+      // Configure buf.
       const buf = ctx.createBuffer(1, 1, 22050);
       const src = ctx.createBufferSource();
       src.buffer = buf;
@@ -234,12 +192,12 @@ const SimSound = (() => {
       src.start(0);
       contextUnlocked = true;
     } catch (e) {
-      // Fallback — nie wszystkie przeglądarki wymagają tego
+      // Configure contextUnlocked.
       contextUnlocked = true;
     }
   }
 
-  // ── Pomocnicze ─────────────────────────────────────────────────────────────
+  // Pomocnicze
 
   function now() { return performance.now() / 1000; }
 
@@ -247,7 +205,7 @@ const SimSound = (() => {
     if (muted || !sounds[name]) return;
     const s = sounds[name];
     s.volume = volume;
-    // Jeśli dźwięk jeszcze gra, zresetuj go
+    // Configure s.currentTime.
     s.currentTime = 0;
     s.play().catch(() => {});  // autoplay policy
   }
@@ -266,11 +224,11 @@ const SimSound = (() => {
     return !sounds[name].paused && !sounds[name].ended;
   }
 
-  // ── Kanał VOICE — jeden komunikat słowny na raz, priorytetyzowany ──────────
+  // Section: function canPlayVoice().
 
   function canPlayVoice(name) {
     const cd = VOICE_COOLDOWN[name];
-    if (!cd) return true; // callouty — brak cooldownu, pilnują ich flagi *Announced
+    if (!cd) return true; // Configure t.
     const t = now();
     if (lastPlayTime[name] && (t - lastPlayTime[name]) < cd) return false;
     return true;
@@ -279,13 +237,13 @@ const SimSound = (() => {
   function triggerVoice(name) {
     const prio = VOICE_PRIORITY[name] || 99;
 
-    // Czy aktywny komunikat nadal gra?
+    // Is the active callout still playing?
     if (activeVoice && isPlaying(activeVoice)) {
-      // Nowy komunikat ma wyższy priorytet (niższa liczba)?
+      // Configure if.
       if (prio < activeVoicePrio) {
         stopSound(activeVoice);
       } else {
-        return; // aktywny komunikat ma wyższy/równy priorytet — nie przerywaj
+        return; // Implementation note.
       }
     }
 
@@ -306,9 +264,7 @@ const SimSound = (() => {
     }
   }
 
-  // ── Kanał TONE (REPEAT) — master warning, "ding" co X sekund ───────────────
-  // Całkowicie niezależny od VOICE i od LOOP tone — może brzmieć jednocześnie
-  // z nimi (tak jak w realu master warning chime nakłada się na głos GPWS).
+  // Section: function triggerRepeatTone().
 
   function triggerRepeatTone(name) {
     if (muted || !sounds[name]) return;
@@ -319,14 +275,13 @@ const SimSound = (() => {
     lastPlayTime[name] = t;
   }
 
-  // ── Callout system — kolejkowanie calloutów wysokości (kanał VOICE) ────────
+  // Section: function queueCallout().
 
   function queueCallout(name) {
-    // Nie przerywaj aktywnego komunikatu VOICE calloutem — callouty mają
-    // najniższy priorytet w tym kanale.
+    // Configure if.
     if (activeVoice && isPlaying(activeVoice)) return;
 
-    // Jeśli inny callout właśnie gra, poczekaj (unika nakładania się cyfr)
+    // Configure if.
     if (activeCallout && isPlaying(activeCallout)) return;
 
     playSound(name);
@@ -335,7 +290,7 @@ const SimSound = (() => {
     activeCallout = name;
   }
 
-  // ── Resetuj wszystkie flagi (po reset samolotu lub wznoszeniu > 3000ft) ───
+  // Reset all flags after aircraft reset or climbing above 3000 ft.
 
   function resetCallouts() {
     ALT_THRESHOLDS.forEach(a => altAnnounced[a] = false);
@@ -347,7 +302,7 @@ const SimSound = (() => {
     v1Announced = false;
     justTookOff = false;
 
-    // Zatrzymaj wszystkie aktywne kanały
+    // Configure if.
     if (activeVoice) { stopSound(activeVoice); activeVoice = null; activeVoicePrio = 999; }
     activeCallout = null;
     LOOP_TONE_NAMES.forEach(stopLoop);
@@ -356,39 +311,34 @@ const SimSound = (() => {
     prevOnGround = true;
   }
 
-  // ── Główna logika aktualizacji (wywoływana co klatkę) ──────────────────────
+  // Section: function update().
 
   function update(dt) {
     if (!activeEntity) return;
     const plane = activeEntity;
 
-    // ── Odczyt stanu samolotu ────────────────────────────────────────────────
+    // Read aircraft state.
     const aglFt   = plane.agl * M_FT;
     const iasMps  = plane.airspeed;
     const iasKt   = iasMps * MPS_KT;
     const vsFpm   = plane.vs * MPS_FPM;
-    const bankDeg = Math.abs(plane.roll);   // plane.roll jest w stopniach
+    const bankDeg = Math.abs(plane.roll);   // Configure flaps.
     const flaps   = plane.flaps;
     const gearDn  = plane.gearDown;
     const onGnd   = plane.onGround;
     const stalling = plane._isStalling;
-    // Overspeed liczony w sim-physics.js z histerezą (plane._isOverspeed) —
-    // surowe porównanie iasKt > vmoKt migotałoby klatka po klatce na granicy
-    // odcięcia, bo prędkość jest tam twardo przycinana do VMO. Ta sama flaga
-    // steruje też wskaźnikiem w HUD (sim-hud.js), więc dźwięk i UI są zawsze
-    // zsynchronizowane.
+    // Configure overspeeding.
     const overspeeding = plane._isOverspeed;
     const throttle = plane.throttle;
 
-    // Czy w tej klatce powinien grać (bezszwowy loop) caution warning —
-    // zbierane z kilku niezależnych warunków GPWS poniżej.
+    // Configure cautionActive.
     let cautionActive = false;
 
-    // ── Detekcja liftoff / touchdown ────────────────────────────────────────
+    // Detekcja liftoff / touchdown
     if (prevOnGround && !onGnd) {
-      // Właśnie wystartował
+      // Configure justTookOff.
       justTookOff = true;
-      // Reset calloutów przy liftoff (na nowe podejście)
+      // Implementation note.
       ALT_THRESHOLDS.forEach(a => altAnnounced[a] = false);
       minimumsAnnounced = false;
       hundredAboveAnnounced = false;
@@ -397,14 +347,13 @@ const SimSound = (() => {
       engineFailAnnounced = false;
     }
     if (!prevOnGround && onGnd) {
-      // Właśnie wylądował
+      // Configure justTookOff.
       justTookOff = false;
-      v1Announced = false; // gotowe na kolejny start
-      // Zatrzymaj ostrzeżenia głosowe po lądowaniu
+      v1Announced = false; // Configure if.
       if (activeVoice) { stopSound(activeVoice); activeVoice = null; activeVoicePrio = 999; activeCallout = null; }
     }
 
-    // Reset calloutów gdy wzniesie się powyżej 3000 ft AGL
+    // Configure if.
     if (aglFt > 3000 && !onGnd) {
       ALT_THRESHOLDS.forEach(a => altAnnounced[a] = false);
       minimumsAnnounced = false;
@@ -415,18 +364,16 @@ const SimSound = (() => {
 
     if (!onGnd) {
 
-      // ════════════════════════════════════════════════════════════════════════
-      //  OSTRZEŻENIA GŁOSOWE (kanał VOICE — jeden na raz, priorytetyzowane)
-      // ════════════════════════════════════════════════════════════════════════
+      // Section: if.
 
-      // ── STALL ─────────────────────────────────────────────────────────────
+      // STALL
       if (stalling) {
         triggerVoice('stall');
       } else {
         clearVoice('stall');
       }
 
-      // ── PULL UP (MODE 1 — krytyczny sink rate) ────────────────────────────
+      // PULL UP (MODE 1 krytyczny sink rate)
       if (vsFpm < -4000 && aglFt < 500) {
         triggerVoice('pullUp');
         triggerRepeatTone('masterWarn');
@@ -434,7 +381,7 @@ const SimSound = (() => {
         clearVoice('pullUp');
       }
 
-      // ── SINK RATE PULL UP (MODE 1 — ciężki sink rate) ─────────────────────
+      // Section: if.
       if (vsFpm < -3000 && aglFt < 1000 && !(vsFpm < -4000 && aglFt < 500)) {
         triggerVoice('sinkRatePullUp');
         cautionActive = true;
@@ -442,7 +389,7 @@ const SimSound = (() => {
         clearVoice('sinkRatePullUp');
       }
 
-      // ── SINK RATE (MODE 1 — nadmierny sink rate) ──────────────────────────
+      // SINK RATE (mode 1: excessive descent rate).
       if (vsFpm < -1500 && aglFt < 2500 && !(vsFpm < -3000 && aglFt < 1000)) {
         triggerVoice('sinkRate');
         cautionActive = true;
@@ -450,7 +397,7 @@ const SimSound = (() => {
         clearVoice('sinkRate');
       }
 
-      // ── TOO LOW TERRAIN (MODE 2) ──────────────────────────────────────────
+      // TOO LOW TERRAIN (MODE 2)
       if (aglFt < 500 && !gearDn && vsFpm < -300) {
         triggerVoice('toLowTerrain');
         cautionActive = true;
@@ -458,7 +405,7 @@ const SimSound = (() => {
         clearVoice('toLowTerrain');
       }
 
-      // ── TOO LOW GEAR (MODE 4) ─────────────────────────────────────────────
+      // TOO LOW GEAR (MODE 4)
       if (aglFt < 800 && vsFpm < -200 && !gearDn) {
         triggerVoice('toLowGear');
         cautionActive = true;
@@ -466,7 +413,7 @@ const SimSound = (() => {
         clearVoice('toLowGear');
       }
 
-      // ── TOO LOW FLAPS (MODE 4) ────────────────────────────────────────────
+      // TOO LOW FLAPS (MODE 4)
       if (aglFt < 800 && vsFpm < -200 && gearDn && flaps < 3) {
         triggerVoice('toLowFlaps');
         cautionActive = true;
@@ -474,14 +421,14 @@ const SimSound = (() => {
         clearVoice('toLowFlaps');
       }
 
-      // ── DON'T SINK (MODE 3 — po starcie) ─────────────────────────────────
+      // DON'T SINK (mode 3 after takeoff).
       if (justTookOff && vsFpm < -500 && aglFt < 1000 && !dontSinkAnnounced) {
         triggerVoice('dontSink');
         dontSinkAnnounced = true;
       }
-      if (aglFt > 1500) justTookOff = false; // wzniesienie ponad 1500 ft → koniec trybu "po starcie"
+      if (aglFt > 1500) justTookOff = false; // End takeoff mode above 1500 ft.
 
-      // ── ENGINE FAILURE ────────────────────────────────────────────────────
+      // ENGINE FAILURE
       if (throttle < 0.01 && iasKt > 80 && aglFt > 100) {
         cautionActive = true;
         if (!engineFailAnnounced) {
@@ -489,35 +436,33 @@ const SimSound = (() => {
           engineFailAnnounced = true;
         }
       }
-      // Reset flagi engine failure gdy pilot doda gaz
+      // Reset engine-failure flag when the pilot adds thrust.
       if (throttle > 0.05) engineFailAnnounced = false;
 
-      // ════════════════════════════════════════════════════════════════════════
-      //  CALLOUTS WYSOKOŚCI (kanał VOICE, najniższy priorytet)
-      // ════════════════════════════════════════════════════════════════════════
+      // Section: if.
 
-      if (plane.vs < 0) { // opadanie
+      if (plane.vs < 0) { // Descending.
         for (const alt of ALT_THRESHOLDS) {
           if (aglFt < alt && prevAglFt >= alt && !altAnnounced[alt]) {
             queueCallout(ALT_FILES[alt]);
             altAnnounced[alt] = true;
-            break; // jeden callout na klatkę
+            break; // Implementation note.
           }
         }
 
-        // ── MINIMUMS (200 ft) ─────────────────────────────────────────────
+        // MINIMUMS (200 ft)
         if (aglFt < 200 && prevAglFt >= 200 && !minimumsAnnounced) {
           queueCallout('minimums');
           minimumsAnnounced = true;
         }
 
-        // ── HUNDRED ABOVE (300 ft = 100 ft nad domyślnymi minimami 200 ft) ─
+        // Section: if.
         if (aglFt < 300 && prevAglFt >= 300 && !hundredAboveAnnounced) {
           queueCallout('alt100above');
           hundredAboveAnnounced = true;
         }
 
-        // ── RETARD (20 ft, throttle nie na idle) ──────────────────────────
+        // Section: if.
         if (aglFt < 20 && throttle > 0.05 && !retardAnnounced) {
           queueCallout('alt20retard');
           retardAnnounced = true;
@@ -525,44 +470,39 @@ const SimSound = (() => {
       }
 
     } else {
-      // ════════════════════════════════════════════════════════════════════════
-      //  NA ZIEMI — callout V1 podczas rozbiegu startowego
-      // ════════════════════════════════════════════════════════════════════════
+      // On-ground V1 callout during the takeoff roll.
       if (iasMps >= A321_PARAMS.V1 && !v1Announced) {
         triggerVoice('v1');
         v1Announced = true;
       }
-      // Wyraźne zwolnienie na ziemi (np. przerwany start) resetuje flagę,
-      // żeby V1 mogło zabrzmieć ponownie przy kolejnym podejściu do startu
+      // Configure if.
       if (iasMps < A321_PARAMS.V1 * 0.5) v1Announced = false;
     }
 
-    // ════════════════════════════════════════════════════════════════════════
-    //  TONY (kanał TONE — niezależne kanały, mogą grać razem ze sobą i z VOICE)
-    // ════════════════════════════════════════════════════════════════════════
+    // Implementation note.
 
-    // ── BANK ANGLE (tylko w powietrzu, jak w oryginale) — bezszwowa pętla ─────
+    // Implementation note.
     setLoopTone('bankAngle', !onGnd && bankDeg > 33);
 
-    // ── OVERSPEED (ta sama flaga co HUD — zawsze spójne) — bezszwowa pętla ───
+    // Implementation note.
     setLoopTone('overspeed', overspeeding);
 
-    // ── CAUTION WARN — bezszwowa pętla, dopóki trwa którykolwiek z warunków ──
+    // Implementation note.
     setLoopTone('cautionWarn', cautionActive);
 
-    // Czyść aktywny komunikat VOICE jeśli dźwięk skończył się grać
+    // Configure if.
     if (activeVoice && !isPlaying(activeVoice)) {
       activeVoice = null;
       activeVoicePrio = 999;
       activeCallout = null;
     }
 
-    // Zapamiętaj stan dla porównania w następnej klatce
+    // Configure prevAglFt.
     prevAglFt = aglFt;
     prevOnGround = onGnd;
   }
 
-  // ── Toggle mute ────────────────────────────────────────────────────────────
+  // Toggle mute
 
   function toggleMute() {
     muted = !muted;
@@ -579,7 +519,7 @@ const SimSound = (() => {
       activeCallout = null;
       LOOP_TONE_NAMES.forEach(stopLoop);
     }
-    // Aktualizuj ikonkę mute w HUD
+    // Configure btn.
     const btn = document.getElementById('btn-mute');
     if (btn) btn.textContent = muted ? '🔇 Mute' : '🔊 Mute';
     const mbtn = document.getElementById('mb-mute-lbl');
@@ -589,7 +529,7 @@ const SimSound = (() => {
     console.log(`[Sound] ${muted ? 'MUTED' : 'UNMUTED'}`);
   }
 
-  // ── Publiczny API ──────────────────────────────────────────────────────────
+  // Publiczny API
 
   return {
     preload,
@@ -602,10 +542,10 @@ const SimSound = (() => {
 
 })();
 
-// ── Pre-load dźwięków od razu po załadowaniu skryptu ─────────────────────────
+// Handle loading and error cases.
 SimSound.preload();
 
-// ── AudioContext unlock przy pierwszej interakcji użytkownika ─────────────────
+// Implementation note.
 ['click', 'touchstart', 'keydown'].forEach(ev => {
   document.addEventListener(ev, function _unlock() {
     SimSound.unlockAudio();

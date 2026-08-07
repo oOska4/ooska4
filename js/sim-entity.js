@@ -1,6 +1,6 @@
 'use strict';
 
-// ── System encji (obiektów w świecie) ─────────────────────────────────────────
+// Entity system (world objects)
 
 class Entity {
   constructor(opts = {}) {
@@ -68,12 +68,7 @@ function removeEntity(id) {
   if (activeEntity === e) activeEntity = null;
 }
 
-// ── Krok fizyki (zmienny dt, liczony co klatkę renderowania) ──────────────────
-// Każda encja sama ogranicza swój dt do rozsądnego maksimum wewnątrz własnego
-// physicsUpdate() (patrz np. dtCap w A321Entity), więc nie ma tu osobnego,
-// stałego kroku fizyki ani bufora nadrabiania zaległości — to był dodatek
-// spoza tej sesji (razem z interpolacją syncMesh(alpha) powyżej), który
-// został wycofany na prośbę użytkownika.
+// Section: physLastTime.
 
 let physLastTime = performance.now();
 

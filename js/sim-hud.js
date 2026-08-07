@@ -1,6 +1,6 @@
 'use strict';
 
-// ── Funkcje rysujące HUD ──────────────────────────────────────────────────────
+// Section: MPS_KT.
 
 const MPS_KT = 1.94384, MPS_FPM = 196.85, M_FT = 3.28084;
 
@@ -126,19 +126,154 @@ function drawCompass(canvas, headingDeg) {
   ctx.strokeStyle = '#1a4a7a'; ctx.lineWidth = 2; ctx.stroke();
 }
 
-// ── Aktualizacja HUD ───────────────────────────────────────────────────────────
+function drawFighterHUD(canvas, plane, camera) {
+  const ctx = canvas.getContext('2d'), w = canvas.width, h = canvas.height;
+  ctx.clearRect(0, 0, w, h);
+  const cx = w / 2, cy = h / 2;
+  const GREEN = '#33ff55';
+  ctx.strokeStyle = GREEN; ctx.fillStyle = GREEN; ctx.lineWidth = 1.5;
+
+  // Camera's actual current attitude (includes cockpitLook offset + zoom),
+  // so every symbol below stays conformal with the real 3D view as the
+  // player looks around or zooms - not just with the aircraft's own attitude.
+  const camEuler = new THREE.Euler().setFromQuaternion(camera.quaternion, 'YXZ');
+  const camPitchDeg = Units.radToDeg(camEuler.x);
+  const camRollRad = camEuler.z; // ctx.rotate() wants radians, not degrees
+  const vFovDeg = camera.fov;
+  const pixPerDegV = h / vFovDeg;
+  const hFovRad = 2 * Math.atan(Math.tan(Units.degToRad(vFovDeg) / 2) * camera.aspect);
+  const pixPerDegH = w / Units.radToDeg(hFovRad);
+
+  // World direction -> screen position (or null if behind camera / far off-axis).
+  function projectDir(dir) {
+    const p = camera.position.clone().addScaledVector(dir, 2000);
+    const ndc = p.project(camera);
+    if (ndc.z > 1 || Math.abs(ndc.x) > 3 || Math.abs(ndc.y) > 3) return null;
+    return { x: (ndc.x + 1) / 2 * w, y: (1 - ndc.y) / 2 * h };
+  }
+
+  // === Pitch ladder (rotates with roll, shifts with pitch) ===
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(-camRollRad);
+  ctx.font = 'bold 12px Courier New';
+  for (let deg = -25; deg <= 25; deg += 5) {
+    if (deg === 0) continue;
+    const y = -(deg - camPitchDeg) * pixPerDegV;
+    if (Math.abs(y) > h * 0.6) continue;
+    const halfW = deg % 10 === 0 ? 60 : 32;
+    const tick = deg > 0 ? 7 : -7; // ticks angle toward the horizon (down for +, up for -)
+    ctx.beginPath();
+    ctx.moveTo(-halfW, y + tick); ctx.lineTo(-halfW, y); ctx.lineTo(-16, y);
+    ctx.moveTo(16, y); ctx.lineTo(halfW, y); ctx.lineTo(halfW, y + tick);
+    ctx.stroke();
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'right'; ctx.fillText(Math.abs(deg), -halfW - 6, y);
+    ctx.textAlign = 'left';  ctx.fillText(Math.abs(deg), halfW + 6, y);
+  }
+  ctx.restore();
+
+  // === Waterline (boresight reference - where the nose actually points) ===
+  const noseDir = new THREE.Vector3(
+    Math.sin(plane.yawRad) * Math.cos(plane.pitchRad),
+    Math.sin(plane.pitchRad),
+    Math.cos(plane.yawRad) * Math.cos(plane.pitchRad)
+  );
+  const wl = projectDir(noseDir);
+  if (wl) {
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(wl.x - 26, wl.y); ctx.lineTo(wl.x - 8, wl.y);
+    ctx.lineTo(wl.x - 4, wl.y + 5); ctx.lineTo(wl.x + 4, wl.y + 5); ctx.lineTo(wl.x + 8, wl.y);
+    ctx.lineTo(wl.x + 26, wl.y);
+    ctx.stroke();
+  }
+
+  // === Flight path marker (green square - where the plane is ACTUALLY
+  // flying, i.e. the velocity vector, as opposed to the waterline above
+  // which shows where the nose points) ===
+  const speedMs = plane.vel.length();
+  if (speedMs > 3) {
+    const fpm = projectDir(plane.vel.clone().divideScalar(speedMs));
+    if (fpm) {
+      ctx.lineWidth = 2;
+      ctx.strokeRect(fpm.x - 9, fpm.y - 9, 18, 18);
+    }
+  }
+
+  // === Heading tape (along the horizon) ===
+  const camYawDeg = Units.radToDeg(camEuler.y);
+  ctx.save();
+  ctx.font = 'bold 12px Courier New'; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+  ctx.lineWidth = 1.2;
+  const hdgY = cy + h * 0.22;
+  ctx.beginPath(); ctx.moveTo(cx - w * 0.3, hdgY); ctx.lineTo(cx + w * 0.3, hdgY); ctx.stroke();
+  for (let hdg = 0; hdg < 360; hdg += 10) {
+    let dd = ((hdg - camYawDeg + 540) % 360) - 180;
+    if (Math.abs(dd) > 35) continue;
+    const x = cx + dd * pixPerDegH;
+    ctx.beginPath(); ctx.moveTo(x, hdgY); ctx.lineTo(x, hdgY - 10); ctx.stroke();
+    ctx.fillText(((hdg % 360) + 360) % 360, x, hdgY - 12);
+  }
+  ctx.restore();
+
+  // === Speed tape (left edge, full height) ===
+  const speedKt = speedMs * MPS_KT;
+  drawHudTape(ctx, 0, h, speedKt, 20, 'left', v => v.toFixed(0));
+  // === Altitude tape (right edge, full height) ===
+  const altFt = plane.altM * M_FT;
+  drawHudTape(ctx, w, h, altFt, 200, 'right', v => v.toFixed(0));
+
+  // === Mach + radar altitude readouts ===
+  const soundSpeed = (typeof isaAtmosphere === 'function') ? isaAtmosphere(plane.altM).soundSpeed : 340.3;
+  const mach = speedMs / soundSpeed;
+  ctx.font = 'bold 14px Courier New'; ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+  ctx.fillText(mach.toFixed(3), 14, h - 20);
+  ctx.textAlign = 'right';
+  ctx.fillText(Math.round(plane.agl) + 'M', w - 14, h - 20);
+}
+
+// Generic vertical HUD tape (speed on the left edge, altitude on the right).
+// side: 'left' puts ticks/labels growing rightward from the edge, 'right' the mirror.
+function drawHudTape(ctx, edgeX, h, value, step, side, fmt) {
+  const cy = h / 2, range = step * 6, pixPerUnit = (h * 0.4) / range;
+  const sign = side === 'left' ? 1 : -1;
+  ctx.save();
+  ctx.font = 'bold 11px Courier New';
+  ctx.textAlign = side === 'left' ? 'left' : 'right';
+  ctx.textBaseline = 'middle';
+  ctx.lineWidth = 1.2;
+  const start = Math.floor((value - range) / step) * step;
+  for (let v = start; v <= value + range; v += step) {
+    const y = cy - (v - value) * pixPerUnit;
+    if (y < 0 || y > h) continue;
+    const len = Math.round(v) % (step * 2) === 0 ? 16 : 9;
+    ctx.beginPath(); ctx.moveTo(edgeX, y); ctx.lineTo(edgeX + sign * len, y); ctx.stroke();
+    if (Math.round(v) % (step * 2) === 0) ctx.fillText(fmt(v), edgeX + sign * (len + 5), y);
+  }
+  // Boxed current-value readout at vertical center.
+  ctx.beginPath();
+  const bw = sign * 62, bh = 15;
+  ctx.moveTo(edgeX, cy - bh); ctx.lineTo(edgeX + bw, cy - bh);
+  ctx.lineTo(edgeX + bw + sign * 10, cy); ctx.lineTo(edgeX + bw, cy + bh);
+  ctx.lineTo(edgeX, cy + bh); ctx.stroke();
+  ctx.font = 'bold 16px Courier New';
+  ctx.fillText(fmt(value), edgeX + sign * 8, cy);
+  ctx.restore();
+}
+
+// Aktualizacja HUD
 
 let lastLoggedCamDrot = null;
 let lastLoggedCamDpos = null;
 
-// Cache wszystkich elementów DOM HUD-a RAZ — wcześniej updateHUD() wołało
-// document.getElementById() ~30 razy na każde wywołanie. Same elementy się
-// nie zmieniają (statyczny HTML), więc wyszukujemy je tylko raz przy starcie.
+// Configure hudEl.
 const hudEl = {
   speedCanvas:    document.getElementById('speed-canvas'),
   altCanvas:      document.getElementById('alt-canvas'),
   attitudeCanvas: document.getElementById('attitude-canvas'),
   compassCanvas:  document.getElementById('compass-canvas'),
+  fighterHudCanvas: document.getElementById('fighter-hud-canvas'),
   ias:        document.getElementById('ias-val'),
   vs:         document.getElementById('vs-val'),
   pitch:      document.getElementById('pitch-val'),
@@ -179,6 +314,15 @@ const hudEl = {
   mcduAptLbl: document.getElementById('mcdu-apt-lbl'),
 };
 
+// Configure fighter-hud-canvas sizing (same pattern as #weather-overlay).
+(function initFighterHudCanvas() {
+  const c = hudEl.fighterHudCanvas;
+  if (!c) return;
+  const resize = () => { c.width = innerWidth; c.height = innerHeight; };
+  resize();
+  window.addEventListener('resize', resize);
+})();
+
 function updateHUD() {
   const plane = activeEntity;
   if (!plane) return;
@@ -193,6 +337,9 @@ function updateHUD() {
   drawAltTape(hudEl.altCanvas, alt_ft);
   drawAttitude(hudEl.attitudeCanvas, plane.pitchRad, plane.rollRad);
   drawCompass(hudEl.compassCanvas, hdg);
+  if (camMode === CameraMode.HUD && hudEl.fighterHudCanvas) {
+    drawFighterHUD(hudEl.fighterHudCanvas, plane, camera);
+  }
 
   hudEl.ias.textContent   = ias_kt.toFixed(0) + ' kt';
   hudEl.vs.textContent    = (vs_fpm > 0 ? '+' : '') + vs_fpm.toFixed(0) + ' fpm';
@@ -229,13 +376,11 @@ function updateHUD() {
   hudEl.gear.textContent     = plane.gearDown ? 'DOWN' : 'UP';
   hudEl.spoilers.textContent = plane.spoilers ? 'ON' : 'OFF';
   hudEl.tiles.textContent    = `${tileMeshes.size} załad., ${loadingTiles.size} ład.`;
-  // Pokaż zakres aktywnych zoomów w HUD
+  // Configure activeZooms.
   const activeZooms = [...new Set([...tileMeshes.keys()].map(k => k.split('_')[0]))].sort((a, b) => b - a).join('/');
   hudEl.satZ.textContent     = activeZooms ? `Z=${activeZooms}` : '–';
 
-  // N1/throttle: throttle<0 = reverse thrust (patrz reverserDeployFrac w
-  // sim-physics.js) — pasek pokazuje wartość bezwzględną, ale w kolorze
-  // ostrzegawczym i z etykietą "REV", żeby było jasne że silniki ciągną do tyłu.
+  // Configure revActive.
   const revActive = plane.throttle < 0;
   const tPctAbs = Math.round(Math.abs(plane.throttle) * 100);
   hudEl.throttleBar.style.width   = tPctAbs + '%';
@@ -245,9 +390,7 @@ function updateHUD() {
     : 'linear-gradient(90deg,#0a5a22,#44ff88)';
   hudEl.throttlePct.style.color = revActive ? '#ff5a30' : (plane.throttle > 0.85 ? '#ff8800' : '#44ff88');
 
-  // Hamulce / parking brake / autobrake — patrz sim-physics.js (input.brakes
-  // odczytany co klatkę w physicsUpdate, tu tylko pokazujemy stan z encji;
-  // brakesActiveDisplay ustawiane co klatkę w physicsUpdate, patrz tam).
+  // Configure if.
   if (hudEl.brakes) {
     hudEl.brakes.textContent = plane.brakesActiveDisplay ? 'ON' : 'OFF';
     hudEl.brakes.style.color = plane.brakesActiveDisplay ? '#ff8800' : '#c8e8ff';
@@ -261,15 +404,12 @@ function updateHUD() {
     hudEl.autobrake.style.color = plane.autobrakeLevel !== 'OFF' ? '#44ccff' : '#c8e8ff';
   }
 
-  // Wiatr — odczyt "po ludzku" (kierunek OD którego wieje / prędkość), patrz
-  // getWindVector3D w sim-weather.js. Nie zawiera windsheara testowego celowo
-  // (patrz komentarz przy getWindshearDelta) — to osobne ostrzeżenie niżej.
+  // Configure if.
   if (hudEl.wind) {
     hudEl.wind.textContent = Math.round(plane.windDirDeg || 0) + '°/' + Math.round(plane.windSpeedKt || 0) + 'kt';
   }
 
-  // FMA (Flight Mode Annunciator) — pokazuje cel gdy tryb aktywny, samą
-  // etykietę (przygaszoną przez CSS .fma-item bez .active) gdy nieaktywny.
+  // Configure if.
   if (hudEl.fmaHdg) {
     hudEl.fmaHdg.textContent = plane.ap.hdgHold ? ('HDG ' + Math.round(plane.ap.targetHdgDeg) + '°') : 'HDG';
     hudEl.fmaHdg.classList.toggle('active', plane.ap.hdgHold);
@@ -286,19 +426,16 @@ function updateHUD() {
     hudEl.fmaSpd.textContent = plane.ap.spdHold ? ('A/THR ' + Math.round(plane.ap.targetSpdKt)) : 'A/THR';
     hudEl.fmaSpd.classList.toggle('active', plane.ap.spdHold);
   }
-  if (typeof apUI !== 'undefined') apUI.syncFromEntity(plane); // złap autonomiczne rozłączenia (ręczny ster) w panelu
+  if (typeof apUI !== 'undefined') apUI.syncFromEntity(plane); // Configure if.
 
-  // Etykieta ICAO na przycisku szuflady MCDU (logika otwierania/zakladek w
-  // sim-controls.js, sekcja "Szuflada MCDU") — dla lotniska swiata pokazuje
-  // jego ICAO zamiast ostatniego wbudowanego presetu (EPWR/LOWI/EDDF).
+  // Configure if.
   if (hudEl.mcduAptLbl) {
     hudEl.mcduAptLbl.textContent = (typeof worldAirportActive === 'function' && worldAirportActive()
       && typeof WorldAirport !== 'undefined' && WorldAirport && WorldAirport.icao)
       ? WorldAirport.icao : currentAirport;
   }
 
-  // Windshear — ostrzeżenie widoczne DOKŁADNIE podczas scenariusza testowego
-  // (patrz weather.triggerWindshearTest / getWindshearDelta).
+  // Configure if.
   if (hudEl.windshear) {
     hudEl.windshear.style.display = (typeof weather !== 'undefined' && weather && weather.windshearActive) ? 'block' : 'none';
   }
@@ -312,7 +449,7 @@ function updateHUD() {
   }
   hudEl.phase.textContent     = phase;
   hudEl.stall.style.display     = plane._isStalling ? 'block' : 'none';
-  hudEl.overspeed.style.display = plane._isOverspeed ? 'block' : 'none'; // ta sama flaga co dzwiek (histereza w sim-physics.js) - koniec z miganiem na granicy VMO
+  hudEl.overspeed.style.display = plane._isOverspeed ? 'block' : 'none'; // Same hysteresis flag as sound; prevents VMO-edge flicker.
 
   hudEl.vs.classList.remove('warn', 'danger', 'green');
   if (vs_fpm < -1500) hudEl.vs.classList.add('danger');
@@ -320,9 +457,7 @@ function updateHUD() {
   else if (vs_fpm > 100) hudEl.vs.classList.add('green');
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// CAMERA BUTTONS — Obsługa przycisków przełączania kamer (1-7)
-// ═══════════════════════════════════════════════════════════════════════════════
+// Section: function _updateCameraButtonStates().
 
 function _updateCameraButtonStates() {
   const btnMap = {
@@ -341,7 +476,7 @@ function _updateCameraButtonStates() {
   });
 }
 
-// Inicjalizacja przycisków kamer
+// Handle function initCameraButtons().
 (function initCameraButtons() {
   const btnMap = {
     'cam-orbit': CameraMode.ORBIT,
@@ -361,7 +496,7 @@ function _updateCameraButtonStates() {
   });
 })();
 
-// Uaktualnij stany przycisków po każdej zmianie kamery
+// Configure _originalSetCameraMode.
 const _originalSetCameraMode = setCameraMode;
 window.setCameraMode = function(mode) {
   _originalSetCameraMode(mode);

@@ -1,11 +1,11 @@
 'use strict';
 
-// ── URL-e kafelków ────────────────────────────────────────────────────────────
+// Section: DEM_URL.
 const DEM_URL = (z, x, y) => `https://s3.amazonaws.com/elevation-tiles-prod/terrarium/${z}/${x}/${y}.png`;
 const SAT_URL = (z, x, y) => `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${y}/${x}`;
 const SAT_OSM = (z, x, y) => `https://tile.openstreetmap.org/${z}/${x}/${y}.png`;
 
-// ── Cache DEM ─────────────────────────────────────────────────────────────────
+// Cache DEM
 const demDataCache  = new Map();
 const demInflight   = new Map();
 const DEM_CACHE_MAX = 900;
@@ -30,7 +30,7 @@ function _decodeDEM(src) {
         const h  = new Float32Array(256 * 256);
         for (let i = 0; i < 256 * 256; i++)
           h[i] = px[i * 4] * 256 + px[i * 4 + 1] + px[i * 4 + 2] / 256 - 32768;
-        // Usuwanie spikeów (artefakty terrarium)
+        // Configure SPK.
         const SPK = 200;
         for (let y = 1; y < 255; y++) for (let x = 1; x < 255; x++) {
           const i   = y * 256 + x;
@@ -73,22 +73,13 @@ function _sampleDem(src, lat, lon, zoom) {
   const xf = (lon + 180) / 360 * n;
   const yf = (1 - Math.log(Math.tan(lr) + 1 / Math.cos(lr)) / Math.PI) / 2 * n;
   const tx = Math.floor(xf), ty = Math.floor(yf);
-  // Współrzędne piksela z częścią ułamkową (0..256) — do interpolacji
-  // dwuliniowej w _bilinearDem(), żeby wysokość terenu zmieniała się płynnie
-  // między próbkami DEM (tak jak na renderowanej siatce), zamiast skokowo
-  // "przeskakiwać" na najbliższy zmierzony punkt.
+  // Configure pxf.
   const pxf = Math.max(0, Math.min(255.999, (xf - tx) * 256));
   const pyf = Math.max(0, Math.min(255.999, (yf - ty) * 256));
   return { tx, ty, px: pxf | 0, py: pyf | 0, pxf, pyf };
 }
 
-// Interpolacja dwuliniowa między 4 sąsiednimi pikselami siatki wysokości — bez
-// tego wysokość terenu "skakała" na najbliższy zmierzony punkt, przez co
-// pochyły teren między dwoma punktami wysokości wyglądał dla fizyki jak schodek
-// zamiast równej pochyłości (a koło zawsze "wybierało" jeden z dwóch punktów).
-// Działa w obrębie jednego kafelka 256×256 — przy samej krawędzi kafelka drugi
-// róg jest przycinany do tego samego kafelka (błąd rzędu ułamka metra, bez
-// znaczenia dla koła samolotu, a oszczędza dociąganie sąsiednich kafelków DEM).
+// Handle function _bilinearDem().
 function _bilinearDem(dem, pxf, pyf) {
   const x0 = pxf | 0, y0 = pyf | 0;
   const x1 = Math.min(255, x0 + 1), y1 = Math.min(255, y0 + 1);
@@ -100,7 +91,7 @@ function _bilinearDem(dem, pxf, pyf) {
   return hx0 + (hx1 - hx0) * fy;
 }
 
-// ── Próbkowanie wysokości terenu ──────────────────────────────────────────────
+// Section: function terrainHeightM().
 
 function terrainHeightM(lat, lon, zoom = 12) {
   const z = Math.min(zoom, 15);   // terrarium max zoom = 15
@@ -119,10 +110,7 @@ function terrainHeightBest(lat, lon, zooms = [15, 14, 13, 12, 11, 10, 9, 8, 7]) 
   return 0;
 }
 
-// Jak terrainHeightBest(), ale dodatkowo mówi, z JAKIEGO zoomu faktycznie
-// pochodzi wysokość (albo null, jeśli nic nie było jeszcze w cache'u). Służy do
-// debugowania: pozwala wykryć sytuacje, gdy najdokładniejszy DEM (Z15) w danym
-// miejscu jeszcze się nie wczytał i fizyka musiała sięgnąć po grubszy kafelek.
+// Handle function terrainHeightWithZoom().
 function terrainHeightWithZoom(lat, lon, zooms = [15, 14, 13, 12, 11, 10, 9, 8, 7]) {
   for (const z of zooms) {
     const { tx, ty, pxf, pyf } = _sampleDem(null, lat, lon, z);
@@ -153,7 +141,7 @@ async function prefetchDEM(lat, lon, radius = 2, zoom = 12, signal = null) {
   await Promise.all(promises);
 }
 
-// ── Cache tekstur satelitarnych ───────────────────────────────────────────────
+// Cache tekstur satelitarnych
 
 const SAT_TEX_MAX        = 420;
 const satTextureCache    = new Map();
@@ -163,7 +151,7 @@ function getCachedSatTex(key) {
   if (!satTextureCache.has(key)) return null;
   const t = satTextureCache.get(key);
   satTextureCache.delete(key);
-  satTextureCache.set(key, t);   // LRU: przesuń na koniec
+  satTextureCache.set(key, t);   // Configure return.
   return t;
 }
 function putCachedSatTex(key, t) {
@@ -275,7 +263,7 @@ async function loadSatTex(z, x, y, signal) {
   return null;
 }
 
-// ── Budowanie siatek terenu ───────────────────────────────────────────────────
+// Build terrain meshes.
 
 const TILE_LOAD_RADIUS = 4;
 
@@ -418,18 +406,14 @@ async function buildMeshWithNeighbors(tx, ty, satZoom, signal, clipBoundsZ17 = n
   geo.setAttribute('position', new THREE.BufferAttribute(_posBuf.slice(0, vi), 3));
   geo.setAttribute('uv',       new THREE.BufferAttribute(_uvBuf.slice(0, ui), 2));
   geo.setIndex(new THREE.BufferAttribute(makeTerrainIndex(GRID, tx, ty, satZoom, clipBoundsZ17), 1));
-  geo.computeVertexNormals(); // potrzebne, żeby MeshLambertMaterial (sim-shadows.js) w ogóle miał co cieniować
+  geo.computeVertexNormals(); // Configure return.
   return geo;
 }
 
-// ── Menadżer kafelków (multi-LOD) ─────────────────────────────────────────────
-//
-//  Pierścienie zoomów (w jednostkach Z13):
-//    Centrum   [Z17] r=1  · Pierścień1 [Z15] r=2  · Pierścień2 [Z13] r=3
-//    Pierścień3 [Z11] r=4 · Pierścień4 [Z9]  r=5  (zawsze aktywny)
+// Section: tileMeshes.
 
 const tileMeshes   = new Map();   // "zoom_tx_ty" → Mesh
-const loadingTiles = new Set();   // "zoom_tx_ty" — w trakcie ładowania
+const loadingTiles = new Set();   // Configure tileAbort.
 const tileAbort    = new Map();   // "zoom_tx_ty" → AbortController
 const tileClipSig  = new Map();   // "zoom_tx_ty" → clip signature
 let   tileEpoch    = 0;
@@ -478,22 +462,17 @@ async function loadTile(tx, ty, zoom, clipBoundsZ17 = null) {
     const mat = new THREE.MeshPhongMaterial({
       map:      tex || null,
       color:    tex ? 0xffffff : 0x5a8a50,
-      specular: 0x000000, // teren ma być czysto dyfuzyjny - bez plastikowych połysków
+      specular: 0x000000, // Implementation note.
       shininess: 0,
     });
-    // Zapamiętany kolor bazowy (przed przyciemnieniem za dnia / rozjaśnieniem
-    // nocą — patrz updateGroundTint() w sim-ground-tint.js), żeby mnożenie przez
-    // ton nie zgubiło różnicy między kafelkiem z teksturą a bez niej.
+    // Configure mat.userData.baseColor.
     mat.userData.baseColor = mat.color.clone();
-    // polygonOffset eliminuje z-fighting na stykach LOD — niższy zoom = głębiej
+    // Configure mat.polygonOffset.
     mat.polygonOffset       = true;
     mat.polygonOffsetFactor = (17 - zoom) * 1;
     mat.polygonOffsetUnits  = (17 - zoom) * 1;
     const mesh       = new THREE.Mesh(geo, mat);
-    mesh.renderOrder = zoom;   // wyższy zoom = rysowany na wierzchu
-    // Cienie (sim-shadows.js) — teren ZAWSZE odbiera (żeby był widoczny cień
-    // samolotu), a rzuca WŁASNY cień (góra→dolina) tylko gdy jakość na to
-    // pozwala (Średnia/Wysoka) — patrz shadowTerrainCastEnabled().
+    mesh.renderOrder = zoom;   // Configure mesh.receiveShadow.
     mesh.receiveShadow = true;
     mesh.castShadow = (typeof shadowTerrainCastEnabled === 'function') ? shadowTerrainCastEnabled() : false;
     scene.add(mesh);
@@ -513,13 +492,7 @@ function abortAndRemove(key) {
   if (mesh) { disposeMesh(mesh); tileMeshes.delete(key); }
 }
 
-// Jawne wyczyszczenie WSZYSTKICH kafelków terenu (załadowanych i w trakcie
-// ładowania) — wołane przy przełączeniu lotniska (selectAirport() w
-// sim-controls.js, waptLoad() w sim-airport-spawn.js). Bez tego stare kafelki
-// (zbudowane względem POPRZEDNIEGO refLat/refLon) potrafią zostać w scenie
-// z błędną, "zawieszoną w powietrzu" pozycją do czasu, aż naturalne
-// czyszczenie oparte na odległości w updateTiles() je dogoni — co po nagłym
-// teleporcie na drugi kraniec świata bywa zauważalnie opóźnione.
+// Handle function clearAllTiles().
 function clearAllTiles() {
   for (const key of new Set([...tileMeshes.keys(), ...loadingTiles])) abortAndRemove(key);
 }
@@ -539,7 +512,7 @@ function collectRing(zoom, cx, cy, outerR, innerBoundsZ17) {
         const b1 = ty * scale,       b2 = b1 + scale - 1;
         const overlaps = a1 <= innerBoundsZ17.maxX && a2 >= innerBoundsZ17.minX &&
                          b1 <= innerBoundsZ17.maxY && b2 >= innerBoundsZ17.minY;
-        // Kafelek w całości pokryty przez wyższy LOD → pomijamy
+        // Configure if.
         if (a1 >= innerBoundsZ17.minX && a2 <= innerBoundsZ17.maxX &&
             b1 >= innerBoundsZ17.minY && b2 <= innerBoundsZ17.maxY) continue;
         if (overlaps) clip = innerBoundsZ17;
@@ -564,8 +537,7 @@ function updateTiles(lat, lon, camGroundDist) {
 
   activeTileZoom = useZ17 ? 17 : useZ15 ? 15 : useZ13 ? 13 : useZ11 ? 11 : 9;
 
-  // Centrum bazowe na Z17 — wszystkie niższe zoom-y przez bitshift,
-  // żeby granice pierścieni były idealnie wyrównane
+  // Configure const.
   const [baseCx, baseCy] = deg2tile(lat, lon, 17);
   const centerOf  = (zoom) => { const s = 17 - zoom; return [baseCx >> s, baseCy >> s]; };
   const boundsZ17 = (cx, cy, zoom, r) => {
@@ -599,7 +571,7 @@ function updateTiles(lat, lon, camGroundDist) {
     for (const [k, c] of collectRing(11, cx, cy, RING_R11, innerB)) wantTiles.set(k, c);
     innerB = boundsZ17(cx, cy, 11, RING_R11);
   }
-  // Z9 zawsze — pokrywa cały horyzont
+  // Implementation note.
   {
     const [cx, cy] = centerOf(9);
     for (const [k, c] of collectRing(9, cx, cy, RING_R9, innerB)) wantTiles.set(k, c);
@@ -616,14 +588,14 @@ function updateTiles(lat, lon, camGroundDist) {
     return false;
   };
 
-  // Usuń / przerwij niechciane kafelki
+  // Configure key.
   for (const key of [...tileMeshes.keys(), ...loadingTiles]) {
     const desiredClipSig = clipSignature(wantTiles.get(key));
     const shouldRemove   = !wantTiles.has(key) || tileClipSig.get(key) !== desiredClipSig;
     if (shouldRemove && !hasPendingHigherReplacement(key)) abortAndRemove(key);
   }
 
-  // Załaduj brakujące (wyższy zoom = wyższy priorytet)
+  // Configure missing.
   const missing = [...wantTiles.keys()].filter(k => !tileMeshes.has(k) && !loadingTiles.has(k));
   missing.sort((a, b) => parseInt(b) - parseInt(a));
   const pending = [];
@@ -632,11 +604,6 @@ function updateTiles(lat, lon, camGroundDist) {
     pending.push(loadTile(+parts[1], +parts[2], +parts[0], wantTiles.get(key)));
   }
 
-  // UWAGA: zwracaliśmy tu wcześniej `activeTileZoom` (nikt tego nie odczytywał —
-  // sprawdzone we wszystkich wywołaniach). Teraz zwracamy tablicę obietnic
-  // kafelków WŁAŚNIE uruchomionych w tym wywołaniu — ekran ładowania
-  // (sim-main.js) czeka na nią przy starcie, żeby pasek postępu odzwierciedlał
-  // realne wczytywanie zdjęć satelitarnych, a nie sztuczny czas. `activeTileZoom`
-  // dalej jest dostępne jako zmienna modułowa (patrz sim-buildings.js).
+  // Configure return.
   return pending;
 }

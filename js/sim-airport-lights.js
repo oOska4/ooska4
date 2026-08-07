@@ -1,40 +1,6 @@
 'use strict';
 
-// ════════════════════════════════════════════════════════════════════════════════
-// sim-airport-lights.js
-//
-// Fotorealistyczne światła lotniskowe nocą — krawędziowe/progowe/osiowe pasa,
-// krawędziowe/osiowe dróg kołowania, poświata płyt postojowych, REIL, PAPI
-// (kolor liczony NA ŻYWO z bieżącego kąta podejścia samolotu) i pulsująca
-// latarnia lotniskowa. Wzorowane na samodzielnym airport.html (te same
-// źródła danych: wkrgames.com API dla dokładnych progów/długości/szerokości
-// pasów + Overpass/OSM dla dróg kołowania, płyt, stanowisk i realnych węzłów
-// PAPI), ale BEZ rysowania nawierzchni — tutaj nawierzchnię i tak pokazuje
-// zdjęcie satelitarne z sim-terrain.js, więc dokładamy tylko same punkty światła.
-//
-// Ta sama warstwa danych (fetchAirportFullData, apltClassifyElements —
-// pasy/drogi kołowania/płyty/STANOWISKA z numerami/węzły PAPI) jest też
-// używana przez sim-airport-spawn.js do zbudowania listy pasów/stanowisk do
-// spawnu na DOWOLNYM lotnisku świata — stąd ten plik musi się załadować
-// PRZED sim-airport-spawn.js (patrz simworld.html).
-//
-// Pozycjonowanie: pozioma projekcja lat/lon → world X/Z to czyste metry
-// (latLonToWorld, bez skalowania — patrz sim-constants.js), a poziom gruntu
-// liczony jest tak samo jak dla budynków/fizyki (sim-buildings.js/
-// sim-physics.js): realna wysokość terenu (terrainHeightBest) × DEM_EXAG ×
-// Y_SCALE, plus wysokość NAD gruntem (sam Y_SCALE, bez DEM_EXAG) — inaczej
-// światła "pływałyby" nad/pod przesadzonym wizualnie terenem gór.
-//
-// Ładowane leniwie per lotnisko: loadAirportLights(icao) wołane z
-// selectAirport() (sim-controls.js), z loadWorldAirport() (sim-airport-spawn.js)
-// i raz przy starcie (sim-main.js), buforowane w AIRPORT_LIGHTS_CACHE (powrót
-// do odwiedzonego lotniska jest natychmiastowy, bez ponownego zapytania do
-// sieci). Widoczność narasta płynnie wraz ze zmierzchem (SkyState.nightFactor
-// z sim-sky.js) zamiast twardego przełącznika dzień/noc — patrz
-// updateAirportLights(), wołane co klatkę z sim-main.js.
-// ════════════════════════════════════════════════════════════════════════════════
-
-// ── Źródła danych (identyczne z airport.html) ────────────────────────────────
+// Airport-light data sources.
 const APLT_WKR_API = 'https://wkrgames.com/guslarz/simworld/api.php';
 const APLT_OVERPASS_SERVERS = [
   'https://overpass-api.de/api/interpreter',
@@ -44,27 +10,27 @@ const APLT_OVERPASS_SERVERS = [
   'https://overpass.nchc.org.tw/api/interpreter',
 ];
 
-// ── Geometria świateł (odstępy/strefy jak w normach ICAO Annex 14) ───────────
+// Section: APLT_DEFAULT_RW_WIDTH.
 const APLT_DEFAULT_RW_WIDTH  = 45;
-const APLT_DEFAULT_TWY_WIDTH = 23;      // lekko szersze niż realne — założenie dla rozstawu świateł
+const APLT_DEFAULT_TWY_WIDTH = 23;      // Configure APLT_MIN_TWY_WIDTH.
 const APLT_MIN_TWY_WIDTH     = 18;
-const APLT_TWY_WIDTH_PAD     = 4;       // dodatkowy zapas szerokości (na krawędź, nie na oś) przy KAŻDEJ drodze kołowania
-const APLT_TWY_MIN_LEN_EDGES = 25;      // krótsze odcinki (kikuty-łączniki na skrzyżowaniach w OSM) dostają TYLKO oś, bez krawędzi
-const APLT_DEDUPE_CELL_M     = 6;       // promień scalania świateł, które wypadły blisko siebie (skrzyżowania wielu dróg kołowania)
-const APLT_RWY_EDGE_SPACING  = 60;      // ok. 200 ft
+const APLT_TWY_WIDTH_PAD     = 4;       // Configure APLT_TWY_MIN_LEN_EDGES.
+const APLT_TWY_MIN_LEN_EDGES = 25;      // Configure APLT_DEDUPE_CELL_M.
+const APLT_DEDUPE_CELL_M     = 6;       // Configure APLT_RWY_EDGE_SPACING.
+const APLT_RWY_EDGE_SPACING  = 60;      // ok.
 const APLT_TWY_EDGE_SPACING  = 40;
 const APLT_TWY_CL_SPACING    = 15;
 const APLT_RWY_CL_SPACING    = 15.24;   // 50 ft
-const APLT_CAUTION_ZONE      = 609.6;   // ostatnie 2000 ft pasa — żółte krawędziowe
-const APLT_CL_REDWHITE_ZONE  = 914.4;   // ostatnie 3000 ft osi — naprzemiennie czerwono-białe
-const APLT_CL_RED_ZONE       = 304.8;   // ostatnie 1000 ft osi — czerwone
-const APLT_APPROACH_LEN      = 720;     // zasięg uproszczonego systemu świateł podejścia
+const APLT_CAUTION_ZONE      = 609.6;   // Configure APLT_CL_REDWHITE_ZONE.
+const APLT_CL_REDWHITE_ZONE  = 914.4;   // Configure APLT_CL_RED_ZONE.
+const APLT_CL_RED_ZONE       = 304.8;   // Final 1000 ft of centerline: red.
+const APLT_APPROACH_LEN      = 720;     // Configure APLT_APPROACH_SPACING.
 const APLT_APPROACH_SPACING  = 30;
-const APLT_PAPI_MATCH_TOL_M  = 200;     // maks. odległość dopasowania realnego węzła PAPI do progu
-const APLT_TDZ_START_M       = 30.5;    // 100 ft od progu - początek świateł strefy przyziemienia
-const APLT_TDZ_LEN_M         = 914.4;   // 3000 ft - zasięg świateł strefy przyziemienia
-const APLT_TDZ_SPACING_M     = 30;      // rozstaw barretek (uproszczenie - realnie co 100 ft z kilkoma lampami w rzędzie)
-const APLT_RGL_OFFSET_M      = 9;       // odległość lamp ostrzegawczych (runway guard lights) od osi drogi kołowania na miejscu oczekiwania
+const APLT_PAPI_MATCH_TOL_M  = 200;     // Configure APLT_TDZ_START_M.
+const APLT_TDZ_START_M       = 30.5;    // Configure APLT_TDZ_LEN_M.
+const APLT_TDZ_LEN_M         = 914.4;   // Configure APLT_TDZ_SPACING_M.
+const APLT_TDZ_SPACING_M     = 30;      // Configure APLT_RGL_OFFSET_M.
+const APLT_RGL_OFFSET_M      = 9;       // Configure APLT_WHITE.
 
 const APLT_WHITE  = [1, 1, 1];
 const APLT_YELLOW = [1, 0.82, 0.12];
@@ -73,7 +39,7 @@ const APLT_RED    = [1, 0.13, 0.13];
 const APLT_BLUE   = [0.28, 0.62, 1];
 const APLT_AMBER  = [1, 0.8, 0.45];
 
-// ── Tekstura poświaty (współdzielona przez wszystkie punkty świateł) ─────────
+// Section: function _apltMakeGlowTexture().
 function _apltMakeGlowTexture() {
   const size = 64;
   const canvas = document.createElement('canvas');
@@ -94,30 +60,26 @@ function _apltSmoothstep(e0, e1, x) {
   return t * t * (3 - 2 * t);
 }
 
-// ── Geo helpery (budowane na tym, co już jest w sim-constants.js) ────────────
-// Przesuwa punkt lat/lon o `distM` metrów w kierunku `bearingDeg` (0=N,90=E).
+// Section: function apltMoveGeo().
 function apltMoveGeo(lat, lon, bearingDeg, distM) {
   const rad = Units.degToRad(bearingDeg);
   return offsetGeo(lat, lon, Math.sin(rad) * distM, Math.cos(rad) * distM);
 }
-// Poziom gruntu w skali sceny (jak sampleDemHeight w sim-buildings.js).
+// Ground elevation in scene units.
 function apltGroundY(lat, lon) {
   return terrainHeightBest(lat, lon) * DEM_EXAG * Y_SCALE;
 }
-// Pozycja świata dla punktu lat/lon podniesionego o `hAboveGroundM` metrów
-// realnej wysokości NAD gruntem (bez DEM_EXAG — patrz komentarz na górze pliku).
+// Handle function apltWorldPos().
 function apltWorldPos(lat, lon, hAboveGroundM) {
   const [x, zNorth] = latLonToWorld(lat, lon);
   return { x, y: apltGroundY(lat, lon) + (hAboveGroundM || 0) * Y_SCALE, z: -zNorth };
 }
-// Kierunek (yaw w radianach dla A321Entity) dla realnego kursu kompasowego —
-// ta sama konwencja co reszta kodu (patrz resetPlane()/selectAirport() w
-// sim-controls.js: yawRad = (180° - kurs) w radianach).
+// Handle function apltHeadingToYawRad().
 function apltHeadingToYawRad(headingDeg) {
   return Units.degToRad((180 - headingDeg + 360) % 360);
 }
 
-// ── Fetch helpery WKR API (1:1 z airport.html) ───────────────────────────────
+// Implementation note.
 async function apltFetchJSON(url) {
   try {
     const res = await fetch(url);
@@ -190,8 +152,7 @@ async function apltApiSearchByCode(code) {
   if (obj && !isNaN(apltGetLat(obj)) && !isNaN(apltGetLon(obj))) return obj;
   return null;
 }
-// Wyszukiwanie tekstowe (nazwa/miasto) — zwraca LISTĘ kandydatów, gdy kod
-// ICAO/IATA nie pasuje bezpośrednio (patrz apiSearch() w airport.html).
+// Handle function apltApiSearchText().
 async function apltApiSearchText(q) {
   const json = await apltFetchJSON(`${APLT_WKR_API}?action=search&q=${encodeURIComponent(q)}&limit=8`);
   return apltUnwrapList(json);
@@ -207,11 +168,7 @@ async function apltResolveRunways(airportObj, apiId) {
   return apltDedupeRunways(raw.map(apltRunwayFields)).filter(r => !apltIsClosed(r.closed));
 }
 
-// ── Overpass (drogi kołowania / płyty / pasy jako rezerwa / stanowiska / PAPI) ─
-// Pobieramy WSZYSTKIE węzły/drogi/relacje z tagiem aeroway (nie tylko
-// runway|taxiway|apron jak wcześniej) — potrzebne też node'y
-// parking_position (numery stanowisk) i navigationaid=papi (realne pozycje
-// PAPI), używane zarówno tutaj (światła) jak i w sim-airport-spawn.js.
+// Section: function apltAreaQuery().
 function apltAreaQuery(icao) {
   return `[out:json][timeout:25];area["icao"="${icao}"]->.a;(node(area.a)["aeroway"];way(area.a)["aeroway"];relation(area.a)["aeroway"];);out geom;`;
 }
@@ -228,7 +185,7 @@ async function apltOverpassFetchOne(server, query) {
     if (!res.ok) return null;
     const json = await res.json();
     if (!json || !Array.isArray(json.elements)) return null;
-    return json.elements; // może być pusta tablica - to i tak POPRAWNA odpowiedź serwera
+    return json.elements; // Implementation note.
   } catch (e) {
     return null;
   } finally {
@@ -236,11 +193,7 @@ async function apltOverpassFetchOne(server, query) {
   }
 }
 
-// Jedno "przejście": odpytuje WSZYSTKIE mirrory NARAZ (równolegle, nie po
-// kolei) i zwraca NATYCHMIAST, gdy tylko KTÓRYKOLWIEK odpowie realnymi
-// danymi — nie czeka na wolniejsze/martwe serwery. Dopiero jeśli WSZYSTKIE
-// odpowiedzi z tego przejścia są puste/zawiodły, zwraca null (sygnał do
-// kolejnego przejścia w apltOverpassRun).
+// Handle function apltOverpassRacePass().
 function apltOverpassRacePass(query) {
   return new Promise(resolve => {
     let pending = APLT_OVERPASS_SERVERS.length;
@@ -253,7 +206,7 @@ function apltOverpassRacePass(query) {
         if (elements && elements.length > 0) { finish(elements); return; }
         if (elements && elements.length === 0 && fallbackEmpty === null) fallbackEmpty = elements;
         pending--;
-        if (pending === 0) finish(fallbackEmpty); // wszystkie odpowiedziały, żadna nie miała danych
+        if (pending === 0) finish(fallbackEmpty); // Implementation note.
       });
     }
   });
@@ -265,8 +218,7 @@ async function apltOverpassRun(query) {
     const result = await apltOverpassRacePass(query);
     if (result && result.length > 0) return result;
     if (pass === MAX_PASSES) return result || [];
-    // Żadne z mirrorów nie miało danych w tym przejściu — krótka pauza (może
-    // to chwilowe przeciążenie/limit) i ponowna próba wszystkich naraz.
+    // Configure await.
     await new Promise(res => setTimeout(res, 800));
   }
   return [];
@@ -285,8 +237,7 @@ function apltClassifyElements(elements) {
       } else if (aeroway === 'holding_position') {
         out.holdingPositions.push({ lat: el.lat, lon: el.lon });
       } else if (aeroway === 'parking_position' && tags.ref) {
-        // Węzeł-punkt bez informacji o kierunku — kierunek doprecyzuje się
-        // ewentualnie w sim-airport-spawn.js (najbliższa droga kołowania/apron).
+        // Airport lighting note.
         out.parkingPositions.push({ ref: String(tags.ref), lat: el.lat, lon: el.lon, headingDeg: null });
       }
       continue;
@@ -316,15 +267,13 @@ function apltClassifyElements(elements) {
     } else if (aeroway === 'parking_position' && tags.ref) {
       const ring = outerRings[0];
       if (isClosedRing(ring)) {
-        // Stanowisko-poligon: numer na środku ciężkości, kierunek nieznany.
+        // Configure lat.
         let lat = 0, lon = 0;
         for (const p of ring) { lat += p.lat; lon += p.lon; }
         lat /= ring.length; lon /= ring.length;
         out.parkingPositions.push({ ref: String(tags.ref), lat, lon, headingDeg: null });
       } else if (ring.length >= 2) {
-        // Stanowisko-linia (droga wjazdu/prowadzenia): pozycja = KONIEC linii
-        // (dziób po dojechaniu), kierunek = namiar ostatniego odcinka (dziób
-        // zostaje zwrócony w kierunku jazdy, tak jak przy realnym wjeździe).
+        // Configure last.
         const last = ring[ring.length - 1], prev = ring[ring.length - 2];
         const headingDeg = geoBearing(prev.lat, prev.lon, last.lat, last.lon);
         out.parkingPositions.push({ ref: String(tags.ref), lat: last.lat, lon: last.lon, headingDeg });
@@ -334,20 +283,13 @@ function apltClassifyElements(elements) {
   return out;
 }
 
-// ── Pełne dane lotniska (API + Overpass) — używane przez światła I przez
-// sim-airport-spawn.js (jedno zapytanie sieciowe obsługuje oba systemy). ────
+// Section: function fetchAirportFullData().
 async function fetchAirportFullData(icao, onProgress) {
   const airportObj = await apltApiSearchByCode(icao);
   if (onProgress) onProgress('searched', airportObj);
   const apiId = airportObj ? apltGetId(airportObj) : null;
 
-  // NAPRAWA WYDAJNOŚCI: pasy (WKR API) i Overpass (drogi kołowania/płyty/
-  // stanowiska/PAPI) nie zależą od siebie nawzajem — wcześniej czekały na
-  // siebie PO KOLEI (najpierw pasy, dopiero potem Overpass), co przy wolnym
-  // Overpass (do ~60s przy kilku nieudanych przejściach) niepotrzebnie
-  // opóźniało też start pobierania terenu w miejscach czekających na cały
-  // komplet danych (patrz waptLoad() w sim-airport-spawn.js). Teraz lecą
-  // RÓWNOLEGLE — realny czas oczekiwania to max(pasy, Overpass), nie suma.
+  // Configure let.
   let [validRunways, elements] = await Promise.all([
     apltResolveRunways(airportObj, apiId),
     apltOverpassRun(apltAreaQuery(icao)),
@@ -355,9 +297,7 @@ async function fetchAirportFullData(icao, onProgress) {
   const classified = apltClassifyElements(elements);
 
   if (!validRunways.length && classified.runways.length) {
-    // WKR API niedostępne/bez danych dla tego lotniska — użyj geometrii
-    // pasów z OSM jako rezerwy (mniej precyzyjne: bez przesuniętego progu,
-    // przybliżony identyfikator z tagu ref).
+    // Configure validRunways.
     validRunways = classified.runways.map(rw => {
       const line = rw.line, first = line[0], last = line[line.length - 1];
       const widthTag = parseFloat(rw.tags.width);
@@ -375,7 +315,7 @@ async function fetchAirportFullData(icao, onProgress) {
   return { airportObj, validRunways, classified };
 }
 
-// ── Próbkowanie punktów wzdłuż linii lat/lon (do rozmieszczania świateł) ─────
+// Section: function apltSampleLatLonPolyline().
 function apltSampleLatLonPolyline(pts, spacing) {
   const out = [];
   let carried = 0, dist = 0;
@@ -395,8 +335,7 @@ function apltSampleLatLonPolyline(pts, spacing) {
   }
   return out;
 }
-// Kierunek prostopadły do linii w każdym wierzchołku (średnia kierunków
-// odcinka wchodzącego i wychodzącego — jak uśrednianie normalnych w airport.html).
+// Handle function apltPolylineBearings().
 function apltPolylineBearings(pts) {
   const n = pts.length, out = [];
   for (let i = 0; i < n; i++) {
@@ -415,7 +354,7 @@ function apltPolylineBearings(pts) {
   return out;
 }
 
-// ── Obiekt punktowy świateł (Points + kolory wierzchołków + poświata) ────────
+// Section: function apltMakePointsObject().
 function apltMakePointsObject(items, size) {
   if (!items || !items.length) return null;
   const positions = new Float32Array(items.length * 3);
@@ -437,10 +376,7 @@ function apltMakePointsObject(items, size) {
   return new THREE.Points(geo, mat);
 }
 
-// ── Budowa świateł jednego pasa (krawędź/próg/oś/REIL/PAPI/podejście) ────────
-// `papiNodes` — WSPÓLNA (mutowana) lista realnych węzłów PAPI z OSM dla
-// całego lotniska; dopasowane węzły są z niej usuwane (splice), żeby nie
-// przypisać tego samego węzła do dwóch progów.
+// Section: function apltBuildRunway().
 function apltBuildRunway(r, acc, papi, approachMeta, papiNodes) {
   const widthM = !isNaN(r.widthFt) ? r.widthFt * 0.3048 : APLT_DEFAULT_RW_WIDTH;
   const half = widthM / 2;
@@ -452,7 +388,7 @@ function apltBuildRunway(r, acc, papi, approachMeta, papiNodes) {
   const centerAt = d => apltMoveGeo(r.leLat, r.leLon, bearingDeg, d);
   const edgeAt = (d, sideSign) => { const c = centerAt(d); return apltMoveGeo(c.lat, c.lon, (bearingDeg + 90 * sideSign + 360) % 360, half); };
 
-  // krawędź pasa: biała / żółta (ostatnie 2000 ft) / czerwono-żółta (przesunięty próg)
+  // Configure ei.
   let ei = 0;
   for (let d = 0; d <= runLenM; d += APLT_RWY_EDGE_SPACING) {
     for (const side of [1, -1]) {
@@ -469,7 +405,7 @@ function apltBuildRunway(r, acc, papi, approachMeta, papiNodes) {
     }
   }
 
-  // próg: zielony (kierunek lądowania), czerwony na fizycznym końcu jeśli przesunięty
+  // Configure addThresholdBar.
   const addThresholdBar = (d, color) => {
     const c = centerAt(d);
     for (let k = -2; k <= 2; k++) {
@@ -483,7 +419,7 @@ function apltBuildRunway(r, acc, papi, approachMeta, papiNodes) {
   if (heDispM > 0) { addThresholdBar(runLenM, APLT_RED); addThresholdBar(runLenM - heDispM, APLT_GREEN); }
   else addThresholdBar(runLenM, APLT_GREEN);
 
-  // oś pasa (światła wpuszczane): biała / naprzemiennie czerwono-biała / czerwona
+  // Configure ci.
   let ci = 0;
   for (let d = 0; d <= runLenM; d += APLT_RWY_CL_SPACING) {
     const nearEnd = Math.min(d, runLenM - d);
@@ -496,7 +432,7 @@ function apltBuildRunway(r, acc, papi, approachMeta, papiNodes) {
     ci++;
   }
 
-  // REIL — para synchronicznie migających świateł tuż za krawędzią przy obu progach
+  // Configure d.
   for (const d of [0, runLenM]) {
     for (const side of [1, -1]) {
       const c = centerAt(d);
@@ -506,11 +442,7 @@ function apltBuildRunway(r, acc, papi, approachMeta, papiNodes) {
     }
   }
 
-  // PAPI — jeśli w OSM jest realny węzeł navigationaid=papi w pobliżu tego
-  // progu, użyj JEGO pozycji (dokładna, zmapowana); inaczej przybliżenie:
-  // 4-lampowy pasek po LEWEJ stronie kierunku podejścia. Kąty 2.5/2.83/
-  // 3.17/3.5° wokół standardowej ścieżki 3.0° i tak są uproszczeniem — OSM
-  // nie podaje kalibracji per-lampa, tylko jedną pozycję całego zestawu.
+  // Configure findRealPapi.
   const findRealPapi = c => {
     let bestIdx = -1, bestD = APLT_PAPI_MATCH_TOL_M;
     for (let i = 0; i < papiNodes.length; i++) {
@@ -522,10 +454,13 @@ function apltBuildRunway(r, acc, papi, approachMeta, papiNodes) {
   const addPapi = (thresholdD, travelDir) => {
     const c = centerAt(thresholdD);
     const real = findRealPapi(c);
-    const row = real || apltMoveGeo(c.lat, c.lon, (travelDir - 90 + 360) % 360, half + 12);
+    const perpDir = (travelDir - 90 + 360) % 360;
+    const row = real || apltMoveGeo(c.lat, c.lon, perpDir, half + 12);
     const boxAngles = [2.5, 2.83, 3.17, 3.5];
     for (let i = 0; i < 4; i++) {
-      const p = apltMoveGeo(row.lat, row.lon, bearingDeg, (i - 1.5) * 4.5);
+      // Boxes spread perpendicular to the runway (a real PAPI bar is a row running
+      // sideways away from the runway edge), not along the runway bearing.
+      const p = apltMoveGeo(row.lat, row.lon, perpDir, (i - 1.5) * 4.5);
       const elevM = terrainHeightBest(p.lat, p.lon);
       const wp = apltWorldPos(p.lat, p.lon, 0.8);
       papi.push({ lat: p.lat, lon: p.lon, elevM: elevM + 0.8, angleDeg: boxAngles[i], x: wp.x, y: wp.y, z: wp.z });
@@ -534,8 +469,7 @@ function apltBuildRunway(r, acc, papi, approachMeta, papiNodes) {
   addPapi(0, bearingDeg);
   addPapi(runLenM, (bearingDeg + 180) % 360);
 
-  // Uproszczony system świateł podejścia (białe "króliki" biegnące do progu),
-  // rozciągnięty NA ZEWNĄTRZ progu, w kierunku z którego nadlatuje samolot.
+  // Configure addApproach.
   const addApproach = (thresholdD, outwardBearing) => {
     const c = centerAt(thresholdD);
     let idx = 0;
@@ -550,9 +484,7 @@ function apltBuildRunway(r, acc, papi, approachMeta, papiNodes) {
   addApproach(0, (bearingDeg + 180) % 360);
   addApproach(runLenM, bearingDeg);
 
-  // Światła strefy przyziemienia (TDZL) — stałe białe, po obu stronach osi,
-  // od 100 ft do 3000 ft od KAŻDEGO progu (byle nie dalej niż połowa pasa,
-  // żeby dwie strefy się nie zlały na krótkich pasach).
+  // Configure addTdz.
   const addTdz = (thresholdD, intoSign) => {
     const tdzOffset = Math.min(half * 0.6, 15);
     for (let d = APLT_TDZ_START_M; d <= APLT_TDZ_LEN_M && d <= runLenM / 2; d += APLT_TDZ_SPACING_M) {
@@ -570,7 +502,7 @@ function apltBuildRunway(r, acc, papi, approachMeta, papiNodes) {
   addTdz(runLenM, -1);
 }
 
-// Sumaryczna długość polilinii lat/lon w metrach (do progu APLT_TWY_MIN_LEN_EDGES).
+// Handle function apltPolylineLengthM().
 function apltPolylineLengthM(pts) {
   let len = 0;
   for (let i = 0; i < pts.length - 1; i++) len += geoDistM(pts[i].lat, pts[i].lon, pts[i + 1].lat, pts[i + 1].lon);
@@ -585,11 +517,7 @@ function apltBuildTaxiway(tw, edgeAcc, clAcc) {
   const half = widthM / 2;
   const bearings = apltPolylineBearings(pts);
 
-  // Krótkie odcinki-łączniki (typowe "kikuty" na skrzyżowaniach w danych OSM,
-  // gdzie kilka dróg kołowania zbiega się w jednym punkcie) dostają TYLKO
-  // oś, bez krawędzi — inaczej ich krawędzie nakładają się chaotycznie na
-  // skrzyżowaniu (patrz zgłoszenie użytkownika). Oś i tak musi być ciągła,
-  // żeby prowadzić przez skrzyżowanie.
+  // Configure includeEdges.
   const includeEdges = apltPolylineLengthM(pts) >= APLT_TWY_MIN_LEN_EDGES;
 
   if (includeEdges) {
@@ -608,10 +536,7 @@ function apltBuildTaxiway(tw, edgeAcc, clAcc) {
   }
 }
 
-// Scala światła, które wypadły bardzo blisko siebie (siatka komórek
-// APLT_DEDUPE_CELL_M) — na skrzyżowaniach wielu dróg kołowania różne
-// odcinki potrafią wygenerować prawie nakładające się punkty, co bez tego
-// wygląda jak chaotyczna chmura zamiast uporządkowanego skrzyżowania.
+// Handle function apltDedupePoints().
 function apltDedupePoints(items, cellSizeM) {
   const seen = new Set();
   const out = [];
@@ -624,11 +549,7 @@ function apltDedupePoints(items, cellSizeM) {
   return out;
 }
 
-// Namiar najbliższej drogi kołowania w danym punkcie (środek najbliższego
-// odcinka) — używane do zorientowania pary lamp ostrzegawczych (runway guard
-// lights) prostopadle do drogi kołowania na miejscu oczekiwania. Przybliżenie
-// (odległość do środka odcinka, nie do samej linii), wystarczające przy typowych
-// odstępach między węzłami OSM w pobliżu miejsc oczekiwania.
+// Handle function apltFindNearestBearing().
 function apltFindNearestBearing(lat, lon, taxiways) {
   let bestD = Infinity, bestBearing = 0;
   for (const tw of taxiways) {
@@ -643,9 +564,7 @@ function apltFindNearestBearing(lat, lon, taxiways) {
   return bestBearing;
 }
 
-// Runway guard lights (żółte, migające naprzemiennie "wig-wag") na miejscu
-// oczekiwania (holding position) — para lamp po obu stronach drogi kołowania,
-// prostopadłych do niej, ostrzegająca przed wjazdem na czynny pas.
+// Handle function apltBuildHoldingPosition().
 function apltBuildHoldingPosition(hp, taxiways, rglAcc, rglMeta) {
   const bearing = apltFindNearestBearing(hp.lat, hp.lon, taxiways);
   for (const side of [1, -1]) {
@@ -666,12 +585,12 @@ function apltBuildApron(ap, apronAcc) {
   apronAcc.push({ x: wp.x, y: wp.y, z: wp.z, color: APLT_AMBER });
 }
 
-// ── Złożenie całego lotniska w jedną grupę THREE + dane do animacji ─────────
+// Section: function apltBuildAll().
 function apltBuildAll(validRunways, classified) {
   const acc = { runwayEdge: [], threshold: [], centerline: [], reil: [], approach: [], tdz: [] };
   const papi = [];
   const approachMeta = [];
-  const papiNodes = (classified.papiNodes || []).slice(); // kopia — konsumowana przez splice()
+  const papiNodes = (classified.papiNodes || []).slice(); // Configure r.
 
   for (const r of validRunways) {
     if (isNaN(r.leLat) || isNaN(r.leLon) || isNaN(r.heLat) || isNaN(r.heLon)) continue;
@@ -680,17 +599,14 @@ function apltBuildAll(validRunways, classified) {
 
   const taxiwayEdge = [], taxiwayCenterline = [];
   for (const tw of classified.taxiways) apltBuildTaxiway(tw, taxiwayEdge, taxiwayCenterline);
-  // Skrzyżowania wielu dróg kołowania generują prawie nakładające się punkty
-  // (różne odcinki zbiegające się w tym samym miejscu) — scal je, żeby zamiast
-  // chaotycznej chmury było uporządkowane skrzyżowanie.
+  // Configure taxiwayEdgeClean.
   const taxiwayEdgeClean = apltDedupePoints(taxiwayEdge, APLT_DEDUPE_CELL_M);
   const taxiwayCenterlineClean = apltDedupePoints(taxiwayCenterline, APLT_DEDUPE_CELL_M);
 
   const apron = [];
   for (const ap of classified.aprons) apltBuildApron(ap, apron);
 
-  // Runway guard lights — para żółtych lamp na każdym miejscu oczekiwania (OSM
-  // aeroway=holding_position), migających naprzemiennie (patrz updateAirportLights()).
+  // Configure rgl.
   const rgl = [], rglMeta = [];
   for (const hp of (classified.holdingPositions || [])) apltBuildHoldingPosition(hp, classified.taxiways, rgl, rglMeta);
 
@@ -711,13 +627,11 @@ function apltBuildAll(validRunways, classified) {
   addPts(apron, 46);
   const reilPts = addPts(acc.reil, 10);
   const approachPts = addPts(acc.approach, 6);
-  // Runway guard lights NIE idą do fadeMaterials (jak PAPI/latarnia) — to
-  // system ostrzegawczy, który w rzeczywistości działa też za dnia; sam
-  // rytm "wig-wag" (patrz updateAirportLights()) i tak odróżnia go od reszty.
+  // Configure rglPts.
   const rglPts = apltMakePointsObject(rgl, 7);
   if (rglPts) group.add(rglPts);
 
-  // PAPI — osobne sprite'y (kolor liczony co klatkę wg kąta podejścia samolotu)
+  // Configure p.
   for (const p of papi) {
     const mat = new THREE.SpriteMaterial({
       map: APLT_GLOW_TEX, color: 0xffffff, transparent: true,
@@ -730,8 +644,7 @@ function apltBuildAll(validRunways, classified) {
     p.sprite = spr;
   }
 
-  // Latarnia lotniskowa — naprzemienne błyski biało/zielone, na środku
-  // pierwszego pasa, ok. 18 m nad gruntem (typowa wysokość wieży/masztu).
+  // Configure beacon.
   let beacon = null;
   if (validRunways.length) {
     const midR = validRunways[0];
@@ -750,16 +663,14 @@ function apltBuildAll(validRunways, classified) {
   return { group, papi, dynamic: { fadeMaterials, reilPts, approachPts, approachMeta, beacon, rglPts, rglMeta } };
 }
 
-// ── Ładowanie / cache per lotnisko ────────────────────────────────────────────
+// Section: AIRPORT_LIGHTS_CACHE.
 const AIRPORT_LIGHTS_CACHE = new Map();
 let apltCurrentGroup   = null;
 let apltCurrentPapi    = [];
 let apltCurrentDynamic = null;
 let apltLoadEpoch      = 0;
 
-// `preFetched` (opcjonalne) — gotowe dane z fetchAirportFullData(), gdy
-// wywołujący (np. sim-airport-spawn.js) już je pobrał dla WŁASNYCH potrzeb
-// (lista pasów/stanowisk) i nie chcemy odpytywać API/Overpass dwa razy.
+// Handle function loadAirportLights().
 async function loadAirportLights(icao, preFetched, onProgress) {
   if (!icao) return;
   const epoch = ++apltLoadEpoch;
@@ -777,24 +688,18 @@ async function loadAirportLights(icao, preFetched, onProgress) {
     return;
   }
 
-  // Lotniska wbudowane (AIRPORTS[icao]) mają znany refLat/refLon z góry; dla
-  // dowolnego lotniska świata (sim-airport-spawn.js) refLat/refLon jest już
-  // ustawione PRZED wywołaniem tej funkcji (patrz loadWorldAirport()), więc
-  // w obu przypadkach bieżące refLat/refLon jest już poprawnym punktem do
-  // wygrzania DEM.
+  // Configure knownApt.
   const knownApt = AIRPORTS[icao];
   const prefetchLat = knownApt ? knownApt.refLat : refLat;
   const prefetchLon = knownApt ? knownApt.refLon : refLon;
 
   try {
-    // Upewnij się, że DEM wokół lotniska jest już wczytany — inaczej
-    // terrainHeightBest() zwróci 0 dla punktów poza niepobranym jeszcze
-    // kafelkiem i światła "zapadłyby się" pod ziemię.
+    // Configure await.
     await Promise.all([
       prefetchDEM(prefetchLat, prefetchLon, 3, 17),
       prefetchDEM(prefetchLat, prefetchLon, 4, 15),
     ]);
-    if (epoch !== apltLoadEpoch) return; // w międzyczasie wybrano inne lotnisko
+    if (epoch !== apltLoadEpoch) return; // Configure data.
 
     const data = preFetched || await fetchAirportFullData(icao, onProgress);
     if (epoch !== apltLoadEpoch) return;
@@ -810,24 +715,23 @@ async function loadAirportLights(icao, preFetched, onProgress) {
   }
 }
 
-// ── Aktualizacja co klatkę (wołana z sim-main.js) ────────────────────────────
+// Section: function updateAirportLights().
 function updateAirportLights() {
   if (!apltCurrentDynamic) return;
   const dyn = apltCurrentDynamic;
 
-  // Zanikanie/pojawianie się świateł wraz ze zmierzchem — SkyState.nightFactor
-  // aktualizowane w updateSky() (sim-sky.js), wołanym przed nami w tej samej klatce.
+  // Configure nf.
   const nf = (typeof SkyState !== 'undefined') ? SkyState.nightFactor : 1;
   const opacity = _apltSmoothstep(0.12, 0.55, nf);
   for (const mat of dyn.fadeMaterials) mat.opacity = opacity;
 
-  // REIL — synchroniczne miganie (krótki błysk, długa przerwa).
+  // Configure if.
   if (dyn.reilPts) {
     const phase = performance.now() % 1000;
     dyn.reilPts.material.opacity = (phase < 120 ? 1 : 0.05) * opacity;
   }
 
-  // Sekwencyjne "króliki" uproszczonego systemu świateł podejścia.
+  // Configure if.
   if (dyn.approachPts && dyn.approachMeta.length) {
     const colAttr = dyn.approachPts.geometry.getAttribute('color');
     let maxIdx = 0;
@@ -844,10 +748,7 @@ function updateAirportLights() {
     colAttr.needsUpdate = true;
   }
 
-  // Runway guard lights — naprzemienne miganie lewej/prawej lampy (klasyczny
-  // wzorzec "wig-wag"): gdy lewa świeci, prawa gaśnie i odwrotnie, co ok. pół
-  // sekundy. Zawsze w pełnej jasności (nie idzie do fadeMaterials) — to
-  // system ostrzegawczy działający też za dnia.
+  // Configure if.
   if (dyn.rglPts && dyn.rglMeta.length) {
     const colAttr = dyn.rglPts.geometry.getAttribute('color');
     const phase = Math.floor(performance.now() / 500) % 2;
@@ -861,8 +762,7 @@ function updateAirportLights() {
     colAttr.needsUpdate = true;
   }
 
-  // Latarnia lotniskowa — naprzemienne krótkie błyski zielony/biały, cały
-  // czas widoczna choć przygaszona za dnia (jak w prawdziwych lotniskach).
+  // Configure if.
   if (dyn.beacon) {
     const cyc = (performance.now() / 1000) % 2;
     let color = APLT_WHITE, flashOn = false;
@@ -872,7 +772,7 @@ function updateAirportLights() {
     dyn.beacon.material.opacity = flashOn ? Math.max(opacity, 0.35) : Math.max(opacity * 0.08, 0.03);
   }
 
-  // PAPI — kolor NA ŻYWO z kąta ścieżki podejścia samolotu względem każdej lampy.
+  // Configure if.
   if (apltCurrentPapi.length && activeEntity) {
     const ac = activeEntity;
     for (const p of apltCurrentPapi) {
@@ -883,7 +783,7 @@ function updateAirportLights() {
       let r, g, b;
       if (diff > 0.08) { r = 1; g = 1; b = 1; }
       else if (diff < -0.08) { r = 1; g = 0.13; b = 0.13; }
-      else { r = 1; g = 0.55; b = 0.6; } // różowe pasmo przejściowe
+      else { r = 1; g = 0.55; b = 0.6; } // Airport lighting note.
       p.sprite.material.color.setRGB(r, g, b);
     }
   }

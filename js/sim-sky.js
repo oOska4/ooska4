@@ -1,30 +1,10 @@
 'use strict';
 
-// ════════════════════════════════════════════════════════════════════════════════
-// sim-sky.js  —  Fizyczne niebo (Rayleigh/Mie scattering) + Słońce/Księżyc
-//                + chmury wolumetryczne (raymarching) + deszcz kierunkowy.
-//
-// Zastępuje CAŁKOWICIE starą zawartość sim-shaders.js (SKY_*/CLOUD_*/SNOW_*)
-// oraz część sim-weather.js odpowiedzialną za sky dome / chmury / deszcz 3D.
-//
-// Korzysta z istniejących globali: scene, camera, renderer (sim-scene.js),
-// refLat/refLon/Y_SCALE/Units (sim-constants.js), activeEntity (sim-entity.js),
-// WeatherState (sim-weather.js, ładowany PRZED tym plikiem), weather (instancja
-// WeatherSystem, tworzona później w sim-main.js — odwołania do niej są leniwe,
-// więc kolejność wczytania jest bezpieczna).
-//
-// Pozycja Słońca/Księżyca liczona jest z refLat/refLon (czyli aktualnie
-// wybranego lotniska) + TimeState (godzina/dzień roku, sterowane suwakiem
-// w panelu POGODA, z opcjonalną animacją).
-// ════════════════════════════════════════════════════════════════════════════════
-
-// ── Małe helpery (bez zależności od THREE.MathUtils — spójnie z resztą kodu) ──
+// Sky utility functions.
 function _lerp(a, b, t) { return a + (b - a) * t; }
 function _clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 
-// ════════════════════════════════════════════════════════════════════════════════
-// ASTRONOMIA — pozycja Słońca i Księżyca z lat/lon/daty
-// ════════════════════════════════════════════════════════════════════════════════
+// Section: Astro.
 const Astro = (() => {
   const rad = Math.PI / 180;
 
@@ -111,26 +91,19 @@ const Astro = (() => {
   return { sunPosition, moonPosition, toDirection };
 })();
 
-// ════════════════════════════════════════════════════════════════════════════════
-// STAN CZASU — sterowany suwakiem "Godzina"/"Dzień roku" w panelu POGODA
-// (lat/lon NIE jest tu trzymane — pobierane co klatkę z refLat/refLon,
-//  czyli z aktualnie wybranego lotniska)
-// ════════════════════════════════════════════════════════════════════════════════
+// Section: TimeState.
 const TimeState = {
   year: 2026,
   dayOfYear: 172,          // ~21 czerwca
   minutesOfDay: 720,       // 12:00
   animating: false,
-  animMinutesPerSecond: 1, // nadpisywane przez UI (dw-anim-speed / w-anim-speed)
+  animMinutesPerSecond: 1, // UI layout note.
 };
 
-// Stan nieba odczytywany przez inne moduły (np. sim-airport-lights.js), żeby
-// nie musiały same liczyć pozycji Słońca — aktualizowany co klatkę w
-// updateSky() PRZED użyciem przez cokolwiek innego w tej samej klatce
-// (kolejność w animate() w sim-main.js: updateSky() jest wołane co klatkę).
+// Configure SkyState.
 const SkyState = {
-  nightFactor:   0,   // 0 = pełny dzień, 1 = pełna noc
-  sunAltitude:  -1,   // radiany, ujemne = Słońce pod horyzontem
+  nightFactor:   0,   // Implementation note.
+  sunAltitude:  -1,   // Implementation note.
 };
 
 function getCurrentDate() {
@@ -156,9 +129,7 @@ function formatDayOfYear(doy) {
   return d.getUTCDate() + ' ' + months[d.getUTCMonth()];
 }
 
-// ════════════════════════════════════════════════════════════════════════════════
-// SKY DOME — fizyczny Rayleigh + Mie scattering (kopuła śledząca kamerę)
-// ════════════════════════════════════════════════════════════════════════════════
+// Section: skyUniforms.
 const skyUniforms = {
   sunDirection:  { value: new THREE.Vector3(0, 1, 0) },
   moonDirection: { value: new THREE.Vector3(0, -1, 0) },
@@ -320,8 +291,7 @@ void main() {
 }
 `;
 
-// Promień kopuły dopasowany do skali świata simworld (stara kopuła gradientowa
-// też miała 900_000 — kamera.far = 2_000_000, więc mieścimy się z zapasem).
+// Configure SKY_DOME_RADIUS.
 const SKY_DOME_RADIUS = 900000;
 const skyGeo = new THREE.SphereGeometry(SKY_DOME_RADIUS, 32, 16);
 const skyMat = new THREE.ShaderMaterial({
@@ -338,7 +308,7 @@ skyDome.renderOrder = -100;
 skyDome.frustumCulled = false;
 scene.add(skyDome);
 
-// ── Tarcze Słońca/Księżyca (billboard sprite + poświata) ──────────────────────
+// Section: function makeSunTexture().
 function makeSunTexture() {
   const c = document.createElement('canvas');
   c.width = c.height = 256;
@@ -367,9 +337,7 @@ function makeMoonTexture() {
   return new THREE.CanvasTexture(c);
 }
 
-// Skala/dystans przeliczone proporcjonalnie z oryginalnej specyfikacji
-// (SUN_DIST=18000, scale=1400) na skalę świata simworld (promień kopuły 900000),
-// tak żeby kątowy rozmiar tarczy na ekranie pozostał identyczny.
+// Configure SUN_DIST.
 const SUN_DIST = 800000;
 const SUN_BASE_SCALE  = SUN_DIST * 1400 / 18000;
 const MOON_BASE_SCALE = SUN_DIST * 140  / 18000;
@@ -388,22 +356,14 @@ const moonSprite = new THREE.Sprite(new THREE.SpriteMaterial({
 moonSprite.scale.set(MOON_BASE_SCALE, MOON_BASE_SCALE, 1);
 scene.add(moonSprite);
 
-// ── Oświetlenie sceny (zastępuje statyczne sun/ambient/hemi z sim-scene.js) ───
+// Section: hemiLight.
 const hemiLight = new THREE.HemisphereLight(0x88aaff, 0x3a5a2c, 0.6);
 scene.add(hemiLight);
 const sunLight = new THREE.DirectionalLight(0xffffff, 1.0);
 sunLight.position.set(100, 100, 0);
 scene.add(sunLight);
 
-// ════════════════════════════════════════════════════════════════════════════════════
-// GŁÓWNA SCENA → RENDER TARGET Z BUFOREM GŁĘBI
-// Renderujemy scenę (teren, budynki, samolot, deszcz, gwiazdy, kopułę nieba)
-// do offscreen render targetu zamiast bezpośrednio na ekran. Bufor głębi z
-// tego przejścia (mainDepthTexture) jest potem używany przez raymarching chmur,
-// żeby chmurom NIE renderowały się "przed" rzeczami, które powinny je
-// zasłaniać (góry, teren, samolot) — bez tego kroku chmury były zwykłym
-// kompozytem na wierzchu całej sceny, bez żadnego testu głębokości.
-// ════════════════════════════════════════════════════════════════════════════════════
+// Section: mainDepthTexture.
 const mainDepthTexture = new THREE.DepthTexture();
 mainDepthTexture.format = THREE.DepthFormat;
 mainDepthTexture.type   = THREE.UnsignedIntType;
@@ -427,8 +387,7 @@ function resizeMainRT() {
 resizeMainRT();
 window.addEventListener('resize', resizeMainRT);
 
-// Pełnoekranowy quad, który po prostu wyświetla obraz z mainRT — używany w
-// renderFrame() jako "tło", na którym potem kładziemy chmury.
+// Configure bgMat.
 const bgMat = new THREE.ShaderMaterial({
   uniforms: { tScene: { value: mainRT.texture } },
   vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }`,
@@ -444,10 +403,7 @@ bgQuad.frustumCulled = false;
 const bgScene = new THREE.Scene();
 bgScene.add(bgQuad);
 
-// ════════════════════════════════════════════════════════════════════════════════
-// CHMURY WOLUMETRYCZNE — raymarching, renderowane do osobnego render targetu
-// (niska rozdzielczość wg presetu jakości) i kompozytowane na wierzch sceny.
-// ════════════════════════════════════════════════════════════════════════════════
+// Section: cloudUniforms.
 const cloudUniforms = {
   cameraPos:            { value: new THREE.Vector3() },
   invProjectionMatrix:  { value: new THREE.Matrix4() },
@@ -466,8 +422,7 @@ const cloudUniforms = {
   raySteps:             { value: 48 },
   lightSteps:           { value: 5 },
   resolution:           { value: new THREE.Vector2(window.innerWidth, window.innerHeight) },
-  // Do okluzji chmur względem rzeczywistej geometrii sceny (góry/teren/samolot) —
-  // patrz mainDepthTexture wyżej i CLOUD_VOL_FRAG niżej.
+  // Rendering note.
   sceneDepth:           { value: mainDepthTexture },
   cameraForward:        { value: new THREE.Vector3(0, 0, -1) },
   logDepthBufFC:        { value: 0 },
@@ -564,10 +519,10 @@ float phaseHG(float cosAngle, float g) {
   return (1.0 - g2) / (4.0*PI*pow(max(1.0+g2-2.0*g*cosAngle,0.0001), 1.5));
 }
 
-// Odwraca logarytmiczny bufor głębokości (renderer używa
-// logarithmicDepthBuffer:true, więc standardowa formuła perspektywiczna byłaby
-// błędna) na "liniową" odległość wzdłuż osi patrzenia kamery — dokładnie
-// odwrotność tego, co three.js sam liczy przy zapisie do gl_FragDepth.
+// Convert the logarithmic depth buffer (renderer uses
+// logarithmicDepthBuffer:true, so the standard perspective formula would be
+// incorrect) to a linear distance along the camera view axis — exactly
+// the inverse of the value three.js computes when writing gl_FragDepth.
 float logDepthToViewDist(float d) {
   return pow(2.0, d * 2.0 / logDepthBufFC) - 1.0;
 }
@@ -603,9 +558,8 @@ void main() {
   float tFar = max(tBase, tTop);
   if (tFar <= tNear) { gl_FragColor = vec4(0.0); return; }
 
-  // Nie pozwól chmurze "przebić się" przez rzeczywistą geometrię sceny w tym
-  // pikselu (góry, teren, samolot) — obetnij zasięg raymarchingu do
-  // odległości najbliższego nieprzezroczystego obiektu z głównego renderu.
+  // Prevent clouds from appearing through scene geometry in this pixel;
+  // clamp raymarching to the nearest opaque object in the main render.
   float depthSample = texture2D(sceneDepth, vUv).x;
   float sceneViewDist = logDepthToViewDist(depthSample);
   float cosFwd = max(dot(rayDir, cameraForward), 0.0001);
@@ -718,7 +672,7 @@ function resizeCloudRT() {
 resizeCloudRT();
 window.addEventListener('resize', resizeCloudRT);
 
-// Wybór jakości z UI (przyciski [data-qual] w panelu POGODA, dw-/w- wspólne)
+// Handle function setSkyQuality().
 function setSkyQuality(name) {
   if (!QualityPresets[name]) return;
   currentQuality = name;
@@ -736,14 +690,7 @@ function updateCloudUniforms() {
   cloudUniforms.logDepthBufFC.value = 2.0 / Math.log2(camera.far + 1.0);
 }
 
-// Cały potok renderowania klatki, wołany raz na klatkę z sim-main.js zamiast
-// bezpośredniego renderer.render(scene, camera):
-//   1) Główna scena → mainRT (z buforem głębi, potrzebnym w kroku 2).
-//   2) Chmury wolumetryczne → cloudRT, w obniżonej rozdzielczości wg presetu
-//      jakości, z użyciem mainRT.depthTexture do przycinania zasięgu
-//      raymarchingu do rzeczywistej geometrii sceny (góry/teren/samolot).
-//   3) Złożenie końcowej klatki na ekranie: najpierw obraz z kroku 1 (tło),
-//      potem chmury z kroku 2 na wierzchu (poprawny blending alfa).
+// Handle function renderFrame().
 function renderFrame() {
   renderer.setRenderTarget(mainRT);
   renderer.render(scene, camera);
@@ -769,11 +716,7 @@ function renderFrame() {
   renderer.autoClear = true;
 }
 
-// ════════════════════════════════════════════════════════════════════════════════
-// DESZCZ — smugi kierunkowe (głowa+ogon), reagujące na wiatr ORAZ prędkość
-// samolotu (apparent velocity) — w stylu X-Plane 10, identycznie jak w
-// poprzedniej wersji systemu pogody (zachowane 1:1, bo dobrze skalibrowane).
-// ════════════════════════════════════════════════════════════════════════════════
+// Section: RAIN_LINE_VERT.
 const RAIN_LINE_VERT = `
 attribute float aT;
 varying float vT;
@@ -866,9 +809,7 @@ function updateRain(dt, camPos) {
   pos.needsUpdate = true;
 }
 
-// ════════════════════════════════════════════════════════════════════════════════
-// GŁÓWNA AKTUALIZACJA — wołana co klatkę z sim-main.js (PRZED renderer.render)
-// ════════════════════════════════════════════════════════════════════════════════
+// Section: sunWorldDir.
 const sunWorldDir = new THREE.Vector3();
 const moonWorldDir = new THREE.Vector3();
 
@@ -893,11 +834,7 @@ function updateSky(dt) {
   skyUniforms.moonDirection.value.copy(moonWorldDir);
   skyUniforms.moonIllum.value = moonPos.illumFraction;
 
-  // Mgła/widoczność (WeatherState.visibilityM) → mętność atmosfery (turbidity).
-  // Krzywa dobrana tak, by dobra widzialność (~20 km, domyślny stan) dawała
-  // PRAWIE zerowe zamglenie — wcześniejsza wersja robiła niebo wyraźnie
-  // zamżlone/brązowawe nawet w "czystych" warunkach. Pełne zamglenie dopiero
-  // przy słabej widzialności (deszcz/mgła/burza, poniżej ~2 km).
+  // Configure vis.
   const vis = WeatherState.visibilityM;
   const hazeT = _clamp((20000 - vis) / 18000, 0, 1);
   skyUniforms.turbidity.value = _lerp(1.6, 9.0, hazeT);
@@ -946,20 +883,10 @@ function updateSky(dt) {
     : sunAlt > -0.21 ? new THREE.Color().lerpColors(new THREE.Color(0x16213a), new THREE.Color(0xff9d5c), Math.max(0,(sunAlt+0.21))/0.17)
     : new THREE.Color(0x070b18);
 
-  // Zamglenie (hazeT) rozjaśnia/wybiela horyzont — bez tego płaski kolor mgły
-  // sceny nie pasował do fizycznie zamglonej kopuły nieba (wyższa turbidity =
-  // jaśniejszy, bielszy horyzont w shaderze), co dawało widoczny szew dokładnie
-  // na linii horyzontu — tym bardziej widoczny przy oddalonej kamerze, bo wtedy
-  // większość kadru to właśnie zamglony teren/horyzont.
+  // Configure horizonColor.
   horizonColor = horizonColor.lerp(new THREE.Color(0x9eacb3), hazeT * 0.7);
 
-  // Mgła sceny — kolor z horyzontu nieba. Zasięg liczony z WeatherState.visibilityM,
-  // ale z zapasem (×1.5) — sama liczba "widzialności" meteorologicznej to dolna
-  // granica tego, co jeszcze widać WYRAŹNIE; twardy fog dokładnie na tej
-  // odległości wyglądał na zbyt krótki/klaustrofobiczny. W chmurze używamy
-  // weather.cloudImmersion (płynne, zależne od zachmurzenia zanurzenie w
-  // paśmie wysokości chmur) — to samo źródło prawdy, którego używa też
-  // mgiełka 2D w sim-weather.js, żeby oba efekty były ze sobą spójne.
+  // Configure clearFogFar.
   const clearFogFar = vis * 1.5;
   const immersion   = weather ? weather.cloudImmersion : 0;
   const inCloudFar   = Math.max(250, vis * 0.05);
@@ -969,9 +896,7 @@ function updateSky(dt) {
   scene.fog.color.copy(horizonColor);
   renderer.setClearColor(horizonColor);
 
-  // Chmury wolumetryczne — wysokość w world-space skalowana tak samo jak
-  // teren i samolot (DEM_EXAG * Y_SCALE), inaczej chmury nie zgadzałyby się
-  // wizualnie z wysokościomierzem / logiką WeatherState.isInCloud.
+  // Configure coverPct.
   const coverPct = WeatherState.cloudCoverage;
   cloudUniforms.cloudCover.value = coverPct;
   cloudUniforms.cloudBase.value = WeatherState.cloudAltitudeM * DEM_EXAG * Y_SCALE;

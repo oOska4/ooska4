@@ -1,12 +1,11 @@
 'use strict';
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// SYSTEM KAMERY — ORBIT / COCKPIT / FREE / CINEMATIC / FLYBY / DOLLY / TOWER
-// ═══════════════════════════════════════════════════════════════════════════════
+// Camera modes: orbit, cockpit, free, cinematic, flyby, dolly, tower.
 
 const CameraMode = { 
   ORBIT: 'ORBIT', 
   COCKPIT: 'COCKPIT',
+  HUD: 'HUD',
   FREE: 'FREE',
   CINEMATIC: 'CINEMATIC',
   FLYBY: 'FLYBY',
@@ -15,18 +14,18 @@ const CameraMode = {
 };
 let camMode = CameraMode.ORBIT;
 
-// Cel kamery orbit — modyfikowany bezpośrednio przez mysz/touch/klawiaturę
+// Configure orb.
 const orb = {
   lat:   SPAWN_LAT,
   lon:   SPAWN_LON,
   dist:  100,
   pitch: 25,
-  yaw:   0,            // stopnie azymutu (dowolny)
-  y:     0,            // dodatkowy offset Y centrum
-  free:  false,        // false = orbit śledzący, true = wolna mapa
+  yaw:   0,            // Azimuth in degrees.
+  y:     0,            // Additional center Y offset.
+  free:  false,        // Implementation note.
 };
 
-// Wewnętrzny wygładzony stan (oddzielony od celu żeby nie było feedback-loopa)
+// Configure _orb.
 const _orb = {
   lat:   SPAWN_LAT,
   lon:   SPAWN_LON,
@@ -35,65 +34,65 @@ const _orb = {
   yaw:   0,
   y:     0,
 };
-let _orbitReady = false;  // false = snap do celu przy następnej klatce
+let _orbitReady = false;  // Configure cockpitConfig.
 
 // Chase / cockpit
-const cockpitConfig = { offsetM: new THREE.Vector3(0.47, 0.35, 17.7) };
+const cockpitConfig = { offsetM: new THREE.Vector3(0.47, 0.35, 17.7), fov: 60 };
 const cockpitLook   = { yaw: 0, pitch: 0 };
 
-// ── FREE — kamera wolna ──────────────────────────────────────────────────────
+// Free camera.
 const freeCamera = {
   pos: new THREE.Vector3(0, 50, 0),
-  look: { yaw: 0, pitch: 0 },  // kierunek patrzenia w stopniach
-  speed: 50,  // m/s ruchu
-  fov: 60,    // field of view (stopnie)
-  speedMult: 1.0  // mnożnik prędkości (Shift = 2x, Ctrl = 0.5x)
+  look: { yaw: 0, pitch: 0 },  // View direction in degrees.
+  speed: 50,  // Movement speed in m/s.
+  fov: 60,    // Field of view in degrees.
+  speedMult: 1.0  // Implementation note.
 };
 
-// ── CINEMATIC — patrzy na samolot z autozooma ────────────────────────────────
+// Section: cinematicCamera.
 const cinematicCamera = {
-  offsetLat: 0,    // offset od samolotu w lat (stopnie)
-  offsetLon: 0,    // offset od samolotu w lon (stopnie)
-  heightAbove: 150,  // wysokość nad samolotem (m)
-  zoom: 1.0,  // 1.0 = auto, <1 = bliżej, >1 = dalej
+  offsetLat: 0,    // Latitude offset from aircraft in degrees.
+  offsetLon: 0,    // Longitude offset from aircraft in degrees.
+  heightAbove: 150,  // Implementation note.
+  zoom: 1.0,  // Implementation note.
   autoZoomEnabled: true,
-  targetDistance: 80,  // idealna odległość do samolotu (m)
-  fov: 25,  // field of view dla cinematic (mały FOV = więcej zbliżenia)
-  autoFov: true  // czy automatycznie dostosowywać FOV do zoomu
+  targetDistance: 80,  // Implementation note.
+  fov: 25,  // Implementation note.
+  autoFov: true  // Implementation note.
 };
 
-// ── FLYBY — szybka projekcja wokół samolotu ─────────────────────────────────
+// Section: flybyCamera.
 const flybyCamera = {
-  orbitRadius: 200,  // odległość od samolotu
-  orbitSpeed: 45,    // stopnie/s (prędkość obrotu)
-  pitch: 15,         // kąt patrzenia
-  angle: 0,          // obecny kąt obrotu (radiany)
-  heightOffset: 40,  // offset Y nad samolotem
+  orbitRadius: 200,  // Implementation note.
+  orbitSpeed: 45,    // Implementation note.
+  pitch: 15,         // Implementation note.
+  angle: 0,          // Implementation note.
+  heightOffset: 40,  // Implementation note.
 };
 
-// ── DOLLY — kamera na torze wokół samolotu ──────────────────────────────────
+// Section: dollyCamera.
 const dollyCamera = {
   orbitRadius: 150,
-  orbitSpeed: 25,    // stopnie/s
+  orbitSpeed: 25,    // Degrees per second.
   pitch: 25,
   angle: 0,
   heightOffset: 30,
   autoZoom: false,
-  zoomTarget: 150    // target distance dla zoom
+  zoomTarget: 150    // Implementation note.
 };
 
-// ── TOWER — punkt obserwacyjny z góry ────────────────────────────────────────
+// Section: towerCamera.
 const towerCamera = {
-  offsetLat: 0,    // offset od samolotu w lat (m / EARTH_RADIUS)
-  offsetLon: 0,    // offset od samolotu w lon (m / EARTH_RADIUS)
-  height: 500,  // wysokość nad całą sceną
-  lookHeading: 0,  // kierunek, w którym patrzy (stopnie)
-  trackPlane: true,  // czy śledzić samolot w poziomie
-  lookDownPitch: -45  // kąt patrzenia w dół (stopnie)
+  offsetLat: 0,    // Latitude offset from aircraft (m / EARTH_RADIUS).
+  offsetLon: 0,    // Longitude offset from aircraft (m / EARTH_RADIUS).
+  height: 500,  // Implementation note.
+  lookHeading: 0,  // Implementation note.
+  trackPlane: true,  // Implementation note.
+  lookDownPitch: -45  // Implementation note.
 };
 
-let _cinematicZoomSmoothness = 0;  // wygładzenie zoomu cinematic
-let _freeCameraSpeedMult = 1.0;    // wygładzony mnożnik prędkości FREE
+let _cinematicZoomSmoothness = 0;  // Configure _freeCameraSpeedMult.
+let _freeCameraSpeedMult = 1.0;    // Handle function _shortestYawDeg().
 
 function _shortestYawDeg(from, to) {
   return (((to - from) % 360) + 540) % 360 - 180;
@@ -102,6 +101,7 @@ function _shortestYawDeg(from, to) {
 function applyCamera(dt) {
   if (camMode === CameraMode.ORBIT || !activeEntity) { _applyOrbitCamera(dt); return; }
   if (camMode === CameraMode.COCKPIT)                { _applyCockpitCamera();   return; }
+  if (camMode === CameraMode.HUD)                    { _applyCockpitCamera();   return; }
   if (camMode === CameraMode.FREE)                   { _applyFreeCamera(dt);    return; }
   if (camMode === CameraMode.CINEMATIC)              { _applyCinematicCamera(dt); return; }
   if (camMode === CameraMode.FLYBY)                  { _applyFlybyCamera(dt);   return; }
@@ -109,17 +109,16 @@ function applyCamera(dt) {
   if (camMode === CameraMode.TOWER)                  { _applyTowerCamera(dt);   return; }
 }
 
-// ── ORBIT — jedyne miejsce gdzie kamera jest pozycjonowana w tym trybie ──────
+// Section: function _applyOrbitCamera().
 function _applyOrbitCamera(dt) {
   camera.up.set(0, 1, 0);
-  camera.fov = 60;  // Reset FOV na domyślny
+  camera.fov = 60;  // Implementation note.
   camera.updateProjectionMatrix();
 
   if (!_orbitReady) { _orb.dist = orb.dist; _orbitReady = true; }
   _orb.dist += (orb.dist - _orb.dist) * Math.min(1, dt * 10);
 
-  // free=true → centrum z orb.lat/lon/y (wolna mapa)
-  // free=false → centrum = worldPos samolotu (orbit śledzący)
+  // Configure cx.
   let cx, cy, cz;
   if (!orb.free && activeEntity) {
     const p = activeEntity.worldPos;
@@ -141,9 +140,9 @@ function _applyOrbitCamera(dt) {
   camera.lookAt(cx, cy, cz);
 }
 
-// ── COCKPIT ──────────────────────────────────────────────────────────────────
+// COCKPIT
 function _applyCockpitCamera() {
-  camera.fov = 60;  // Reset FOV na domyślny
+  camera.fov = cockpitConfig.fov;
   camera.updateProjectionMatrix();
   
   const e   = activeEntity;
@@ -170,11 +169,17 @@ function _applyCockpitCamera() {
   );
 }
 
-// ── FREE — kamera wolna ──────────────────────────────────────────────────────
+// Cockpit zoom (scroll wheel / pinch) - narrows FOV to zoom in. Upper bound is
+// the normal unzoomed FOV (60), lower bound gives a tight "binoculars" zoom.
+function setCockpitFOV(fovDegrees) {
+  cockpitConfig.fov = Math.max(20, Math.min(60, fovDegrees));
+}
+
+// Free camera.
 function _applyFreeCamera(dt) {
   camera.up.set(0, 1, 0);
   
-  // Wygładź mnożnik prędkości (Shift/Ctrl)
+  // Configure _freeCameraSpeedMult.
   _freeCameraSpeedMult += (freeCamera.speedMult - _freeCameraSpeedMult) * Math.min(1, dt * 5);
   
   const yRad = Units.degToRad(freeCamera.look.yaw);
@@ -241,10 +246,10 @@ function setFreeCameraFOV(fovDegrees) {
 }
 
 function setFreeCameraSpeedMultiplier(mult) {
-  freeCamera.speedMult = Math.max(0.25, Math.min(4, mult));  // 0.25x do 4x
+  freeCamera.speedMult = Math.max(0.25, Math.min(4, mult));  // Range: 0.25x to 4x.
 }
 
-// ── CINEMATIC — patrzy na samolot z autozooma ────────────────────────────────
+// Section: function _applyCinematicCamera().
 function _applyCinematicCamera(dt) {
   camera.up.set(0, 1, 0);
   
@@ -256,7 +261,7 @@ function _applyCinematicCamera(dt) {
   const e = activeEntity;
   const planePos = e.worldPos;
   
-  // Pozycja kamery: offsetowana od samolotu
+  // Camera position relative to the aircraft.
   const cosRef = Math.cos(Units.degToRad(refLat));
   const cameraPlaneLat = e.lat + cinematicCamera.offsetLat;
   const cameraPlaneLon = e.lon + cinematicCamera.offsetLon;
@@ -265,18 +270,18 @@ function _applyCinematicCamera(dt) {
   const cy = cinematicCamera.heightAbove;
   const cz = -(cameraPlaneLat - refLat) * Math.PI / 180 * EARTH_RADIUS;
   
-  // Auto-zoom: oblicz odległość do samolotu
+  // Configure distToPlane.
   let distToPlane = Math.sqrt(
     (planePos.x - cx) ** 2 + 
     (planePos.y - cy) ** 2 + 
     (planePos.z - cz) ** 2
   );
   
-  // Wygładź zoom
+  // Configure targetZoom.
   let targetZoom = 1.0;
   if (cinematicCamera.autoZoomEnabled) {
     const idealDist = cinematicCamera.targetDistance;
-    // Jeśli samolot jest za blisko, oddal kamerę
+    // Configure if.
     if (distToPlane < idealDist) {
       targetZoom = distToPlane / idealDist;
     }
@@ -284,7 +289,7 @@ function _applyCinematicCamera(dt) {
   
   _cinematicZoomSmoothness += (cinematicCamera.zoom * targetZoom - _cinematicZoomSmoothness) * Math.min(1, dt * 3);
   
-  // Popchnij kamerę dalej od samolotu jeśli zoom wymaga
+  // Configure camX.
   let camX = cx, camY = cy, camZ = cz;
   if (_cinematicZoomSmoothness < 1) {
     const dir = new THREE.Vector3(
@@ -300,7 +305,7 @@ function _applyCinematicCamera(dt) {
   
   camera.position.set(camX, camY, camZ);
   
-  // Auto FOV: mniejszy FOV gdy jest bardziej zbliżona
+  // Configure if.
   if (cinematicCamera.autoFov) {
     const fovRange = 25;  // min FOV
     const fovMax = 60;    // max FOV
@@ -313,7 +318,7 @@ function _applyCinematicCamera(dt) {
   camera.lookAt(planePos.x, planePos.y, planePos.z);
 }
 
-// Sterowanie kamerą cinematic
+// Handle function setCinematicTargetDistance().
 function setCinematicTargetDistance(dist) {
   cinematicCamera.targetDistance = Math.max(30, dist);
 }
@@ -339,10 +344,10 @@ function toggleCinematicAutoFOV() {
   cinematicCamera.autoFov = !cinematicCamera.autoFov;
 }
 
-// ── FLYBY — szybka projekcja wokół samolotu ──────────────────────────────────
+// Section: function _applyFlybyCamera().
 function _applyFlybyCamera(dt) {
   camera.up.set(0, 1, 0);
-  camera.fov = 60;  // Reset FOV na domyślny
+  camera.fov = 60;  // Implementation note.
   camera.updateProjectionMatrix();
   
   if (!activeEntity) {
@@ -353,17 +358,17 @@ function _applyFlybyCamera(dt) {
   const e = activeEntity;
   const center = e.worldPos;
   
-  // Aktualizuj kąt (obrót wokół samolotu)
+  // Configure flybyCamera.angle.
   flybyCamera.angle += Units.degToRad(flybyCamera.orbitSpeed * dt);
   
-  // Pozycja na orbicie
+  // Orbit position.
   const px = center.x + flybyCamera.orbitRadius * Math.cos(flybyCamera.angle);
   const py = center.y + flybyCamera.heightOffset;
   const pz = center.z + flybyCamera.orbitRadius * Math.sin(flybyCamera.angle);
   
   camera.position.set(px, py, pz);
   
-  // Patrz na samolot z wymaganym kątem
+  // Configure lookTarget.
   const lookTarget = new THREE.Vector3(center.x, center.y, center.z);
   const dirToPlane = lookTarget.sub(camera.position);
   const lookDist = dirToPlane.length();
@@ -383,10 +388,10 @@ function setFlybyRadius(meters) {
   flybyCamera.orbitRadius = Math.max(50, meters);
 }
 
-// ── DOLLY — kamera na torze wokół samolotu ──────────────────────────────────
+// Section: function _applyDollyCamera().
 function _applyDollyCamera(dt) {
   camera.up.set(0, 1, 0);
-  camera.fov = 60;  // Reset FOV na domyślny
+  camera.fov = 60;  // Implementation note.
   camera.updateProjectionMatrix();
   
   if (!activeEntity) {
@@ -397,14 +402,14 @@ function _applyDollyCamera(dt) {
   const e = activeEntity;
   const center = e.worldPos;
   
-  // Obrót (mniejsza prędkość niż flyby dla efektu kinowego)
+  // Configure dollyCamera.angle.
   dollyCamera.angle += Units.degToRad(dollyCamera.orbitSpeed * dt);
   
-  // Pozycja na łuku z gradualnym przybliżaniem/oddalaniem
+  // Configure currentRadius.
   let currentRadius = dollyCamera.orbitRadius;
   
   if (dollyCamera.autoZoom) {
-    // Efekt dolly zoom: kamera się porusza, ale odległość zmienia się
+    // Configure zoomPhase.
     const zoomPhase = (dollyCamera.angle % (Math.PI * 2)) / (Math.PI * 2);
     currentRadius = dollyCamera.orbitRadius * (0.7 + zoomPhase * 0.6);
   }
@@ -415,7 +420,7 @@ function _applyDollyCamera(dt) {
   
   camera.position.set(px, py, pz);
   
-  // Łagodny kąt patrzenia
+  // Implementation note.
   camera.lookAt(
     center.x,
     center.y + currentRadius * Math.tan(Units.degToRad(dollyCamera.pitch)) * 0.3,
@@ -435,22 +440,22 @@ function toggleDollyAutoZoom() {
   dollyCamera.autoZoom = !dollyCamera.autoZoom;
 }
 
-// ── TOWER — punkt obserwacyjny z góry ────────────────────────────────────────
+// Section: function _applyTowerCamera().
 function _applyTowerCamera(dt) {
   camera.up.set(0, 1, 0);
-  camera.fov = 60;  // Reset FOV na domyślny
+  camera.fov = 60;  // Implementation note.
   camera.updateProjectionMatrix();
   
   let cx, cy, cz;
   let lookX, lookY, lookZ;
   
   if (towerCamera.trackPlane && activeEntity) {
-    // Śledź samolot w poziomie + offset
+    // Configure e.
     const e = activeEntity;
     const cosRef = Math.cos(Units.degToRad(refLat));
     
-    // Pozycja kamery z offsetem od samolotu
-    const offsetLatRad = Units.degToRad(towerCamera.offsetLat / 111320); // 1 stopień ≈ 111.32 km
+    // Camera position with aircraft offset.
+    const offsetLatRad = Units.degToRad(towerCamera.offsetLat / 111320); // Configure offsetLonRad.
     const offsetLonRad = Units.degToRad(towerCamera.offsetLon / (111320 * cosRef));
     
     const camLat = e.lat + (offsetLatRad * 180 / Math.PI);
@@ -460,12 +465,12 @@ function _applyTowerCamera(dt) {
     cy = towerCamera.height;
     cz = -(camLat - refLat) * Math.PI / 180 * EARTH_RADIUS;
     
-    // Patrz na samolot
+    // Configure lookX.
     lookX = e.worldPos.x;
     lookY = e.worldPos.y;
     lookZ = e.worldPos.z;
   } else {
-    // Stała pozycja wieży obserwacyjnej
+    // Configure cosRef.
     const cosRef = Math.cos(Units.degToRad(refLat));
     const offsetLatRad = Units.degToRad(towerCamera.offsetLat / 111320);
     const offsetLonRad = Units.degToRad(towerCamera.offsetLon / (111320 * cosRef));
@@ -477,7 +482,7 @@ function _applyTowerCamera(dt) {
     cy = towerCamera.height;
     cz = -(towerLat - refLat) * Math.PI / 180 * EARTH_RADIUS;
     
-    // Patrz w kierunku lookHeading i w dół
+    // Configure headingRad.
     const headingRad = Units.degToRad(towerCamera.lookHeading);
     const pitchRad = Units.degToRad(towerCamera.lookDownPitch);
     lookX = cx + Math.sin(headingRad) * 500;
@@ -510,7 +515,7 @@ function toggleTowerTracking() {
   towerCamera.trackPlane = !towerCamera.trackPlane;
 }
 
-// ── Przełączanie trybów ───────────────────────────────────────────────────────
+// Section: function cycleCameraMode().
 function cycleCameraMode() {
   const modes = Object.values(CameraMode);
   camMode     = modes[(modes.indexOf(camMode) + 1) % modes.length];
@@ -530,7 +535,7 @@ function _onCamModeChange() {
       orb.dist  = 100;
       orb.y     = 0;
     }
-    orb.free = false;  // domyślnie orbit śledzący samolot
+    orb.free = false;  // Configure _orbitReady.
     _orbitReady = false;
   }
   
@@ -587,9 +592,20 @@ function updateCameraHUD() {
   const badge = document.getElementById('hud-cam-badge');
   if (badge) badge.textContent = camMode;
 
+  // Configure fighterHud. Novy fighter-jet-style HUD overlay replaces the
+  // boxed speed/alt tapes visually (same info, different presentation) -
+  // avoid showing both at once.
+  const isHudMode = camMode === CameraMode.HUD;
+  const fighterHud = document.getElementById('fighter-hud-canvas');
+  if (fighterHud) fighterHud.style.display = isHudMode ? 'block' : 'none';
+  const speedTape = document.getElementById('speedtape');
+  const altTape = document.getElementById('alt-tape');
+  if (speedTape) speedTape.style.display = isHudMode ? 'none' : '';
+  if (altTape) altTape.style.display = isHudMode ? 'none' : '';
+
   if (!document.body.classList.contains('is-touch')) return;
 
-  // Na mobile: joystick lotu, slider i pasek guzikow ZAWSZE widoczne
+  // Configure fj.
   const fj  = document.getElementById('fly-joy-wrap');
   const thr = document.getElementById('thr-wrap');
   const bar = document.getElementById('mob-bar');
@@ -597,35 +613,11 @@ function updateCameraHUD() {
   if (thr) thr.style.display = 'flex';
   if (bar) bar.style.display = 'flex';
 
-  // Orbit-joy i zoom — ukryte (zbedne)
+  // Hide orbit joystick and zoom.
   const oj = document.getElementById('orbit-joy-wrap');
   const oz = document.getElementById('orbit-zoom');
   if (oj) oj.style.display = 'none';
   if (oz) oz.style.display = 'none';
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// WSZYSTKIE DOSTĘPNE KAMERY — PODSUMOWANIE
-// ═══════════════════════════════════════════════════════════════════════════════
-// ORBIT       — tradycyjna kamera orbitalna (śledzenie samolotu)
-// COCKPIT     — widok z kabiny samolotu
-// FREE        — całkowicie wolna kamera, sterowana klawiszami
-// CINEMATIC   — patrzy na samolot z ustalonym punktu, z auto-zoom
-// FLYBY       — szybka projekcja wokół samolotu
-// DOLLY       — kinowe zbliżenie/oddalenie na łuku
-// TOWER       — punkt obserwacyjny z góry (jak wieża kontrolna)
-//
-// FUNKCJE STEROWANIA:
-// moveFreeCameraForward/Backward/Left/Right/Up/Down(dt)
-// rotateFreeCameraYaw/Pitch(deltaDeg)
-// setCinematicTargetDistance(dist)
-// setCinematicHeightAbove(height)
-// toggleCinematicAutoZoom()
-// setFlybySpeed(degreesPerSecond)
-// setFlybyRadius(meters)
-// setDollySpeed(degreesPerSecond)
-// setDollyRadius(meters)
-// toggleDollyAutoZoom()
-// setTowerHeight(meters)
-// toggleTowerTracking()
-// ═══════════════════════════════════════════════════════════════════════════════
+// Implementation note.

@@ -1,26 +1,22 @@
 'use strict';
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// CAMERA PRESETS — Gotowe sekwencje do trailera i demonstracji
-// ═══════════════════════════════════════════════════════════════════════════════
-// Wkleić do konsoli lub dodać do sim-main.js
-// Użycie: runCameraPreset('cinematic_close');
+// Section: CameraPresets.
 
 const CameraPresets = {
   
-  // Scena wprowadzenia — Flyby z dużej odległości
+  // Implementation note.
   intro_flyby: {
     setup() {
       setCameraMode(CameraMode.FLYBY);
-      setFlybySpeed(30);  // powolny, epicki ruch
-      setFlybyRadius(250);  // daleka kamera
+      setFlybySpeed(30);  // Slow, dramatic movement.
+      setFlybyRadius(250);  // Distant camera.
       flybyCamera.heightOffset = 60;  // wysoka perspektywa
       console.log('📹 Preset: Intro Flyby (30°/s, 250m)');
     },
-    duration: 8000  // 8 sekund
+    duration: 8000  // 8 seconds.
   },
 
-  // Blisk cinematic z autozooma
+  // Close cinematic view with automatic zoom.
   cinematic_close: {
     setup() {
       setCameraMode(CameraMode.CINEMATIC);
@@ -32,13 +28,13 @@ const CameraPresets = {
     duration: 6000
   },
 
-  // Dynamiczny flyby dla akcji
+  // Implementation note.
   action_flyby: {
     setup() {
       setCameraMode(CameraMode.FLYBY);
       setFlybySpeed(60);  // szybkie obroty
-      setFlybyRadius(180);  // bliżej
-      flybyCamera.heightOffset = 30;  // niska perspektywa — dramatycznie
+      setFlybyRadius(180);  // Configure flybyCamera.heightOffset.
+      flybyCamera.heightOffset = 30;  // Low dramatic perspective.
       console.log('📹 Preset: Action Flyby (60°/s, 180m)');
     },
     duration: 5000
@@ -48,7 +44,7 @@ const CameraPresets = {
   dolly_elegant: {
     setup() {
       setCameraMode(CameraMode.DOLLY);
-      setDollySpeed(15);  // powolna, elegancka
+      setDollySpeed(15);  // Slow and smooth.
       setDollyRadius(200);
       toggleDollyAutoZoom();
       console.log('📹 Preset: Dolly Elegant (15°/s, dolly zoom ON)');
@@ -56,12 +52,12 @@ const CameraPresets = {
     duration: 10000
   },
 
-  // Wieża obserwacyjna — całość widoku
+  // Implementation note.
   tower_overview: {
     setup() {
       setCameraMode(CameraMode.TOWER);
       setTowerHeight(600);
-      toggleTowerTracking();  // śledzenie samolotu
+      toggleTowerTracking();  // Implementation note.
       console.log('📹 Preset: Tower Overview (600m height, tracking ON)');
     },
     duration: 7000
@@ -71,14 +67,14 @@ const CameraPresets = {
   slowmo_flyby: {
     setup() {
       setCameraMode(CameraMode.FLYBY);
-      setFlybySpeed(15);  // bardzo powolna
+      setFlybySpeed(15);  // Very slow.
       setFlybyRadius(300);  // daleka perspektywa
       console.log('📹 Preset: Slowmo Flyby (15°/s, 300m) - idealna do slowmo');
     },
     duration: 15000
   },
 
-  // Cockpit na koniec
+  // Implementation note.
   cockpit_immersion: {
     setup() {
       setCameraMode(CameraMode.COCKPIT);
@@ -91,18 +87,18 @@ const CameraPresets = {
   eagle_view: {
     setup() {
       setCameraMode(CameraMode.TOWER);
-      setTowerHeight(1200);  // bardzo wysoko
+      setTowerHeight(1200);  // High tower view.
       toggleTowerTracking();
       console.log('📹 Preset: Eagle View (1200m altitude)');
     },
     duration: 8000
   },
 
-  // CINEMATIC z boku (offset)
+  // Side cinematic view.
   cinematic_side: {
     setup() {
       setCameraMode(CameraMode.CINEMATIC);
-      setCinematicOffset(0, 0.005);  // offset w prawo
+      setCinematicOffset(0, 0.005);  // Shift right.
       setCinematicTargetDistance(100);
       setCinematicHeightAbove(120);
       console.log('📹 Preset: Cinematic Side View (offset boczny)');
@@ -110,11 +106,11 @@ const CameraPresets = {
     duration: 6000
   },
 
-  // TOWER z przodu lotniska
+  // Tower view from the airport front.
   tower_runway: {
     setup() {
       setCameraMode(CameraMode.TOWER);
-      setTowerOffset(500, 0);  // offset 500m z przodu
+      setTowerOffset(500, 0);  // Shift 500 m forward.
       setTowerHeight(400);
       setTowerLookPitch(-30);
       console.log('📹 Preset: Tower Runway (front view)');
@@ -132,81 +128,26 @@ const CameraPresets = {
       freeCamera.fov = 35;
       console.log('📹 Preset: Free Cinematic Custom');
     },
-    duration: 0  // nie ma limitu czasu
+    duration: 0  // Implementation note.
   }
 };
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// DOKUMENTACJA NOWYCH FUNKCJI
-// ═══════════════════════════════════════════════════════════════════════════════
+// // DOKUMENTACJA NOWYCH FUNKCJI //
 
-/**
- * CINEMATIC Camera - Sterowanie Pozycją i Zoomem:
- * 
- * setCinematicOffset(lat, lon)      - Offset pozycji kamery od samolotu (lat/lon)
- * setCinematicTargetDistance(dist)  - Idealna odległość dla autozooma
- * setCinematicHeightAbove(height)   - Wysokość kamery nad samolotem
- * setCinematicFOV(fov)              - Ustaw FOV (domyślnie 25°)
- * toggleCinematicAutoZoom()         - On/Off autozooma
- * toggleCinematicAutoFOV()          - On/Off automatycznego FOV (dostosowanie do zoomu)
- * 
- * Przykład: Cinematic z boku i bardzo bliskim zoomem
- * setCinematicOffset(0, 0.01);      // Daleko z boku
- * setCinematicTargetDistance(50);   // Bliski zoom
- * setCinematicHeightAbove(80);      // Niżej
- */
+/* Configure _sequenceRunning. */
 
-/**
- * FREE Camera - Ulepszone Sterowanie:
- * 
- * W grze:
- * - W/A/S/D      - Ruch do przodu/lewo/tył/prawo
- * - Q/E          - Ruch w dół/góra
- * - Mysz LPM     - Obrót kamery (yaw/pitch)
- * - Mysz PPM     - Przesunięcie boczne/pionowe
- * - Shift        - 2x szybciej
- * - Ctrl         - 0.5x wolniej
- * - Scroll       - Zmiana FOV
- * 
- * Z konsoli:
- * setFreeCameraSpeed(100)           - Zmiana prędkości (m/s)
- * setFreeCameraFOV(45)              - Zmiana FOV
- * setFreeCameraSpeedMultiplier(2)   - Mnożnik prędkości
- */
+/* Configure _sequenceRunning. */
 
-/**
- * TOWER Camera - Obserwacja z Wysokości:
- * 
- * setTowerHeight(meters)            - Wysokość kamery
- * setTowerOffset(lat, lon)          - Offset pozycji od spawnu/samolotu
- * setTowerLookDirection(heading)    - Kierunek, w którym patrzy (stopnie)
- * setTowerLookPitch(pitch)          - Kąt patrzenia w dół (-90 do 0)
- * toggleTowerTracking()             - Śledź samolot w poziomie (on/off)
- * 
- * Przykład: Wieża obserwacyjna z przodu lotniska
- * setTowerOffset(500, 0);           // 500m z przodu
- * setTowerHeight(300);              // 300m wysoko
- * setTowerLookPitch(-30);           // Patrz 30° w dół
- */
+/* Configure _sequenceRunning. */
 
-/**
- * Zmienne Globalne dla Sterowania w Konsoli:
- * 
- * freeCamera.speed = 50;            // Prędkość FREE camera
- * freeCamera.fov = 60;              // FOV FREE camera
- * cinematicCamera.fov = 25;         // FOV CINEMATIC camera
- * towerCamera.height = 500;         // Wysokość TOWER camera
- */
+/* Configure _sequenceRunning. */
 
 
-// Globalny scheduler dla sekwencji
+// Configure _sequenceRunning.
 let _sequenceRunning = false;
 let _sequenceTimeout = null;
 
-/**
- * Uruchom gotowy preset kamery
- * @param {string} presetName - nazwa presetu z CameraPresets
- */
+/* Run a camera preset. @param {string} presetName - preset name from CameraPresets. */
 function runCameraPreset(presetName) {
   if (!CameraPresets[presetName]) {
     console.error(`❌ Preset '${presetName}' nie istnieje!`);
@@ -217,7 +158,7 @@ function runCameraPreset(presetName) {
   const preset = CameraPresets[presetName];
   preset.setup();
   
-  // Zaplanuj powrót do ORBIT po skończeniu
+  // Configure if.
   if (_sequenceTimeout) clearTimeout(_sequenceTimeout);
   _sequenceTimeout = setTimeout(() => {
     console.log('✅ Koniec presetu, powrót do ORBIT');
@@ -225,17 +166,13 @@ function runCameraPreset(presetName) {
   }, preset.duration);
 }
 
-/**
- * Wyłącz obecny sekwencję
- */
+/* Handle function stopCameraPreset(). */
 function stopCameraPreset() {
   if (_sequenceTimeout) clearTimeout(_sequenceTimeout);
   console.log('⏹️  Zatrzymano sekwencję kamery');
 }
 
-/**
- * Sekwencja trailera — wszystkie presety po kolei
- */
+/* Play the trailer sequence through all presets. */
 function runFullTrailerSequence() {
   const presets = [
     'intro_flyby',
@@ -261,7 +198,7 @@ function runFullTrailerSequence() {
     const preset = CameraPresets[presetName];
     preset.setup();
 
-    // Zaplanuj następny preset
+    // Configure _sequenceTimeout.
     _sequenceTimeout = setTimeout(() => {
       index++;
       playNext();
@@ -272,9 +209,7 @@ function runFullTrailerSequence() {
   playNext();
 }
 
-/**
- * Szybka konfiguracja do nagrywania — wysokie FPS, bez UI
- */
+/* Handle function setupRecordingMode(). */
 function setupRecordingMode() {
   console.log('🎥 Włączony tryb nagrywania:');
   console.log('   - Przełącz kamerę wg. potrzeb');
@@ -282,7 +217,7 @@ function setupRecordingMode() {
   console.log('   - Lub: runFullTrailerSequence()');
   console.log('   - Steruj grą przyciskami lotu');
   
-  // Ukryj HUD (jeśli istnieje funkcja)
+  // Configure if.
   if (window.toggleHUD) {
     toggleHUD();
     console.log('   - HUD ukryty');
@@ -291,9 +226,7 @@ function setupRecordingMode() {
   document.body.classList.add('recording-mode');
 }
 
-/**
- * Resetuj nagrywanie
- */
+/* Layout note. */
 function exitRecordingMode() {
   if (window.toggleHUD) toggleHUD();
   document.body.classList.remove('recording-mode');
@@ -302,48 +235,18 @@ function exitRecordingMode() {
   console.log('✅ Wyjście z trybu nagrywania');
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// KONTROLKI KLAWISZÓW DO KAMER (opcjonalnie dodać do sim-controls.js)
-// ═══════════════════════════════════════════════════════════════════════════════
+// Section: function listCameras().
 
-/**
- * Dodaj do obsługi keydown w sim-controls.js:
- * 
- * if (key === 'KeyC') cycleCameraMode();  // C = przełącz kamerę
- * if (key === 'Digit1') setCameraMode(CameraMode.ORBIT);
- * if (key === 'Digit2') setCameraMode(CameraMode.COCKPIT);
- * if (key === 'Digit3') setCameraMode(CameraMode.FREE);
- * if (key === 'Digit4') setCameraMode(CameraMode.CINEMATIC);
- * if (key === 'Digit5') setCameraMode(CameraMode.FLYBY);
- * if (key === 'Digit6') setCameraMode(CameraMode.DOLLY);
- * if (key === 'Digit7') setCameraMode(CameraMode.TOWER);
- * if (key === 'KeyR') setupRecordingMode();  // R = tryb nagrywania
- * 
- * // FREE camera keybinds
- * if (camMode === CameraMode.FREE) {
- *   if (key === 'KeyW') moveFreeCameraForward(dt);
- *   if (key === 'KeyS') moveFreeCameraBackward(dt);
- *   if (key === 'KeyA') moveFreeCameraLeft(dt);
- *   if (key === 'KeyD') moveFreeCameraRight(dt);
- *   if (key === 'KeyQ') moveFreeCameraDown(dt);
- *   if (key === 'KeyE') moveFreeCameraUp(dt);
- * }
- */
+/* Handle function listCameras(). */
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// HELPER FUNKCJE
-// ═══════════════════════════════════════════════════════════════════════════════
+// // HELPER FUNKCJE //
 
-/**
- * Listuj wszystkie dostępne kamery
- */
+/* Handle function listCameras(). */
 function listCameras() {
   console.table(Object.values(CameraMode));
 }
 
-/**
- * Listuj wszystkie presety
- */
+/* List all presets. */
 function listPresets() {
   Object.keys(CameraPresets).forEach(name => {
     const preset = CameraPresets[name];
@@ -351,9 +254,7 @@ function listPresets() {
   });
 }
 
-/**
- * Informacja o obecnej kamerze
- */
+/* * * Informacja o obecnej kamerze */
 function cameraInfo() {
   console.log(`Current Camera Mode: ${camMode}`);
   
@@ -385,7 +286,7 @@ function cameraInfo() {
   }
 }
 
-// Eksport dla console
+// Configure window.CameraPresets.
 window.CameraPresets = CameraPresets;
 window.runCameraPreset = runCameraPreset;
 window.runFullTrailerSequence = runFullTrailerSequence;
