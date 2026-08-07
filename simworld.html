@@ -11,18 +11,14 @@
 </head>
 <body>
 
-<!-- Prompt obrotu urzadzenia (tylko dotyk + portret; czysty CSS, dziala tez podczas ladowania) -->
+<!-- Define <div> UI. -->
 <div id="rotate-prompt">
   <div class="rotate-icon">🔄</div>
   <div class="rotate-text">OBROC URZADZENIE POZIOMO</div>
   <div class="rotate-sub">Ten symulator wymaga trybu poziomego (landscape)</div>
 </div>
 
-<!-- ══ BOOT / LOADING ═══════════════════════════════════════════════════════
-     Sekwencja: czarny ekran → logo studia (WKR GAMES) → autor (oOska4) →
-     wybór lotniska → właściwy ekran ładowania z realnym statusem wczytywanych
-     zasobów. Sterowanie fazami: sim-main.js (klasa .show przełącza fade
-     in/out). ═══════════════════════════════════════════════════════════════ -->
+<!-- Section: <div>. -->
 <div id="loading">
 
   <div class="boot-phase" id="phase-studio">
@@ -70,11 +66,12 @@
 
 </div>
 
-<!-- ══ CANVAS ═══════════════════════════════════════════════════════════════ -->
+<!-- CANVAS -->
 <canvas id="c"></canvas>
 <canvas id="weather-overlay"></canvas>
+<canvas id="fighter-hud-canvas" style="display:none"></canvas>
 
-<!-- ══ HUD ══════════════════════════════════════════════════════════════════ -->
+<!-- HUD -->
 <div id="hud" style="display:none">
 
   <div id="speedtape" class="panel tape-wrap">
@@ -139,12 +136,7 @@
     <div id="sat-z-val"     style="display:none"></div>
   </div>
 
-  <!-- ── MCDU: przycisk-odznaka + ujednolicona szuflada (JEDNA definicja dla
-       desktop i mobile — sim-style.css zmienia tylko dokowanie: panel z
-       prawej na desktopie, dolna szuflada na mobile). Zastępuje dawny
-       #controls (desktop, zagnieżdżony akordeon) + #mob-menu-popup +
-       #weather-popup + #weight-popup + #ap-popup (mobile, cztery osobne
-       okna dublujące te same suwaki w dwóch miejscach). ─────────────────── -->
+  <!-- Section: <div>. -->
   <div id="mcdu-toggle" class="panel">
     <span class="mcdu-dot"></span><b id="mcdu-apt-lbl">EPWR</b><span class="mcdu-chev">▾</span>
   </div>
@@ -306,6 +298,11 @@
             <button id="btn-tilt-toggle">📱 Tilt: <span id="tilt-val">OFF</span></button>
             <button id="btn-tilt-calib">⌖ Kalibruj</button>
           </div>
+          <div class="w-row" style="margin-top:8px">
+            <label>Czułość</label>
+            <input type="range" id="tilt-sens-slider" min="0" max="100" value="43" style="flex:1">
+            <span class="w-lbl" id="tilt-sens-val" style="flex:0 0 40px">43%</span>
+          </div>
         </div>
       </div>
 
@@ -325,9 +322,9 @@
 
 </div><!-- /#hud -->
 
-<!-- ══ MOBILE CONTROLS ═══════════════════════════════════════════════════════ -->
+<!-- MOBILE CONTROLS -->
 
-<!-- Joystick lotu (lewy dół) -->
+<!-- Define <div> UI. -->
 <div id="fly-joy-wrap">
   <div class="joy-label">PITCH · ROLL</div>
   <div id="fly-joy-base">
@@ -339,7 +336,7 @@
   </div>
 </div>
 
-<!-- Slider gazu + ruder (prawy dół) -->
+<!-- Define <div> UI. -->
 <div id="thr-wrap">
   <div class="thr-title">THR</div>
   <div id="thr-track">
@@ -355,16 +352,13 @@
   </div>
 </div>
 
-<!-- Pasek guzików, menu i cztery osobne popupy (mob-bar / mob-menu-popup /
-     weather-popup / weight-popup / ap-popup) zostały zastąpione przez
-     #action-rail + #mcdu-drawer wewnątrz #hud (patrz wyżej) — jedna
-     definicja dla desktop i mobile zamiast dublowanych paneli/popupów. -->
+<!-- Define <div> UI. -->
 
-<!-- Orbit joy i zoom — ukryte (nieużywane) -->
+<!-- Define <div> UI. -->
 <div id="orbit-joy-wrap" style="display:none!important"></div>
 <div id="orbit-zoom"     style="display:none!important"></div>
 
-<!-- ══ SCRIPTS ═══════════════════════════════════════════════════════════════ -->
+<!-- SCRIPTS -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/OBJLoader.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/MTLLoader.js"></script>
@@ -388,6 +382,7 @@
 <script src="js/sim-controls.js?v=2"></script>
 <script src="js/sim-airport-spawn.js?v=2"></script>
 <script src="js/sim-sound.js?v=2"></script>
+<script src="js/sim-engine-sound.js?v=1"></script>
 <script src="js/sim-airport-select.js?v=2"></script>
 <script src="js/sim-main.js?v=2"></script>
 
