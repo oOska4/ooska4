@@ -24,44 +24,124 @@ function _explainModelLoadError(url, err) {
 }
 
 async function loadA321Model() {
-  // Configure materials.
-  const materials = await new Promise((resolve, reject) => {
-    new THREE.MTLLoader().load(A321_MTL_URL, resolve, undefined,
-      err => reject(_explainModelLoadError(A321_MTL_URL, err)));
-  });
+  // Configure materials by fetching the .mtl text first (no-cache) so we can log raw content.
+  let materials;
+  try {
+    const mtlResp = await fetch(A321_MTL_URL, { cache: 'no-store' });
+    const mtlText = await mtlResp.text();
+    console.log('[A321] fetched MTL length:', mtlText.length, 'status:', mtlResp.status);
+    console.log('[A321] MTL snippet:\n', mtlText.slice(0, 800));
+    // Use MTLLoader.parse to get the MaterialCreator from raw text.
+    materials = new THREE.MTLLoader().parse(mtlText, A321_MTL_URL.substring(0, A321_MTL_URL.lastIndexOf('/') + 1));
+    console.log('[A321] MTL parsed via parse()');
+  } catch (err) {
+    console.error('[A321] Failed to fetch/parse MTL:', err);
+    throw _explainModelLoadError(A321_MTL_URL, err);
+  }
+  try {
+    const infoKeys = Object.keys(materials.materialsInfo || {});
+    console.log('[A321] materials count:', infoKeys.length);
+    for (const k of infoKeys) {
+      const mi = materials.materialsInfo[k];
+      console.log(`[A321] material '${k}' -> map_kd='${mi && mi.map_kd ? mi.map_kd : ''}'`);
+    }
+  } catch (e) {
+    console.warn('[A321] Failed to inspect materials.materialsInfo', e);
+  }
   materials.preload();
 
   // Configure partNameToMaterial.
   const partNameToMaterial = {};
-  for (const matName in materials.materialsInfo) {
-    const mapKd = materials.materialsInfo[matName] && materials.materialsInfo[matName].map_kd;
-    if (!mapKd) continue;
-    const partName = mapKd.split('/').pop().replace(/\.[a-zA-Z0-9]+$/, '');
-    partNameToMaterial[partName] = materials.create(matName);
+  function normKey(s) {
+    if (!s) return '';
+    return String(s).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
   }
+  function simpleKey(s) {
+    if (!s) return '';
+    return String(s).toLowerCase().replace(/[^a-z0-9]+/g, '');
+  }
+  for (const matName in materials.materialsInfo) {
+    const mi = materials.materialsInfo[matName] || {};
+    const mapKd = mi.map_kd;
+    const matObj = materials.create(matName);
+    // keys: raw basename from map_kd, normalized basename, material name, normalized material name
+    if (mapKd) {
+      const partName = mapKd.split('/').pop().replace(/\.[a-zA-Z0-9]+$/, '');
+      partNameToMaterial[partName] = matObj;
+      const nk = normKey(partName);
+      if (nk) partNameToMaterial[nk] = matObj;
+      const sk = simpleKey(partName);
+      if (sk) partNameToMaterial[sk] = matObj;
+    }
+    partNameToMaterial[matName] = matObj;
+    const nmat = normKey(matName);
+    if (nmat) partNameToMaterial[nmat] = matObj;
+    const smat = simpleKey(matName);
+    if (smat) partNameToMaterial[smat] = matObj;
+  }
+  console.log('[A321] partName -> material keys:', Object.keys(partNameToMaterial));
 
   // Configure group.
-  const group = await new Promise((resolve, reject) => {
-    new THREE.OBJLoader()
-      .setMaterials(materials)
-      .load(A321_OBJ_URL, resolve, undefined,
-        err => reject(_explainModelLoadError(A321_OBJ_URL, err)));
-  });
+  // Fetch OBJ text (no-cache) and parse it so we can inspect the raw content.
+  let group;
+  try {
+    const objResp = await fetch(A321_OBJ_URL, { cache: 'no-store' });
+    const objText = await objResp.text();
+    console.log('[A321] fetched OBJ length:', objText.length, 'status:', objResp.status);
+    console.log('[A321] OBJ snippet:\n', objText.slice(0, 800));
+    group = new THREE.OBJLoader().setMaterials(materials).parse(objText);
+    console.log('[A321] OBJ parsed via parse()');
+  } catch (err) {
+    console.error('[A321] Failed to fetch/parse OBJ:', err);
+    throw _explainModelLoadError(A321_OBJ_URL, err);
+  }
+  console.log('[A321] OBJ loaded:', A321_OBJ_URL, 'children:', group.children.length);
+  try { console.log('[A321] OBJ child names:', group.children.map(c => c.name)); } catch (e) {}
 
   // Configure gearGroup.
   const gearGroup = new THREE.Group();
   gearGroup.name = 'gearGroup';
   const maxAniso = renderer.capabilities.getMaxAnisotropy();
 
+  const unmatchedChildren = [];
   for (const child of [...group.children]) {
-    const fallbackMat = partNameToMaterial[child.name];
+    console.debug('[A321] processing child:', child && child.name);
+    let fallbackMat = null;
+    if (child && child.name) {
+      // try direct
+      fallbackMat = partNameToMaterial[child.name] || partNameToMaterial[child.name.toLowerCase()];
+      // try normalized
+      const cn = normKey(child.name);
+      if (!fallbackMat && cn) fallbackMat = partNameToMaterial[cn];
+      // try simple (no separators)
+      const cs = simpleKey(child.name);
+      if (!fallbackMat && cs) fallbackMat = partNameToMaterial[cs];
+      // try contains/includes heuristics
+      if (!fallbackMat) {
+        for (const key of Object.keys(partNameToMaterial)) {
+          if (!key) continue;
+          const nk = key.toLowerCase();
+          if (child.name.toLowerCase() === nk || child.name.toLowerCase().startsWith(nk) || nk.indexOf(child.name.toLowerCase()) !== -1) {
+            fallbackMat = partNameToMaterial[key];
+            break;
+          }
+          if (cn && (cn === nk || cn.startsWith(nk) || nk.indexOf(cn) !== -1)) {
+            fallbackMat = partNameToMaterial[key];
+            break;
+          }
+        }
+      }
+    }
     child.traverse(node => {
       if (!node.isMesh) return;
       node.castShadow = true;
       const hasMap = node.material && !Array.isArray(node.material) && node.material.map;
       if (!hasMap && fallbackMat) {
         node.material = fallbackMat;
-        console.warn(`[A321] "${child.name}" nie dostaÄąâ€š tekstury z OBJLoadera Ă˘â‚¬â€ť wymuszono materiaÄąâ€š po nazwie czĂ„â„˘Äąâ€şci.`);
+        console.warn(`[A321] "${child.name}" forced fallback material (no map on mesh).`);
+      } else if (!hasMap && !fallbackMat) {
+        console.warn(`[A321] "${child.name}" has NO texture and NO fallback material matched.`);
+        if (child && child.name && unmatchedChildren.indexOf(child.name) === -1) unmatchedChildren.push(child.name);
       }
       const mats = Array.isArray(node.material) ? node.material : [node.material];
       for (const mat of mats) {
@@ -74,11 +154,21 @@ async function loadA321Model() {
         // Configure if.
         if (mat.emissive) mat.emissive.addScalar(20 / 255);
 
-        // Configure if.
+        // Podbicie specular/shininess TYLKO dla materialow, ktore juz mialy jakis
+        // specular w zrodlowym .mtl (illum 2, Ks>0 - skrzydla/statecznik/podwozie/gondole).
+        // Poprzednia wersja dopasowywala nazwe materialu (np. Color1Mtl.017) do regexu
+        // notMetal - ale te nazwy sa autogenerowane przez Blendera i NIGDY nie zawieraja
+        // slow typu glass/cockpit, wiec w praktyce KAZDY material (wlacznie z matowymi
+        // panelami poszycia, illum=1, Ks=0 w .mtl) dostawal ten sam mocny specular
+        // (0x808080, shininess>=85). Skutek: plaskie/mniej zakrzywione panele (np.
+        // fuselage_middle_out) lapaly szeroki, ciagly rozblysk specular i wygladaly
+        // podswietlone na tle sasiednich, bardziej zakrzywionych paneli tego samego
+        // materialu - mimo ze w Blenderze te panele sa matowe. Sprawdzajac mat.specular
+        // (juz poprawnie odczytane przez MTLLoader z Ks) zamiast nazwy, respektujemy to,
+        // co artysta faktycznie ustawil w .mtl.
         if (mat.shininess !== undefined) {
-          const partLC = (mat.name || '').toLowerCase();
-          const notMetal = /glass|window|tire|rubber|wheel|seat|carpet|interior|cockpit/.test(partLC);
-          if (!notMetal) {
+          const hasSourceSpecular = mat.specular && (mat.specular.r > 0.001 || mat.specular.g > 0.001 || mat.specular.b > 0.001);
+          if (hasSourceSpecular) {
             mat.specular = new THREE.Color(0x808080);
             mat.shininess = Math.max(mat.shininess, 85);
           }
@@ -89,6 +179,7 @@ async function loadA321Model() {
   }
 
   if (gearGroup.children.length) group.add(gearGroup);
+  if (unmatchedChildren.length) console.warn('[A321] unmatched children (no material):', unmatchedChildren);
   return group;
 }
 
