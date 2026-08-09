@@ -511,3 +511,4 @@ window.setCameraMode = function(mode) {
   _originalSetCameraMode(mode);
   _updateCameraButtonStates();
 };
+
