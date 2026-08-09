@@ -39,6 +39,10 @@ const ATS_SAMPLE_STEP_M     = 10;    // Grid resolution for the precomputed fiel
 const ATS_AVG_RADIUS_M      = 35;    // Radius of the local moving-average low-pass filter.
 const ATS_AVG_SAMPLES       = 8;     // Ring samples used per averaging point (precompute-time only now).
 const ATS_MAX_CELLS         = 260000; // Safety cap (cols*rows) on the precomputed field size.
+const ATS_ROWS_PER_CHUNK    = 12;    // Rows computed per chunk before yielding back to the event loop.
+const ATS_START_DELAY_MS    = 1500;  // Wait this long after an airport load before starting the field
+                                      // build at all, so it never competes with the initial burst of
+                                      // tile/building/DEM loading right at startup.
 
 const ATS_CACHE = new Map();   // icao -> field object | null
 let   ATS_ACTIVE = null;       // Currently active smoothing field (for the loaded airport).
@@ -117,8 +121,12 @@ function _atsSmoothstep(t) { t = Math.max(0, Math.min(1, t)); return t * t * (3 
 // for the airport, using currently-cached raw DEM samples. This is the only
 // place that does the (relatively) expensive per-cell low-pass averaging -
 // it runs once per airport load, not once per vertex per tile rebuild.
+//
+// Split into a cheap bounds/allocation step (_atsFieldBounds) and a chunked
+// row-filling step (_atsFillFieldChunk) so the caller can spread the actual
+// work across multiple event-loop turns instead of blocking one frame.
 // ----------------------------------------------------------------------------
-function _atsBuildFieldSync(lines, points, sampleRawFn) {
+function _atsFieldBounds(lines, points) {
   if (!lines.length && !points.length) return null;
   let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
   for (const l of lines) for (const [x, z] of l.pts) {
@@ -149,9 +157,14 @@ function _atsBuildFieldSync(lines, points, sampleRawFn) {
 
   const weight = new Float32Array((cols + 1) * (rows + 1));
   const height = new Float32Array((cols + 1) * (rows + 1));
-  const stride = cols + 1;
+  return { minX, minZ, maxX, maxZ, cell, cols, rows, weight, height };
+}
 
-  for (let r = 0; r <= rows; r++) {
+// Fills grid rows [rowStart, rowEnd) of an already-allocated field in place.
+function _atsFillFieldRows(field, lines, points, sampleRawFn, rowStart, rowEnd) {
+  const { minX, minZ, cell, cols, weight, height } = field;
+  const stride = cols + 1;
+  for (let r = rowStart; r < rowEnd; r++) {
     const pz = minZ + r * cell;
     for (let c = 0; c <= cols; c++) {
       const px = minX + c * cell;
@@ -184,8 +197,6 @@ function _atsBuildFieldSync(lines, points, sampleRawFn) {
       }
     }
   }
-
-  return { minX, minZ, maxX, maxZ, cell, cols, rows, weight, height };
 }
 
 // ----------------------------------------------------------------------------
@@ -217,47 +228,61 @@ function _atsSampleField(field, x, z) {
 // request is made here. sampleRawFn(worldX, worldZ) => raw DEM meters (or
 // null), used to build the low-pass average; pass _terrainRawHeightAtWorldXZ
 // from sim-terrain.js.
+// Returns the built field ({minX,minZ,maxX,maxZ,...}) or null (no paved
+// surfaces found / build was superseded) - callers use the bounds to rebuild
+// only the tiles that actually need it instead of the whole scene.
 // ----------------------------------------------------------------------------
 async function loadAirportTerrainSmoothing(icao, classified, sampleRawFn) {
-  if (!icao || !classified) return;
+  if (!icao || !classified) return null;
   const epoch = ++atsLoadEpoch;
-  if (ATS_CACHE.has(icao)) { ATS_ACTIVE = ATS_CACHE.get(icao); return; }
+  if (ATS_CACHE.has(icao)) { ATS_ACTIVE = ATS_CACHE.get(icao); return ATS_ACTIVE; }
 
   const { lines, points } = _atsShapesFromClassified(classified);
   if (!lines.length && !points.length) {
     ATS_CACHE.set(icao, null);
     if (epoch === atsLoadEpoch) ATS_ACTIVE = null;
-    return;
+    return null;
   }
 
-  // Field build is pure CPU math over cached DEM tiles (no network) - yield
-  // to the event loop periodically via rAF/setTimeout so it can't itself
-  // cause a visible stutter on very large airports.
+  // Field build is pure CPU math over cached DEM tiles (no network), but a
+  // single-shot version can still take long enough on a big airport to be
+  // felt as a stutter - and worse, it used to fire immediately alongside the
+  // initial burst of tile/building/DEM loading at startup. So: wait a bit
+  // before starting at all, then fill the grid a handful of rows per turn
+  // via setTimeout(0), yielding back to the event loop between chunks.
   const myToken = ++atsBuildToken;
   const field = await _atsBuildFieldYielding(lines, points, sampleRawFn, myToken);
-  if (epoch !== atsLoadEpoch || myToken !== atsBuildToken) return;
+  if (epoch !== atsLoadEpoch || myToken !== atsBuildToken) return null;
 
   ATS_CACHE.set(icao, field);
   ATS_ACTIVE = field;
+  return field;
 }
 
-// Chunked wrapper around _atsBuildFieldSync's row loop so a huge airport
-// doesn't block the main thread in one go. Falls back to the synchronous
-// path transparently by chunking on rows.
-function _atsBuildFieldYielding(lines, points, sampleRawFn, myToken) {
-  return new Promise(resolve => {
-    if (!lines.length && !points.length) { resolve(null); return; }
-    // Reuse the synchronous builder directly - in practice even the largest
-    // airport footprints finish in a few ms since the grid is coarse (10m
-    // cells) and DEM lookups hit already-cached tiles, so a full chunked
-    // reimplementation isn't warranted. Wrapped in a promise + rAF so it
-    // still runs after the current frame instead of blocking tile loads
-    // queued in the same synchronous tick.
-    requestAnimationFrame(() => {
-      if (myToken !== atsBuildToken) { resolve(null); return; }
-      resolve(_atsBuildFieldSync(lines, points, sampleRawFn));
-    });
-  });
+function _atsDelay(ms) { return new Promise(res => setTimeout(res, ms)); }
+
+// Chunked field build: waits ATS_START_DELAY_MS before doing any work, then
+// fills ATS_ROWS_PER_CHUNK rows at a time with a setTimeout(0) yield between
+// chunks, so it never occupies the main thread for more than a few ms at a
+// stretch - even for a very large airport's field. Cancellable via myToken.
+async function _atsBuildFieldYielding(lines, points, sampleRawFn, myToken) {
+  if (!lines.length && !points.length) return null;
+
+  await _atsDelay(ATS_START_DELAY_MS);
+  if (myToken !== atsBuildToken) return null;
+
+  const field = _atsFieldBounds(lines, points);
+  if (!field) return null;
+
+  for (let r = 0; r <= field.rows; r += ATS_ROWS_PER_CHUNK) {
+    if (myToken !== atsBuildToken) return null;
+    const rowEnd = Math.min(field.rows + 1, r + ATS_ROWS_PER_CHUNK);
+    _atsFillFieldRows(field, lines, points, sampleRawFn, r, rowEnd);
+    // Yield back to the event loop so rendering/input/other loads get a turn.
+    await _atsDelay(0);
+  }
+  if (myToken !== atsBuildToken) return null;
+  return field;
 }
 
 function clearAirportTerrainSmoothing() {

@@ -183,8 +183,11 @@ async function waptLoad(icao, hintObj, onProgress, preFetchedData) {
       if (typeof clearAirportTerrainSmoothing === 'function') clearAirportTerrainSmoothing();
       const sampleRaw = (typeof _terrainRawHeightAtWorldXZ === 'function')
         ? (sx, sz) => _terrainRawHeightAtWorldXZ(sx, sz, 15) : null;
-      loadAirportTerrainSmoothing(icao, data.classified, sampleRaw).then(() => {
-        if (myEpoch === waptLoadEpoch && typeof clearAllTiles === 'function') clearAllTiles();
+      loadAirportTerrainSmoothing(icao, data.classified, sampleRaw).then(field => {
+        if (myEpoch !== waptLoadEpoch || !field) return;
+        if (typeof clearTilesInWorldBounds === 'function') {
+          clearTilesInWorldBounds(field.minX, field.minZ, field.maxX, field.maxZ);
+        } else if (typeof clearAllTiles === 'function') clearAllTiles();
       });
     }
 

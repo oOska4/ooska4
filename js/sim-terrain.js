@@ -525,6 +525,30 @@ function clearAllTiles() {
   for (const key of new Set([...tileMeshes.keys(), ...loadingTiles])) abortAndRemove(key);
 }
 
+// Removes/rebuilds only tiles whose Z17 footprint overlaps a given world-meter
+// XZ rectangle (ground plane, world Z = -northing - same convention as
+// buildMeshWithNeighbors()). Used after an airport terrain-smoothing field
+// finishes building, so applying it doesn't force a full-scene tile rebuild -
+// only the handful of tiles actually covering that airport get redone.
+function clearTilesInWorldBounds(minX, minZ, maxX, maxZ) {
+  const cosRef = Math.cos(Units.degToRad(refLat));
+  const latOf = z => refLat - (-z) / EARTH_RADIUS * 180 / Math.PI;
+  const lonOf = x => refLon + x / (EARTH_RADIUS * cosRef) * 180 / Math.PI;
+  // Ground Z increases southward in world space here (see buildMeshWithNeighbors:
+  // wzGround = -(y0 + v*dy), where y0/dy grow with latitude) - so minZ/maxZ map
+  // to maxLat/minLat respectively.
+  const [txA, tyA] = deg2tile(latOf(maxZ), lonOf(minX), 17);
+  const [txB, tyB] = deg2tile(latOf(minZ), lonOf(maxX), 17);
+  const targetBounds = {
+    minX: Math.min(txA, txB), maxX: Math.max(txA, txB),
+    minY: Math.min(tyA, tyB), maxY: Math.max(tyA, tyB),
+  };
+  for (const key of [...tileMeshes.keys(), ...loadingTiles]) {
+    const t = parseTileKey(key);
+    if (boundsOverlap(tileBoundsZ17(t.tx, t.ty, t.zoom), targetBounds)) abortAndRemove(key);
+  }
+}
+
 function collectRing(zoom, cx, cy, outerR, innerBoundsZ17) {
   const n     = 1 << zoom;
   const tiles = new Map();
