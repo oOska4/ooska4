@@ -352,6 +352,28 @@ function makeTerrainIndex(G, tx, ty, zoom, clipBoundsZ17) {
   return buf;
 }
 
+// Synchronous raw-DEM lookup by ground-plane world meters (X, Z where world Z
+// = -northing, matching buildMeshWithNeighbors()'s vertex layout). Used by the
+// airport terrain-smoothing module for its local low-pass average - it only
+// reads whatever DEM tiles are already cached (no network), which is fine
+// since it's sampling small offsets around vertices we're already building.
+function _terrainRawHeightAtWorldXZ(worldX, worldZ, zoom) {
+  const cosRef = Math.cos(Units.degToRad(refLat));
+  const lat = refLat - (-worldZ) / EARTH_RADIUS * 180 / Math.PI;
+  const lon = refLon + worldX / (EARTH_RADIUS * cosRef) * 180 / Math.PI;
+  const z = Math.min(zoom, 15);
+  const { tx, ty, pxf, pyf } = _sampleDem(null, lat, lon, z);
+  const dem = demDataCache.get(`${z}_${tx}_${ty}`);
+  if (dem) return Math.max(0, _bilinearDem(dem, pxf, pyf));
+  for (const zz of [13, 11, 9, 7]) {
+    if (zz >= z) continue;
+    const s = _sampleDem(null, lat, lon, zz);
+    const d = demDataCache.get(`${zz}_${s.tx}_${s.ty}`);
+    if (d) return Math.max(0, _bilinearDem(d, s.pxf, s.pyf));
+  }
+  return null;
+}
+
 async function buildMeshWithNeighbors(tx, ty, satZoom, signal, clipBoundsZ17 = null) {
   const demZoom = Math.min(satZoom, 15);
   const shift   = satZoom - demZoom;
@@ -390,14 +412,22 @@ async function buildMeshWithNeighbors(tx, ty, satZoom, signal, clipBoundsZ17 = n
       if      (crossR && crossB) { d = demC; fpx -= 256; fpy -= 256; }
       else if (crossR)           { d = demR; fpx -= 256; }
       else if (crossB)           { d = demB; fpy -= 256; }
+      const wx = x0 + u * dx;
+      const wzGround = -(y0 + v * dy);
       let wz = 0;
       if (d) {
-        const raw = d[Math.min(255, fpy | 0) * 256 + Math.min(255, fpx | 0)];
-        if (raw > 0) wz = raw * DEM_EXAG * Y_SCALE;
+        let raw = d[Math.min(255, fpy | 0) * 256 + Math.min(255, fpx | 0)];
+        if (raw > 0) {
+          if (ATS_ACTIVE) {
+            raw = smoothAirportTerrainHeight(wx, wzGround, raw,
+              (sx, sz) => _terrainRawHeightAtWorldXZ(sx, sz, demZoom));
+          }
+          wz = raw * DEM_EXAG * Y_SCALE;
+        }
       }
-      _posBuf[vi++] = x0 + u * dx;
+      _posBuf[vi++] = wx;
       _posBuf[vi++] = wz;
-      _posBuf[vi++] = -(y0 + v * dy);
+      _posBuf[vi++] = wzGround;
       _uvBuf[ui++]  = UV_IN + u * UV_SC;
       _uvBuf[ui++]  = UV_IN + (1 - v) * UV_SC;
     }

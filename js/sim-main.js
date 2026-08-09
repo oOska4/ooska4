@@ -190,6 +190,11 @@ function aptTrackProgress(phase) {
 
   // Handle loading and error cases.
   aptTrackProgress('start');
+  if (typeof loadAirportTerrainSmoothing === 'function') {
+    loadAirportTerrainSmoothing(choice.icao).then(() => {
+      if (currentAirport === choice.icao && typeof clearAllTiles === 'function') clearAllTiles();
+    });
+  }
   const aptDataP = choice.isPreset
     ? (typeof loadAirportLights !== 'undefined'
         ? loadAirportLights(choice.icao, null, aptTrackProgress)

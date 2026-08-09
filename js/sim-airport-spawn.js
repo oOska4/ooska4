@@ -168,6 +168,16 @@ async function waptLoad(icao, hintObj, onProgress) {
     const data = await fetchAirportFullData(icao, onProgress);
     if (myEpoch !== waptLoadEpoch) return; // Configure validRunways.
 
+    // Kick off airport-surface terrain smoothing in parallel - it doesn't
+    // block the runway/spawn setup below, and clearAllTiles() further down
+    // will force affected tiles to rebuild once it's ready.
+    if (typeof loadAirportTerrainSmoothing === 'function') {
+      if (typeof clearAirportTerrainSmoothing === 'function') clearAirportTerrainSmoothing();
+      loadAirportTerrainSmoothing(icao).then(() => {
+        if (myEpoch === waptLoadEpoch && typeof clearAllTiles === 'function') clearAllTiles();
+      });
+    }
+
     const validRunways = data.validRunways.filter(r =>
       !isNaN(r.leLat) && !isNaN(r.leLon) && !isNaN(r.heLat) && !isNaN(r.heLon));
     if (!validRunways.length) {
