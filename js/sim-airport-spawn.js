@@ -146,7 +146,11 @@ async function waptSearch(queryRaw) {
 }
 
 // Section: function waptLoad().
-async function waptLoad(icao, hintObj, onProgress) {
+// preFetchedData: optional pre-fetched fetchAirportFullData() result (and its
+// terrain-smoothing field, already kicked off by the caller) - used by init()
+// in sim-main.js so the initial airport load only hits Overpass once instead
+// of once here and once for terrain smoothing.
+async function waptLoad(icao, hintObj, onProgress, preFetchedData) {
   if (!icao) return;
   const myEpoch = ++waptLoadEpoch;
   waptSetStatus(`Ładowanie ${icao} (API+OSM, może potrwać do minuty)...`, true);
@@ -165,15 +169,21 @@ async function waptLoad(icao, hintObj, onProgress) {
   }
 
   try {
-    const data = await fetchAirportFullData(icao, onProgress);
+    const data = preFetchedData || await fetchAirportFullData(icao, onProgress);
     if (myEpoch !== waptLoadEpoch) return; // Configure validRunways.
 
-    // Kick off airport-surface terrain smoothing in parallel - it doesn't
-    // block the runway/spawn setup below, and clearAllTiles() further down
-    // will force affected tiles to rebuild once it's ready.
-    if (typeof loadAirportTerrainSmoothing === 'function') {
+    // Kick off airport-surface terrain smoothing using the SAME classified
+    // Overpass response fetchAirportFullData() just got (no second request -
+    // Overpass is slow/flaky enough that one successful query per load should
+    // be fully reused). Skipped when the caller already handled this (see
+    // preFetchedData above). Doesn't block the runway/spawn setup below; the
+    // clearAllTiles() further down will force affected tiles to rebuild once
+    // the (fast, local) smoothing field finishes computing.
+    if (!preFetchedData && typeof loadAirportTerrainSmoothing === 'function') {
       if (typeof clearAirportTerrainSmoothing === 'function') clearAirportTerrainSmoothing();
-      loadAirportTerrainSmoothing(icao).then(() => {
+      const sampleRaw = (typeof _terrainRawHeightAtWorldXZ === 'function')
+        ? (sx, sz) => _terrainRawHeightAtWorldXZ(sx, sz, 15) : null;
+      loadAirportTerrainSmoothing(icao, data.classified, sampleRaw).then(() => {
         if (myEpoch === waptLoadEpoch && typeof clearAllTiles === 'function') clearAllTiles();
       });
     }

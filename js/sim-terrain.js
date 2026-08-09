@@ -353,10 +353,11 @@ function makeTerrainIndex(G, tx, ty, zoom, clipBoundsZ17) {
 }
 
 // Synchronous raw-DEM lookup by ground-plane world meters (X, Z where world Z
-// = -northing, matching buildMeshWithNeighbors()'s vertex layout). Used by the
-// airport terrain-smoothing module for its local low-pass average - it only
-// reads whatever DEM tiles are already cached (no network), which is fine
-// since it's sampling small offsets around vertices we're already building.
+// = -northing, matching buildMeshWithNeighbors()'s vertex layout). Passed into
+// loadAirportTerrainSmoothing() as its sampleRawFn - used ONCE per airport
+// load while precomputing the smoothing field's low-pass average, not per
+// vertex per tile rebuild. Only reads whatever DEM tiles are already cached
+// (no network).
 function _terrainRawHeightAtWorldXZ(worldX, worldZ, zoom) {
   const cosRef = Math.cos(Units.degToRad(refLat));
   const lat = refLat - (-worldZ) / EARTH_RADIUS * 180 / Math.PI;
@@ -418,10 +419,7 @@ async function buildMeshWithNeighbors(tx, ty, satZoom, signal, clipBoundsZ17 = n
       if (d) {
         let raw = d[Math.min(255, fpy | 0) * 256 + Math.min(255, fpx | 0)];
         if (raw > 0) {
-          if (ATS_ACTIVE) {
-            raw = smoothAirportTerrainHeight(wx, wzGround, raw,
-              (sx, sz) => _terrainRawHeightAtWorldXZ(sx, sz, demZoom));
-          }
+          if (ATS_ACTIVE) raw = smoothAirportTerrainHeight(wx, wzGround, raw);
           wz = raw * DEM_EXAG * Y_SCALE;
         }
       }

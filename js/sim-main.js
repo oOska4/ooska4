@@ -190,16 +190,25 @@ function aptTrackProgress(phase) {
 
   // Handle loading and error cases.
   aptTrackProgress('start');
-  if (typeof loadAirportTerrainSmoothing === 'function') {
-    loadAirportTerrainSmoothing(choice.icao).then(() => {
-      if (currentAirport === choice.icao && typeof clearAllTiles === 'function') clearAllTiles();
-    });
-  }
-  const aptDataP = choice.isPreset
-    ? (typeof loadAirportLights !== 'undefined'
-        ? loadAirportLights(choice.icao, null, aptTrackProgress)
-        : Promise.resolve())
-    : waptLoad(choice.icao, choice.searchObj, aptTrackProgress);
+  // Fetch the airport's Overpass/API data ONCE here and hand the same result
+  // to both loadAirportLights() (preFetched param) and terrain smoothing, for
+  // both preset and searched airports - Overpass is slow/flaky enough that a
+  // successful response should never be fetched twice for the same load.
+  const aptDataP = (async () => {
+    const data = await fetchAirportFullData(choice.icao, aptTrackProgress);
+    if (typeof loadAirportTerrainSmoothing === 'function') {
+      const sampleRaw = (typeof _terrainRawHeightAtWorldXZ === 'function')
+        ? (sx, sz) => _terrainRawHeightAtWorldXZ(sx, sz, 15) : null;
+      loadAirportTerrainSmoothing(choice.icao, data.classified, sampleRaw).then(() => {
+        if (currentAirport === choice.icao && typeof clearAllTiles === 'function') clearAllTiles();
+      });
+    }
+    if (choice.isPreset) {
+      if (typeof loadAirportLights !== 'undefined') await loadAirportLights(choice.icao, data, aptTrackProgress);
+    } else {
+      await waptLoad(choice.icao, choice.searchObj, aptTrackProgress, data);
+    }
+  })();
   aptDataP.catch(e => console.error('[init] dane lotniska', e));
 
   // Configure modelP.
