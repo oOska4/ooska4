@@ -138,7 +138,16 @@ function drawFighterHUD(canvas, plane, camera) {
   // player looks around or zooms - not just with the aircraft's own attitude.
   const camEuler = new THREE.Euler().setFromQuaternion(camera.quaternion, 'YXZ');
   const camPitchDeg = Units.radToDeg(camEuler.x);
-  const camRollRad = camEuler.z; // ctx.rotate() wants radians, not degrees
+  // NOTE: camEuler.z is NOT used for roll here. _applyCockpitCamera() finishes
+  // with camera.lookAt(), which rebuilds camera.quaternion from the up/forward
+  // vectors alone - it does not preserve the roll component of the quaternion
+  // planeQ was built with, so camEuler.z comes back with an unreliable (and in
+  // practice inverted) sign, which made the pitch ladder spin the wrong way
+  // under bank. The camera's actual bank always matches the aircraft's own
+  // roll in this mode (cockpitLook is yaw/pitch only, no roll freelook), so
+  // read it straight from the aircraft instead - same convention syncMesh()
+  // and drawAttitude() already use.
+  const camRollRad = plane.rollRad; // ctx.rotate() wants radians, not degrees
   const vFovDeg = camera.fov;
   const pixPerDegV = h / vFovDeg;
   const hFovRad = 2 * Math.atan(Math.tan(Units.degToRad(vFovDeg) / 2) * camera.aspect);
