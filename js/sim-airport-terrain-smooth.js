@@ -43,6 +43,11 @@ const ATS_ROWS_PER_CHUNK    = 12;    // Rows computed per chunk before yielding 
 const ATS_START_DELAY_MS    = 1500;  // Wait this long after an airport load before starting the field
                                       // build at all, so it never competes with the initial burst of
                                       // tile/building/DEM loading right at startup.
+const ATS_MAX_DELTA_M       = 50;    // Sanity clamp: smoothing can never move a vertex more than this
+                                      // far from the raw DEM height. Real runways are graded gently, so
+                                      // a bigger delta means bad/missing input data somewhere upstream
+                                      // (e.g. a DEM tile not cached yet) - better to fall back to the
+                                      // raw (jagged but truthful) terrain than carve a fake cliff/pit.
 
 const ATS_CACHE = new Map();   // icao -> field object | null
 let   ATS_ACTIVE = null;       // Currently active smoothing field (for the loaded airport).
@@ -181,11 +186,22 @@ function _atsFillFieldRows(field, lines, points, sampleRawFn, rowStart, rowEnd) 
       }
       const w = minDist <= 0 ? 1 : 1 - _atsSmoothstep(minDist / ATS_FALLOFF_M);
       const idx = r * stride + c;
-      weight[idx] = w;
 
       if (w > 0.001) {
         const rawHere = sampleRawFn(px, pz);
-        if (rawHere == null) { height[idx] = 0; continue; }
+        if (rawHere == null) {
+          // No cached DEM tile covers this cell yet (can happen on huge/mountain
+          // airports where not every nearby tile is prefetched by the time the
+          // field builds). Falling back to height=0 here would be catastrophic:
+          // weight would still be >0, so smoothAirportTerrainHeight() would blend
+          // the real terrain toward sea level and carve a fake cliff/pit into the
+          // mesh. Zero the weight instead, so this cell is simply left untouched
+          // (raw DEM passes through unchanged) rather than "smoothed" toward 0m.
+          weight[idx] = 0;
+          height[idx] = 0;
+          continue;
+        }
+        weight[idx] = w;
         let sum = rawHere, n = 1;
         for (let i = 0; i < ATS_AVG_SAMPLES; i++) {
           const a = (i / ATS_AVG_SAMPLES) * Math.PI * 2;
@@ -194,6 +210,8 @@ function _atsFillFieldRows(field, lines, points, sampleRawFn, rowStart, rowEnd) 
         }
         const avg = sum / n;
         height[idx] = rawHere + (avg - rawHere) * w;
+      } else {
+        weight[idx] = 0;
       }
     }
   }
@@ -301,5 +319,12 @@ function smoothAirportTerrainHeight(worldX, worldZ, rawHeightM) {
   if (!field) return rawHeightM;
   const sample = _atsSampleField(field, worldX, worldZ);
   if (!sample || sample.weight <= 0.001) return rawHeightM;
-  return rawHeightM + (sample.height - rawHeightM) * sample.weight;
+  const blended = rawHeightM + (sample.height - rawHeightM) * sample.weight;
+  // Last-line-of-defense sanity clamp: if the field build hit missing/bad DEM
+  // data somewhere (e.g. a tile not cached yet on a sprawling mountain
+  // airport), a bogus blend could otherwise carve a fake cliff/pit into the
+  // mesh. A real runway is graded gently, so a huge delta means "don't trust
+  // this sample" - fall back to the untouched raw terrain instead.
+  if (Math.abs(blended - rawHeightM) > ATS_MAX_DELTA_M) return rawHeightM;
+  return blended;
 }
