@@ -91,6 +91,25 @@ function _bilinearDem(dem, pxf, pyf) {
   return hx0 + (hx1 - hx0) * fy;
 }
 
+// Converts lat/lon to the same ground-plane world XZ meters buildMeshWithNeighbors()
+// and the airport terrain-smoothing field use (world Z = -northing). Shared by
+// terrainHeightM/terrainHeightBest/terrainHeightWithZoom below so physics/collision
+// sampling can apply the SAME smoothing the visible mesh uses - without this, the
+// aircraft would collide with the raw jagged DEM while visually resting on the
+// smoothed runway surface.
+function _latLonToAtsWorldXZ(lat, lon) {
+  const cosRef = Math.cos(Units.degToRad(refLat));
+  const x = (lon - refLon) * Math.PI / 180 * EARTH_RADIUS * cosRef;
+  const z = (lat - refLat) * Math.PI / 180 * EARTH_RADIUS;
+  return [x, -z];
+}
+
+function _applyAtsIfActive(lat, lon, rawH) {
+  if (!ATS_ACTIVE || typeof smoothAirportTerrainHeight !== 'function') return rawH;
+  const [wx, wz] = _latLonToAtsWorldXZ(lat, lon);
+  return smoothAirportTerrainHeight(wx, wz, rawH);
+}
+
 // Section: function terrainHeightM().
 
 function terrainHeightM(lat, lon, zoom = 12) {
@@ -98,14 +117,14 @@ function terrainHeightM(lat, lon, zoom = 12) {
   const { tx, ty, pxf, pyf } = _sampleDem(null, lat, lon, z);
   const dem = demDataCache.get(`${z}_${tx}_${ty}`);
   if (!dem) return 0;
-  return Math.max(0, _bilinearDem(dem, pxf, pyf));
+  return _applyAtsIfActive(lat, lon, Math.max(0, _bilinearDem(dem, pxf, pyf)));
 }
 
 function terrainHeightBest(lat, lon, zooms = [15, 14, 13, 12, 11, 10, 9, 8, 7]) {
   for (const z of zooms) {
     const { tx, ty, pxf, pyf } = _sampleDem(null, lat, lon, z);
     const dem = demDataCache.get(`${z}_${tx}_${ty}`);
-    if (dem) return Math.max(0, _bilinearDem(dem, pxf, pyf));
+    if (dem) return _applyAtsIfActive(lat, lon, Math.max(0, _bilinearDem(dem, pxf, pyf)));
   }
   return 0;
 }
@@ -115,7 +134,7 @@ function terrainHeightWithZoom(lat, lon, zooms = [15, 14, 13, 12, 11, 10, 9, 8, 
   for (const z of zooms) {
     const { tx, ty, pxf, pyf } = _sampleDem(null, lat, lon, z);
     const dem = demDataCache.get(`${z}_${tx}_${ty}`);
-    if (dem) return { h: Math.max(0, _bilinearDem(dem, pxf, pyf)), zoom: z };
+    if (dem) return { h: _applyAtsIfActive(lat, lon, Math.max(0, _bilinearDem(dem, pxf, pyf))), zoom: z };
   }
   return { h: 0, zoom: null };
 }
