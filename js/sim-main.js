@@ -180,6 +180,24 @@ function aptTrackProgress(phase) {
   applyCamera(0);
   const initialGroundDist = cameraGroundDistanceM(orb.dist);
 
+  // Fetch the airport's Overpass/API data and build the terrain-smoothing
+  // field BEFORE the first updateTiles() call below, so the very first
+  // terrain tiles near the airport are built already smoothed instead of
+  // appearing raw/jagged and then popping to smoothed a moment later once
+  // the field finishes in the background. This blocks tile loading briefly,
+  // but that's fine here - the loading screen is still up and has its own
+  // progress bar (aptTrackProgress) for exactly this wait.
+  aptTrackProgress('start');
+  let aptData = null;
+  try {
+    aptData = await fetchAirportFullData(choice.icao, aptTrackProgress);
+    if (typeof loadAirportTerrainSmoothing === 'function') {
+      const sampleRaw = (typeof _terrainRawHeightAtWorldXZ === 'function')
+        ? (sx, sz) => _terrainRawHeightAtWorldXZ(sx, sz, 15) : null;
+      await loadAirportTerrainSmoothing(choice.icao, aptData.classified, sampleRaw, { immediate: true });
+    }
+  } catch (e) { console.error('[init] fetchAirportFullData/terrain smoothing failed', e); }
+
   // Configure satTilesP.
   const satTilesP = Promise.allSettled(updateTiles(refLat, refLon, initialGroundDist))
     .then(() => completeStage('sat'));
@@ -188,28 +206,15 @@ function aptTrackProgress(phase) {
     .then(() => completeStage('osm'))
     .catch(e => { console.error('[init] loadBuildings failed', e); completeStage('osm'); });
 
-  // Handle loading and error cases.
-  aptTrackProgress('start');
-  // Fetch the airport's Overpass/API data ONCE here and hand the same result
-  // to both loadAirportLights() (preFetched param) and terrain smoothing, for
-  // both preset and searched airports - Overpass is slow/flaky enough that a
-  // successful response should never be fetched twice for the same load.
+  // The rest of the airport data (runway lighting, spawn/runway setup) doesn't
+  // affect the terrain mesh, so it can proceed in parallel with tile/building
+  // loading rather than delaying it further.
   const aptDataP = (async () => {
-    const data = await fetchAirportFullData(choice.icao, aptTrackProgress);
-    if (typeof loadAirportTerrainSmoothing === 'function') {
-      const sampleRaw = (typeof _terrainRawHeightAtWorldXZ === 'function')
-        ? (sx, sz) => _terrainRawHeightAtWorldXZ(sx, sz, 15) : null;
-      loadAirportTerrainSmoothing(choice.icao, data.classified, sampleRaw).then(field => {
-        if (currentAirport !== choice.icao || !field) return;
-        if (typeof clearTilesInWorldBounds === 'function') {
-          clearTilesInWorldBounds(field.minX, field.minZ, field.maxX, field.maxZ);
-        } else if (typeof clearAllTiles === 'function') clearAllTiles();
-      });
-    }
+    if (!aptData) return;
     if (choice.isPreset) {
-      if (typeof loadAirportLights !== 'undefined') await loadAirportLights(choice.icao, data, aptTrackProgress);
+      if (typeof loadAirportLights !== 'undefined') await loadAirportLights(choice.icao, aptData, aptTrackProgress);
     } else {
-      await waptLoad(choice.icao, choice.searchObj, aptTrackProgress, data);
+      await waptLoad(choice.icao, choice.searchObj, aptTrackProgress, aptData);
     }
   })();
   aptDataP.catch(e => console.error('[init] dane lotniska', e));

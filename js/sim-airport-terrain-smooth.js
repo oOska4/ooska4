@@ -246,11 +246,19 @@ function _atsSampleField(field, x, z) {
 // request is made here. sampleRawFn(worldX, worldZ) => raw DEM meters (or
 // null), used to build the low-pass average; pass _terrainRawHeightAtWorldXZ
 // from sim-terrain.js.
+// opts.immediate: skip ATS_START_DELAY_MS and start filling the grid right
+// away (still yields between row-chunks so it can't freeze a frame). Use this
+// for the initial airport load, called BEFORE the first updateTiles(), so the
+// very first terrain tiles are built already smoothed instead of appearing
+// raw and then popping/rebuilding a moment later. Leave it false (default)
+// for an in-flight airport change (waptLoad), where the delay keeps the field
+// build from competing with the burst of tile/building/DEM loading that a
+// fresh airport load triggers.
 // Returns the built field ({minX,minZ,maxX,maxZ,...}) or null (no paved
 // surfaces found / build was superseded) - callers use the bounds to rebuild
 // only the tiles that actually need it instead of the whole scene.
 // ----------------------------------------------------------------------------
-async function loadAirportTerrainSmoothing(icao, classified, sampleRawFn) {
+async function loadAirportTerrainSmoothing(icao, classified, sampleRawFn, opts = {}) {
   if (!icao || !classified) return null;
   const epoch = ++atsLoadEpoch;
   if (ATS_CACHE.has(icao)) { ATS_ACTIVE = ATS_CACHE.get(icao); return ATS_ACTIVE; }
@@ -265,11 +273,12 @@ async function loadAirportTerrainSmoothing(icao, classified, sampleRawFn) {
   // Field build is pure CPU math over cached DEM tiles (no network), but a
   // single-shot version can still take long enough on a big airport to be
   // felt as a stutter - and worse, it used to fire immediately alongside the
-  // initial burst of tile/building/DEM loading at startup. So: wait a bit
-  // before starting at all, then fill the grid a handful of rows per turn
-  // via setTimeout(0), yielding back to the event loop between chunks.
+  // initial burst of tile/building/DEM loading at startup. So: normally wait
+  // a bit before starting at all, then fill the grid a handful of rows per
+  // turn via setTimeout(0), yielding back to the event loop between chunks.
+  // opts.immediate skips only the initial wait (see comment above).
   const myToken = ++atsBuildToken;
-  const field = await _atsBuildFieldYielding(lines, points, sampleRawFn, myToken);
+  const field = await _atsBuildFieldYielding(lines, points, sampleRawFn, myToken, !!opts.immediate);
   if (epoch !== atsLoadEpoch || myToken !== atsBuildToken) return null;
 
   ATS_CACHE.set(icao, field);
@@ -279,15 +288,18 @@ async function loadAirportTerrainSmoothing(icao, classified, sampleRawFn) {
 
 function _atsDelay(ms) { return new Promise(res => setTimeout(res, ms)); }
 
-// Chunked field build: waits ATS_START_DELAY_MS before doing any work, then
-// fills ATS_ROWS_PER_CHUNK rows at a time with a setTimeout(0) yield between
-// chunks, so it never occupies the main thread for more than a few ms at a
-// stretch - even for a very large airport's field. Cancellable via myToken.
-async function _atsBuildFieldYielding(lines, points, sampleRawFn, myToken) {
+// Chunked field build: waits ATS_START_DELAY_MS before doing any work (unless
+// skipStartDelay), then fills ATS_ROWS_PER_CHUNK rows at a time with a
+// setTimeout(0) yield between chunks, so it never occupies the main thread
+// for more than a few ms at a stretch - even for a very large airport's
+// field. Cancellable via myToken.
+async function _atsBuildFieldYielding(lines, points, sampleRawFn, myToken, skipStartDelay) {
   if (!lines.length && !points.length) return null;
 
-  await _atsDelay(ATS_START_DELAY_MS);
-  if (myToken !== atsBuildToken) return null;
+  if (!skipStartDelay) {
+    await _atsDelay(ATS_START_DELAY_MS);
+    if (myToken !== atsBuildToken) return null;
+  }
 
   const field = _atsFieldBounds(lines, points);
   if (!field) return null;
