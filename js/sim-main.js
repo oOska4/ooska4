@@ -5,63 +5,124 @@
 let fc = 0, lastRenderT = performance.now();
 let contrails = null;
 
+// === Instrumentacja pomiarowa (do analizy czy warto WASM) ===================
+// Mierzy per-klatke czas najwazniejszych funkcji w animate() zeby miec twarde
+// dane zamiast zgadywania co jest bottleneckiem. Wylacz w konsoli:
+//   window.SIM_PERF_ENABLED = false
+// Raport (po ~10-30s lotu, najlepiej przez obszar z duzo nowych kafli terenu):
+//   window.simPerfReport()
+// Reset licznikow (np. przed nowym testem):
+//   window.simPerfReset()
+window.SIM_PERF_ENABLED = true;
+const _perfStats = {};       // name -> { count, total, max, samples: [] }
+const _PERF_SAMPLE_CAP = 300; // ring buffer per-metryke, zeby pamiec nie rosla w nieskonczonosc
+
+// Zapisuje juz-zmierzony czas trwania (np. round-trip do Web Workera, gdzie
+// _perfTime nie zadziala poprawnie - fn() dla funkcji async zwraca Promise
+// natychmiast, wiec zmierzylby tylko czas do pierwszego await, nie cale
+// oczekiwanie). Uzywane przez sim-terrain.js dla terrainMeshBuild_* metryk.
+function _perfRecord(name, dt) {
+  if (!window.SIM_PERF_ENABLED) return;
+  let s = _perfStats[name];
+  if (!s) s = _perfStats[name] = { count: 0, total: 0, max: 0, samples: [] };
+  s.count++; s.total += dt; if (dt > s.max) s.max = dt;
+  s.samples.push(dt);
+  if (s.samples.length > _PERF_SAMPLE_CAP) s.samples.shift();
+}
+
+function _perfTime(name, fn) {
+  if (!window.SIM_PERF_ENABLED) return fn();
+  const t0 = performance.now();
+  const result = fn();
+  _perfRecord(name, performance.now() - t0);
+  return result;
+}
+
+window.simPerfReport = function () {
+  const rows = Object.entries(_perfStats).map(([name, s]) => {
+    const avg = s.total / s.count;
+    const sorted = [...s.samples].sort((a, b) => a - b);
+    const p95 = sorted.length ? sorted[Math.floor(sorted.length * 0.95)] : 0;
+    return {
+      fn: name,
+      calls: s.count,
+      avgMs: +avg.toFixed(3),
+      p95Ms: +p95.toFixed(3),
+      maxMs: +s.max.toFixed(3),
+      totalMs: +s.total.toFixed(1),
+    };
+  }).sort((a, b) => b.totalMs - a.totalMs);
+  console.table(rows);
+  console.log('Budzet klatki przy 60fps: 16.7ms. Kolumna avgMs pokazuje ile z tego budzetu zjada kazda funkcja.');
+  return rows;
+};
+
+window.simPerfReset = function () {
+  for (const k in _perfStats) delete _perfStats[k];
+};
+
 function animate(t) {
   requestAnimationFrame(animate);
   const frameDt = Math.min(0.1, (t - lastRenderT) / 1000); // cap at 100ms
   lastRenderT = t; fc++;
 
   // Physics note.
-  updatePlaneInput();
+  _perfTime('updatePlaneInput', () => updatePlaneInput());
 
   // Advance physics
-  physicsTick(t);
+  _perfTime('physicsTick', () => physicsTick(t));
 
   // Update sound system (GPWS callouts, warnings)
-  if (typeof SimSound !== 'undefined') SimSound.update(frameDt);
+  if (typeof SimSound !== 'undefined') _perfTime('SimSound.update', () => SimSound.update(frameDt));
 
-  updateOrbitKeyboard(frameDt);
-  applyJoystick(frameDt);
-  applyZoomButtons(frameDt);
-
-  applyCamera(frameDt);
+  _perfTime('camera+controls', () => {
+    updateOrbitKeyboard(frameDt);
+    applyJoystick(frameDt);
+    applyZoomButtons(frameDt);
+    applyCamera(frameDt);
+  });
 
   // Update engine sound (throttle -> idle/spool-up/cruise, dystans kamery, przeloty)
-  if (typeof SimEngineSound !== 'undefined') SimEngineSound.update(frameDt);
+  if (typeof SimEngineSound !== 'undefined') _perfTime('SimEngineSound.update', () => SimEngineSound.update(frameDt));
 
   const trackLat  = activeEntity ? activeEntity.lat : orb.lat;
   const trackLon  = activeEntity ? activeEntity.lon : orb.lon;
   const trackDist = cameraGroundDistanceM(orb.dist);
 
-  if (fc % 2  === 0) updateTiles(trackLat, trackLon, trackDist);
-  if (fc % 10 === 0) loadBuildings(trackLat, trackLon, trackDist);
-  if (fc % 10 === 0 && typeof updateGroundTint !== 'undefined') updateGroundTint();
+  if (fc % 2  === 0) _perfTime('updateTiles', () => updateTiles(trackLat, trackLon, trackDist));
+  if (fc % 10 === 0) _perfTime('loadBuildings', () => loadBuildings(trackLat, trackLon, trackDist));
+  if (fc % 10 === 0 && typeof updateGroundTint !== 'undefined') _perfTime('updateGroundTint', () => updateGroundTint());
 
-  for (const e of entities.values()) {
-    e.syncMesh();
-    e.renderUpdate(frameDt);
-  }
+  _perfTime('entities_update', () => {
+    for (const e of entities.values()) {
+      e.syncMesh();
+      e.renderUpdate(frameDt);
+    }
+  });
 
-  if (fc % 3 === 0) updateHUD();
-  if (fc % 2 === 0 && weather) weather.update(frameDt, camera.position, activeEntity ? activeEntity.altM : 0);
+  if (fc % 3 === 0) _perfTime('updateHUD', () => updateHUD());
+  if (fc % 2 === 0 && weather) _perfTime('weather.update', () => weather.update(frameDt, camera.position, activeEntity ? activeEntity.altM : 0));
 
   // Rendering note.
-  updateSky(frameDt);
+  _perfTime('updateSky', () => updateSky(frameDt));
 
   // Configure if.
-  if (typeof updateShadowFollow !== 'undefined') updateShadowFollow();
+  if (typeof updateShadowFollow !== 'undefined') _perfTime('updateShadowFollow', () => updateShadowFollow());
 
   // Configure if.
-  if (typeof updateAirportLights !== 'undefined') updateAirportLights();
+  if (typeof updateAirportLights !== 'undefined') _perfTime('updateAirportLights', () => updateAirportLights());
 
   // Configure if.
   if (contrails) {
-    const ct = t / 1000;
-    contrails.emit(ct, frameDt);
-    contrails.update(ct);
+    _perfTime('contrails', () => {
+      const ct = t / 1000;
+      contrails.emit(ct, frameDt);
+      contrails.update(ct);
+    });
   }
 
   // Rendering note.
-  renderFrame();
+  _perfTime('renderFrame', () => renderFrame());
 }
 
 // Start
@@ -180,24 +241,6 @@ function aptTrackProgress(phase) {
   applyCamera(0);
   const initialGroundDist = cameraGroundDistanceM(orb.dist);
 
-  // Fetch the airport's Overpass/API data and build the terrain-smoothing
-  // field BEFORE the first updateTiles() call below, so the very first
-  // terrain tiles near the airport are built already smoothed instead of
-  // appearing raw/jagged and then popping to smoothed a moment later once
-  // the field finishes in the background. This blocks tile loading briefly,
-  // but that's fine here - the loading screen is still up and has its own
-  // progress bar (aptTrackProgress) for exactly this wait.
-  aptTrackProgress('start');
-  let aptData = null;
-  try {
-    aptData = await fetchAirportFullData(choice.icao, aptTrackProgress);
-    if (typeof loadAirportTerrainSmoothing === 'function') {
-      const sampleRaw = (typeof _terrainRawHeightAtWorldXZ === 'function')
-        ? (sx, sz) => _terrainRawHeightAtWorldXZ(sx, sz, 15) : null;
-      await loadAirportTerrainSmoothing(choice.icao, aptData.classified, sampleRaw, { immediate: true });
-    }
-  } catch (e) { console.error('[init] fetchAirportFullData/terrain smoothing failed', e); }
-
   // Configure satTilesP.
   const satTilesP = Promise.allSettled(updateTiles(refLat, refLon, initialGroundDist))
     .then(() => completeStage('sat'));
@@ -206,17 +249,13 @@ function aptTrackProgress(phase) {
     .then(() => completeStage('osm'))
     .catch(e => { console.error('[init] loadBuildings failed', e); completeStage('osm'); });
 
-  // The rest of the airport data (runway lighting, spawn/runway setup) doesn't
-  // affect the terrain mesh, so it can proceed in parallel with tile/building
-  // loading rather than delaying it further.
-  const aptDataP = (async () => {
-    if (!aptData) return;
-    if (choice.isPreset) {
-      if (typeof loadAirportLights !== 'undefined') await loadAirportLights(choice.icao, aptData, aptTrackProgress);
-    } else {
-      await waptLoad(choice.icao, choice.searchObj, aptTrackProgress, aptData);
-    }
-  })();
+  // Handle loading and error cases.
+  aptTrackProgress('start');
+  const aptDataP = choice.isPreset
+    ? (typeof loadAirportLights !== 'undefined'
+        ? loadAirportLights(choice.icao, null, aptTrackProgress)
+        : Promise.resolve())
+    : waptLoad(choice.icao, choice.searchObj, aptTrackProgress);
   aptDataP.catch(e => console.error('[init] dane lotniska', e));
 
   // Configure modelP.

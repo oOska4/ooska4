@@ -91,25 +91,6 @@ function _bilinearDem(dem, pxf, pyf) {
   return hx0 + (hx1 - hx0) * fy;
 }
 
-// Converts lat/lon to the same ground-plane world XZ meters buildMeshWithNeighbors()
-// and the airport terrain-smoothing field use (world Z = -northing). Shared by
-// terrainHeightM/terrainHeightBest/terrainHeightWithZoom below so physics/collision
-// sampling can apply the SAME smoothing the visible mesh uses - without this, the
-// aircraft would collide with the raw jagged DEM while visually resting on the
-// smoothed runway surface.
-function _latLonToAtsWorldXZ(lat, lon) {
-  const cosRef = Math.cos(Units.degToRad(refLat));
-  const x = (lon - refLon) * Math.PI / 180 * EARTH_RADIUS * cosRef;
-  const z = (lat - refLat) * Math.PI / 180 * EARTH_RADIUS;
-  return [x, -z];
-}
-
-function _applyAtsIfActive(lat, lon, rawH) {
-  if (!ATS_ACTIVE || typeof smoothAirportTerrainHeight !== 'function') return rawH;
-  const [wx, wz] = _latLonToAtsWorldXZ(lat, lon);
-  return smoothAirportTerrainHeight(wx, wz, rawH);
-}
-
 // Section: function terrainHeightM().
 
 function terrainHeightM(lat, lon, zoom = 12) {
@@ -117,14 +98,14 @@ function terrainHeightM(lat, lon, zoom = 12) {
   const { tx, ty, pxf, pyf } = _sampleDem(null, lat, lon, z);
   const dem = demDataCache.get(`${z}_${tx}_${ty}`);
   if (!dem) return 0;
-  return _applyAtsIfActive(lat, lon, Math.max(0, _bilinearDem(dem, pxf, pyf)));
+  return Math.max(0, _bilinearDem(dem, pxf, pyf));
 }
 
 function terrainHeightBest(lat, lon, zooms = [15, 14, 13, 12, 11, 10, 9, 8, 7]) {
   for (const z of zooms) {
     const { tx, ty, pxf, pyf } = _sampleDem(null, lat, lon, z);
     const dem = demDataCache.get(`${z}_${tx}_${ty}`);
-    if (dem) return _applyAtsIfActive(lat, lon, Math.max(0, _bilinearDem(dem, pxf, pyf)));
+    if (dem) return Math.max(0, _bilinearDem(dem, pxf, pyf));
   }
   return 0;
 }
@@ -134,7 +115,7 @@ function terrainHeightWithZoom(lat, lon, zooms = [15, 14, 13, 12, 11, 10, 9, 8, 
   for (const z of zooms) {
     const { tx, ty, pxf, pyf } = _sampleDem(null, lat, lon, z);
     const dem = demDataCache.get(`${z}_${tx}_${ty}`);
-    if (dem) return { h: _applyAtsIfActive(lat, lon, Math.max(0, _bilinearDem(dem, pxf, pyf))), zoom: z };
+    if (dem) return { h: Math.max(0, _bilinearDem(dem, pxf, pyf)), zoom: z };
   }
   return { h: 0, zoom: null };
 }
@@ -371,27 +352,91 @@ function makeTerrainIndex(G, tx, ty, zoom, clipBoundsZ17) {
   return buf;
 }
 
-// Synchronous raw-DEM lookup by ground-plane world meters (X, Z where world Z
-// = -northing, matching buildMeshWithNeighbors()'s vertex layout). Passed into
-// loadAirportTerrainSmoothing() as its sampleRawFn - used ONCE per airport
-// load while precomputing the smoothing field's low-pass average, not per
-// vertex per tile rebuild. Only reads whatever DEM tiles are already cached
-// (no network).
-function _terrainRawHeightAtWorldXZ(worldX, worldZ, zoom) {
-  const cosRef = Math.cos(Units.degToRad(refLat));
-  const lat = refLat - (-worldZ) / EARTH_RADIUS * 180 / Math.PI;
-  const lon = refLon + worldX / (EARTH_RADIUS * cosRef) * 180 / Math.PI;
-  const z = Math.min(zoom, 15);
-  const { tx, ty, pxf, pyf } = _sampleDem(null, lat, lon, z);
-  const dem = demDataCache.get(`${z}_${tx}_${ty}`);
-  if (dem) return Math.max(0, _bilinearDem(dem, pxf, pyf));
-  for (const zz of [13, 11, 9, 7]) {
-    if (zz >= z) continue;
-    const s = _sampleDem(null, lat, lon, zz);
-    const d = demDataCache.get(`${zz}_${s.tx}_${s.ty}`);
-    if (d) return Math.max(0, _bilinearDem(d, s.pxf, s.pyf));
+// ============================================================================
+// Web Worker dla CPU-bound czesci buildMeshWithNeighbors (siatka + normalne).
+// Profiling (window.simPerfReport()) pokazal ze ta praca potrafi zablokowac
+// klatke na >120ms przy szybkim locie nisko nad nowym terenem - caly main
+// thread (render, fizyka, input) czekal. Przeniesienie do Workera nie
+// przyspiesza samych obliczen, ale przestaja one blokowac klatke - licza sie
+// rownolegle. Formuly w js/sim-terrain-worker.js sa 1:1 skopiowane z kodu
+// ponizej (fallback main-thread), zweryfikowane numerycznie w node (patrz
+// notatka w .agents) - zero roznicy wzgledem oryginalnego computeVertexNormals.
+//
+// Fallback: jesli Worker sie nie da utworzyc (bardzo stara przegladarka,
+// blad ladowania pliku), buildMeshWithNeighbors() cicho wraca do starej
+// synchronicznej sciezki main-thread - gra dziala tak jak przed ta zmiana,
+// tylko bez korzysci z odciazenia watku.
+let _terrainWorker = null;
+let _terrainWorkerId = 0;
+const _terrainWorkerPending = new Map(); // id -> {resolve, reject}
+
+function _initTerrainWorker() {
+  try {
+    const w = new Worker('js/sim-terrain-worker.js');
+    w.onmessage = (e) => {
+      const msg = e.data;
+      const pending = _terrainWorkerPending.get(msg.id);
+      if (!pending) return;
+      _terrainWorkerPending.delete(msg.id);
+      if (msg.ok) pending.resolve(msg);
+      else pending.reject(new Error(msg.error));
+    };
+    w.onerror = (err) => {
+      console.warn('[terrain worker] blad w trakcie dzialania, przelaczam na fallback main-thread:', err.message);
+      _terrainWorker = null;
+      for (const { reject } of _terrainWorkerPending.values()) reject(err);
+      _terrainWorkerPending.clear();
+    };
+    return w;
+  } catch (err) {
+    console.warn('[terrain worker] niedostepny, uzywam main-thread fallback:', err);
+    return null;
   }
-  return null;
+}
+_terrainWorker = _initTerrainWorker();
+
+function _buildTerrainTileViaWorker(payload) {
+  return new Promise((resolve, reject) => {
+    const id = ++_terrainWorkerId;
+    _terrainWorkerPending.set(id, { resolve, reject });
+    _terrainWorker.postMessage({ id, ...payload });
+  });
+}
+
+// Fallback main-thread - identyczny kod co przed refaktorem na Workera
+// (dokladnie ta sama petla + THREE.js wlasny computeVertexNormals()).
+function _buildTerrainTileMainThreadGeo({ GRID, px0, py0, subPx, x0, y0, dx, dy, dem, demR, demB, demC, index }) {
+  const INV = 1 / GRID;
+  const UV_IN = 0.5 / 256, UV_SC = 1 - 2 * UV_IN;
+  let vi = 0, ui = 0;
+  for (let r = 0; r <= GRID; r++) {
+    for (let c = 0; c <= GRID; c++) {
+      const u = c * INV, v = r * INV;
+      let fpx = px0 + u * subPx;
+      let fpy = py0 + v * subPx;
+      let d   = dem;
+      const crossR = fpx >= 256, crossB = fpy >= 256;
+      if      (crossR && crossB) { d = demC; fpx -= 256; fpy -= 256; }
+      else if (crossR)           { d = demR; fpx -= 256; }
+      else if (crossB)           { d = demB; fpy -= 256; }
+      let wz = 0;
+      if (d) {
+        const raw = d[Math.min(255, fpy | 0) * 256 + Math.min(255, fpx | 0)];
+        if (raw > 0) wz = raw * DEM_EXAG * Y_SCALE;
+      }
+      _posBuf[vi++] = x0 + u * dx;
+      _posBuf[vi++] = wz;
+      _posBuf[vi++] = -(y0 + v * dy);
+      _uvBuf[ui++]  = UV_IN + u * UV_SC;
+      _uvBuf[ui++]  = UV_IN + (1 - v) * UV_SC;
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(_posBuf.slice(0, vi), 3));
+  g.setAttribute('uv',       new THREE.BufferAttribute(_uvBuf.slice(0, ui), 2));
+  g.setIndex(new THREE.BufferAttribute(index, 1));
+  g.computeVertexNormals();
+  return g;
 }
 
 async function buildMeshWithNeighbors(tx, ty, satZoom, signal, clipBoundsZ17 = null) {
@@ -411,8 +456,7 @@ async function buildMeshWithNeighbors(tx, ty, satZoom, signal, clipBoundsZ17 = n
     loadDemData(demZoom, dtx + 1, dty + 1, signal),
   ]);
 
-  const GRID = gridForZoom(satZoom), INV = 1 / GRID;
-  const UV_IN = 0.5 / 256, UV_SC = 1 - 2 * UV_IN;
+  const GRID = gridForZoom(satZoom);
   const [lat1, lon1] = tile2deg(tx,     ty,     satZoom);
   const [lat2, lon2] = tile2deg(tx + 1, ty + 1, satZoom);
   const cosRef = Math.cos(Units.degToRad(refLat));
@@ -420,41 +464,45 @@ async function buildMeshWithNeighbors(tx, ty, satZoom, signal, clipBoundsZ17 = n
   const y0 = (lat1 - refLat) * Math.PI / 180 * EARTH_RADIUS;
   const dx = (lon2 - lon1)   * Math.PI / 180 * EARTH_RADIUS * cosRef;
   const dy = (lat2 - lat1)   * Math.PI / 180 * EARTH_RADIUS;
+  // makeTerrainIndex jest cache'owany (patrz _idxCache/_clipIdxCache powyzej)
+  // i nie zalezy od position/uv, wiec bezpiecznie liczymy go tu, przed
+  // rozgalezieniem worker/fallback - obie sciezki go potrzebuja.
+  const index = makeTerrainIndex(GRID, tx, ty, satZoom, clipBoundsZ17);
 
-  let vi = 0, ui = 0;
-  for (let r = 0; r <= GRID; r++) {
-    for (let c = 0; c <= GRID; c++) {
-      const u = c * INV, v = r * INV;
-      let fpx = px0 + u * subPx;
-      let fpy = py0 + v * subPx;
-      let d   = dem;
-      const crossR = fpx >= 256, crossB = fpy >= 256;
-      if      (crossR && crossB) { d = demC; fpx -= 256; fpy -= 256; }
-      else if (crossR)           { d = demR; fpx -= 256; }
-      else if (crossB)           { d = demB; fpy -= 256; }
-      const wx = x0 + u * dx;
-      const wzGround = -(y0 + v * dy);
-      let wz = 0;
-      if (d) {
-        let raw = d[Math.min(255, fpy | 0) * 256 + Math.min(255, fpx | 0)];
-        if (raw > 0) {
-          if (ATS_ACTIVE) raw = smoothAirportTerrainHeight(wx, wzGround, raw);
-          wz = raw * DEM_EXAG * Y_SCALE;
-        }
+  if (_terrainWorker) {
+    // Sciezka Worker - main thread NIE blokuje sie na tej pracy (moze dalej
+    // renderowac klatki/obslugiwac input w trakcie liczenia siatki w tle).
+    const t0 = performance.now();
+    try {
+      const msg = await _buildTerrainTileViaWorker({
+        GRID, px0, py0, subPx, x0, y0, dx, dy, dem, demR, demB, demC,
+        demExag: DEM_EXAG, yScale: Y_SCALE, index,
+      });
+      if (typeof _perfRecord === 'function') {
+        // "roundtrip" to czas oczekiwania z perspektywy wywolujacego - NIE
+        // blokuje klatki (main thread jest wolny w tym czasie), w
+        // przeciwienstwie do dawnej metryki 'terrainMeshBuild'. 'workerCompute'
+        // to czysty czas liczenia w workerze (do analizy WASM w workerze).
+        _perfRecord('terrainMeshBuild_roundtrip_nieBlokujeKlatki', performance.now() - t0);
+        _perfRecord('terrainMeshBuild_workerCompute', msg.computeMs);
       }
-      _posBuf[vi++] = wx;
-      _posBuf[vi++] = wz;
-      _posBuf[vi++] = wzGround;
-      _uvBuf[ui++]  = UV_IN + u * UV_SC;
-      _uvBuf[ui++]  = UV_IN + (1 - v) * UV_SC;
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.BufferAttribute(msg.position, 3));
+      g.setAttribute('uv',       new THREE.BufferAttribute(msg.uv, 2));
+      g.setAttribute('normal',   new THREE.BufferAttribute(msg.normal, 3));
+      g.setIndex(new THREE.BufferAttribute(index, 1));
+      return g;
+    } catch (err) {
+      console.warn('[terrain worker] blad przy budowie kafla, fallback main-thread:', err);
+      // spadamy do fallbacku ponizej
     }
   }
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.BufferAttribute(_posBuf.slice(0, vi), 3));
-  geo.setAttribute('uv',       new THREE.BufferAttribute(_uvBuf.slice(0, ui), 2));
-  geo.setIndex(new THREE.BufferAttribute(makeTerrainIndex(GRID, tx, ty, satZoom, clipBoundsZ17), 1));
-  geo.computeVertexNormals(); // Configure return.
-  return geo;
+
+  // Fallback: Worker niedostepny lub zwrocil blad - stara sciezka main-thread.
+  const _perfWrap = (typeof _perfTime === 'function') ? _perfTime : (name, fn) => fn();
+  return _perfWrap('terrainMeshBuild', () => _buildTerrainTileMainThreadGeo({
+    GRID, px0, py0, subPx, x0, y0, dx, dy, dem, demR, demB, demC, index,
+  }));
 }
 
 // Section: tileMeshes.
@@ -542,30 +590,6 @@ function abortAndRemove(key) {
 // Handle function clearAllTiles().
 function clearAllTiles() {
   for (const key of new Set([...tileMeshes.keys(), ...loadingTiles])) abortAndRemove(key);
-}
-
-// Removes/rebuilds only tiles whose Z17 footprint overlaps a given world-meter
-// XZ rectangle (ground plane, world Z = -northing - same convention as
-// buildMeshWithNeighbors()). Used after an airport terrain-smoothing field
-// finishes building, so applying it doesn't force a full-scene tile rebuild -
-// only the handful of tiles actually covering that airport get redone.
-function clearTilesInWorldBounds(minX, minZ, maxX, maxZ) {
-  const cosRef = Math.cos(Units.degToRad(refLat));
-  const latOf = z => refLat - (-z) / EARTH_RADIUS * 180 / Math.PI;
-  const lonOf = x => refLon + x / (EARTH_RADIUS * cosRef) * 180 / Math.PI;
-  // Ground Z increases southward in world space here (see buildMeshWithNeighbors:
-  // wzGround = -(y0 + v*dy), where y0/dy grow with latitude) - so minZ/maxZ map
-  // to maxLat/minLat respectively.
-  const [txA, tyA] = deg2tile(latOf(maxZ), lonOf(minX), 17);
-  const [txB, tyB] = deg2tile(latOf(minZ), lonOf(maxX), 17);
-  const targetBounds = {
-    minX: Math.min(txA, txB), maxX: Math.max(txA, txB),
-    minY: Math.min(tyA, tyB), maxY: Math.max(tyA, tyB),
-  };
-  for (const key of [...tileMeshes.keys(), ...loadingTiles]) {
-    const t = parseTileKey(key);
-    if (boundsOverlap(tileBoundsZ17(t.tx, t.ty, t.zoom), targetBounds)) abortAndRemove(key);
-  }
 }
 
 function collectRing(zoom, cx, cy, outerR, innerBoundsZ17) {
