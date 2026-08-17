@@ -10,12 +10,38 @@ const demDataCache  = new Map();
 const demInflight   = new Map();
 const DEM_CACHE_MAX = 900;
 
+// Timeout dla fetch() - bez tego, przy niestabilnym/wolnym internecie, fetch
+// moze "wisiec" w nieskonczonosc (bez bledu, bez timeoutu przegladarki w
+// rozsadnym czasie) i zarazic demInflight/colorPixelInfl cache martwym
+// promise na zawsze (bo .delete(key) odpala sie dopiero PO zakonczeniu
+// fetcha - ktore nigdy nie nastapi). Objaw: ekran ladowania stoi w miejscu,
+// zero bledow w konsoli. Po timeout traktujemy to tak samo jak zwykly blad
+// sieci (catch lapie AbortError, zwraca null -> istniejacy fallback: plaski
+// zielony teren / brak tekstury).
+const FETCH_TIMEOUT_MS = 15000;
+
+function _withTimeout(signal, ms) {
+  const ac = new AbortController();
+  const onAbort = () => ac.abort();
+  if (signal) {
+    if (signal.aborted) ac.abort();
+    else signal.addEventListener('abort', onAbort, { once: true });
+  }
+  const t = setTimeout(() => ac.abort(), ms);
+  return {
+    signal: ac.signal,
+    cleanup: () => { clearTimeout(t); if (signal) signal.removeEventListener('abort', onAbort); },
+  };
+}
+
 async function loadImageBlob(url, signal) {
+  const { signal: combinedSignal, cleanup } = _withTimeout(signal, FETCH_TIMEOUT_MS);
   try {
-    const r = await fetch(url, { mode: 'cors', signal });
+    const r = await fetch(url, { mode: 'cors', signal: combinedSignal });
     if (!r.ok) return null;
     return URL.createObjectURL(await r.blob());
   } catch { return null; }
+  finally { cleanup(); }
 }
 
 function _decodeDEM(src) {
@@ -395,10 +421,22 @@ function _initTerrainWorker() {
 }
 _terrainWorker = _initTerrainWorker();
 
+// Timeout obronny (patrz FETCH_TIMEOUT_MS wyzej) - w normalnych warunkach
+// worker odpowiada w kilka ms, wiec to sie nigdy nie powinno uruchomic, ale
+// gdyby z jakiegos powodu wiadomosc zaginela (np. blad przegladarki), lepiej
+// spasc do fallbacku main-thread niz wisiec w nieskonczonosc.
+const TERRAIN_WORKER_TIMEOUT_MS = 8000;
+
 function _buildTerrainTileViaWorker(payload) {
   return new Promise((resolve, reject) => {
     const id = ++_terrainWorkerId;
-    _terrainWorkerPending.set(id, { resolve, reject });
+    const t = setTimeout(() => {
+      if (_terrainWorkerPending.delete(id)) reject(new Error('terrain worker timeout'));
+    }, TERRAIN_WORKER_TIMEOUT_MS);
+    _terrainWorkerPending.set(id, {
+      resolve: (v) => { clearTimeout(t); resolve(v); },
+      reject:  (e) => { clearTimeout(t); reject(e); },
+    });
     _terrainWorker.postMessage({ id, ...payload });
   });
 }
