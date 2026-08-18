@@ -245,6 +245,7 @@ class WeatherSystem {
 
   // 2D Canvas Overlay
   _init2DOverlay() {
+    this._ws2DHadContent = false; // sledzi czy poprzednia klatka cos narysowala (patrz _update2DOverlay)
     this._canvas2D = document.getElementById('weather-overlay');
     if (!this._canvas2D) return;
     this._ctx2D = this._canvas2D.getContext('2d');
@@ -306,10 +307,22 @@ class WeatherSystem {
   _update2DOverlay(dt) {
     const ctx = this._ctx2D;
     if (!ctx) return;
-    ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
 
     const isRain    = WeatherState.precipitation && WeatherState.precipType === 'rain';
     const isCockpit = (typeof camMode !== 'undefined' && camMode === 'COCKPIT');
+    const immersion = this.cloudImmersion;
+    const willDraw  = (isRain && isCockpit) || immersion > 0.02;
+
+    // clearRect na calym ekranie jest kosztowny (2D canvas, pelna rozdzielczosc)
+    // i byl wolany BEZWARUNKOWO co klatke, nawet gdy nie ma nic do wyczyszczenia
+    // (dzien, bez deszczu, widok spoza kokpitu - czyli wiekszosc typowego lotu).
+    // Czyscimy tylko gdy: (a) bedziemy cos rysowac w tej klatce, wiec i tak
+    // potrzeba czystego tla, LUB (b) poprzednia klatka cos narysowala, wiec
+    // trzeba to usunac. W przeciwnym razie canvas jest juz pusty - identyczny
+    // wynik wizualny, tylko bez zbednej operacji.
+    if (willDraw || this._ws2DHadContent) {
+      ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+    }
 
     // Configure if.
     if (isRain && isCockpit) {
@@ -317,11 +330,12 @@ class WeatherSystem {
     }
 
     // Configure immersion.
-    const immersion = this.cloudImmersion;
     if (immersion > 0.02) {
       ctx.fillStyle = `rgba(145,158,175,${(0.32 * immersion).toFixed(3)})`;
       ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
     }
+
+    this._ws2DHadContent = willDraw;
   }
 
   // Implementation note.

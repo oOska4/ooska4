@@ -265,21 +265,38 @@ void main() {
   float sunHeight = sunDirection.y;
   float duskBand = 1.0 - clamp(abs(sunHeight) / 0.30, 0.0, 1.0);
   float duskStrength = duskBand * duskBand * (3.0 - 2.0 * duskBand);
-  float horizonGlow = exp(-abs(rayDir.y) * 6.0) * duskStrength;
-  float sunProximity = pow(max(dot(rayDir, normalize(vec3(sunDirection.x, max(sunDirection.y,-0.05), sunDirection.z))), 0.0), 4.0);
-  vec3 duskColor = vec3(1.0, 0.45, 0.15);
-  sky += duskColor * horizonGlow * sunProximity * 1.8;
-  sky += duskColor * 0.35 * horizonGlow;
+  // duskStrength jest identyczny dla calego ekranu w danej klatce (zalezy
+  // tylko od sunDirection, nie od rayDir) - to jest "uniform branch", caly
+  // ekran idzie ta sama sciezka, wiec ten if jest tani na GPU. Gdy slonce
+  // jest daleko od horyzontu (pelny dzien lub gleboka noc), duskStrength=0
+  // dokladnie (clamp), wiec caly ten blok i tak nie mial wplywu na sky -
+  // pomijamy exp/pow/normalize zamiast liczyc je na kazdym pikselu nieba
+  // "na nic". Zweryfikowane matematycznie: identyczny wynik w kazdym
+  // przypadku (patrz verify_sky_shader_opt.js).
+  if (duskStrength > 0.0) {
+    float horizonGlow = exp(-abs(rayDir.y) * 6.0) * duskStrength;
+    float sunProximity = pow(max(dot(rayDir, normalize(vec3(sunDirection.x, max(sunDirection.y,-0.05), sunDirection.z))), 0.0), 4.0);
+    vec3 duskColor = vec3(1.0, 0.45, 0.15);
+    sky += duskColor * horizonGlow * sunProximity * 1.8;
+    sky += duskColor * 0.35 * horizonGlow;
+  }
 
   float nightFactor = smoothstep(0.05, -0.22, sunHeight);
-  vec3 nightColor = mix(vec3(0.0), vec3(0.02,0.025,0.06), 1.0 - rayDir.y*0.5);
+  vec3 nightColor = vec3(0.0);
+  // Analogicznie - nightFactor=0 dokladnie przez wiekszosc dnia (sunHeight
+  // >= 0.05), gwiazdy/ksiezyc i tak byly by wyzerowane przez mnozenie przez
+  // nightFactor w mix() na koncu, wiec pomijamy starField()/pow(moonDot,600)
+  // (obie relatywnie kosztowne) gdy to nie ma zadnego wplywu na wynik.
+  if (nightFactor > 0.0) {
+    nightColor = mix(vec3(0.0), vec3(0.02,0.025,0.06), 1.0 - rayDir.y*0.5);
 
-  float stars = starField(rayDir) * nightFactor * smoothstep(-0.05, 0.3, rayDir.y);
-  nightColor += vec3(stars) * vec3(0.9,0.95,1.0);
+    float stars = starField(rayDir) * nightFactor * smoothstep(-0.05, 0.3, rayDir.y);
+    nightColor += vec3(stars) * vec3(0.9,0.95,1.0);
 
-  float moonDot = max(dot(rayDir, moonDirection), 0.0);
-  vec3 moonGlow = vec3(0.3,0.34,0.42) * pow(moonDot, 600.0) * moonIllum * nightFactor * 0.8;
-  nightColor += moonGlow;
+    float moonDot = max(dot(rayDir, moonDirection), 0.0);
+    vec3 moonGlow = vec3(0.3,0.34,0.42) * pow(moonDot, 600.0) * moonIllum * nightFactor * 0.8;
+    nightColor += moonGlow;
+  }
 
   vec3 color = mix(sky, sky * 0.08 + nightColor, nightFactor);
 
@@ -697,8 +714,8 @@ function renderFrame() {
   renderer.setRenderTarget(null);
 
   updateCloudUniforms();
-  const prevClearColor = new THREE.Color();
-  renderer.getClearColor(prevClearColor);
+  renderer.getClearColor(_scRenderPrevClearColor);
+  const prevClearColor = _scRenderPrevClearColor;
   const prevClearAlpha = renderer.getClearAlpha();
 
   renderer.setRenderTarget(cloudRT);
@@ -795,16 +812,22 @@ function updateRain(dt, camPos) {
   _rainMesh.position.copy(camPos);
 
   const pos = _rainGeo.attributes.position;
+  // Bezposredni dostep do typed array zamiast getX/getY/getZ/setXYZ wrapper
+  // methods - matematycznie identyczne (te metody to dokladnie array[i*3+n],
+  // zweryfikowane w zrodle THREE.js r128), ale bez narzutu wywolania funkcji
+  // x4 na kazda z 1800 czasteczek co klatke podczas deszczu.
+  const arr = pos.array;
   for (let i = 0; i < RAIN_N; i++) {
-    let hx = pos.getX(i*2), hy = pos.getY(i*2), hz = pos.getZ(i*2);
+    const i0 = (i * 2) * 3, i1 = (i * 2 + 1) * 3;
+    let hx = arr[i0], hy = arr[i0 + 1], hz = arr[i0 + 2];
     hx += rvx; hy += rvy; hz += rvz;
 
     if (hy < -60 || hx*hx + hz*hz > RAIN_R*RAIN_R) {
       const r = Math.random()*RAIN_R, a = Math.random()*Math.PI*2;
       hx = Math.cos(a)*r; hy = 90+Math.random()*50; hz = Math.sin(a)*r;
     }
-    pos.setXYZ(i*2, hx, hy, hz);
-    pos.setXYZ(i*2+1, hx-dnx*streakLen, hy-dny*streakLen, hz-dnz*streakLen);
+    arr[i0] = hx; arr[i0 + 1] = hy; arr[i0 + 2] = hz;
+    arr[i1] = hx-dnx*streakLen; arr[i1 + 1] = hy-dny*streakLen; arr[i1 + 2] = hz-dnz*streakLen;
   }
   pos.needsUpdate = true;
 }
@@ -812,6 +835,24 @@ function updateRain(dt, camPos) {
 // Section: sunWorldDir.
 const sunWorldDir = new THREE.Vector3();
 const moonWorldDir = new THREE.Vector3();
+
+// Scratch Color obiekty dla updateSky()/renderFrame() - ta funkcja lata co
+// klatke bezwarunkowo (nie throttlowana jak HUD/weather) i przed ta zmiana
+// tworzyla 10-15 nowych THREE.Color() na klatke (sunColorObj, skyTint,
+// horizonColor i ich warianty gałęzi). Wartosci sa zawsze odczytywane od razu
+// (.copy() do materialu/uniformu) wiec bezpiecznie mozna je trzymac w stalych
+// obiektach i nadpisywac w miejscu zamiast alokowac na nowo. _scA/_scB to
+// ogolne rejestry "operandow" tymczasowych (uzywane i zuzywane w obrebie
+// jednego wyrazenia), _scSunColor/_scHorizonColor/_scSkyTint to "wyniki",
+// ktore musza przetrwac do konca funkcji (odczytywane wielokrotnie nizej).
+const _scSunColor     = new THREE.Color();
+const _scHorizonColor = new THREE.Color();
+const _scSkyTint      = new THREE.Color();
+const _scA = new THREE.Color();
+// Uzywany tylko wewnatrz renderFrame() do tymczasowego zapamietania clear
+// color przed przelaczeniem render targetu - poprzednio nowy Color() co klatke.
+const _scRenderPrevClearColor = new THREE.Color();
+const _scB = new THREE.Color();
 
 function updateSky(dt) {
   if (TimeState.animating) {
@@ -854,10 +895,10 @@ function updateSky(dt) {
   const moonFade = _clamp((moonPos.altitude + 0.05)/0.1, 0, 1) * Math.min(1, moonPos.illumFraction*1.5+0.2);
   moonSprite.material.opacity = moonFade;
 
-  let sunColorObj;
-  if (sunAlt > 0.25) sunColorObj = new THREE.Color(0xfff6e8);
-  else if (sunAlt > 0.0) { const tt = sunAlt/0.25; sunColorObj = new THREE.Color(0xff8c42).lerp(new THREE.Color(0xfff6e8), tt); }
-  else sunColorObj = new THREE.Color(0xff5e2c);
+  const sunColorObj = _scSunColor;
+  if (sunAlt > 0.25) sunColorObj.setHex(0xfff6e8);
+  else if (sunAlt > 0.0) { const tt = sunAlt/0.25; sunColorObj.setHex(0xff8c42).lerp(_scA.setHex(0xfff6e8), tt); }
+  else sunColorObj.setHex(0xff5e2c);
   sunSprite.material.color.copy(sunColorObj);
 
   const dayFactor = _clamp((sunAlt+0.1)/0.3, 0, 1);
@@ -872,19 +913,19 @@ function updateSky(dt) {
   const moonLightStrength = nightFactor * Math.max(0, moonPos.altitude) * moonPos.illumFraction * 0.15;
 
   const skyTint = sunAlt > 0
-    ? new THREE.Color().lerpColors(new THREE.Color(0xffb066), new THREE.Color(0xaecbff), Math.min(sunAlt/0.5,1))
-    : new THREE.Color(0x0a1530);
+    ? _scSkyTint.lerpColors(_scA.setHex(0xffb066), _scB.setHex(0xaecbff), Math.min(sunAlt/0.5,1))
+    : _scSkyTint.setHex(0x0a1530);
   hemiLight.color.copy(skyTint);
   hemiLight.intensity = _lerp(0.12, 0.75, dayFactor) + moonLightStrength;
-  hemiLight.groundColor.set(0x2a3a20).lerp(new THREE.Color(0x05070d), nightFactor*0.8);
+  hemiLight.groundColor.set(0x2a3a20).lerp(_scA.setHex(0x05070d), nightFactor*0.8);
 
-  let horizonColor = sunAlt > 0.12 ? new THREE.Color(0xbcd2ef)
-    : sunAlt > -0.04 ? new THREE.Color().lerpColors(new THREE.Color(0xff9d5c), new THREE.Color(0xbcd2ef), Math.max(0,sunAlt)/0.12)
-    : sunAlt > -0.21 ? new THREE.Color().lerpColors(new THREE.Color(0x16213a), new THREE.Color(0xff9d5c), Math.max(0,(sunAlt+0.21))/0.17)
-    : new THREE.Color(0x070b18);
+  let horizonColor = sunAlt > 0.12 ? _scHorizonColor.setHex(0xbcd2ef)
+    : sunAlt > -0.04 ? _scHorizonColor.lerpColors(_scA.setHex(0xff9d5c), _scB.setHex(0xbcd2ef), Math.max(0,sunAlt)/0.12)
+    : sunAlt > -0.21 ? _scHorizonColor.lerpColors(_scA.setHex(0x16213a), _scB.setHex(0xff9d5c), Math.max(0,(sunAlt+0.21))/0.17)
+    : _scHorizonColor.setHex(0x070b18);
 
   // Configure horizonColor.
-  horizonColor = horizonColor.lerp(new THREE.Color(0x9eacb3), hazeT * 0.7);
+  horizonColor = horizonColor.lerp(_scA.setHex(0x9eacb3), hazeT * 0.7);
 
   // Configure clearFogFar.
   const clearFogFar = vis * 1.5;
