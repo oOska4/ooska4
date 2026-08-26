@@ -66,14 +66,32 @@ function animate(t) {
   const frameDt = Math.min(0.1, (t - lastRenderT) / 1000); // cap at 100ms
   lastRenderT = t; fc++;
 
-  // Physics note.
-  _perfTime('updatePlaneInput', () => updatePlaneInput());
+  const inReplay = typeof ReplaySystem !== 'undefined' && ReplaySystem.active;
 
-  // Advance physics
-  _perfTime('physicsTick', () => physicsTick(t));
+  if (inReplay) {
+    // Odtwarzanie replay: ZAMIAST zywego inputu/fizyki, activeEntity jest
+    // sterowany z nagranego bufora (patrz sim-replay.js ReplaySystem.update
+    // -> A321Entity.applyReplayPose w sim-physics.js). GPWS/warnings (SimSound)
+    // pomijamy - bazuja na biezacym stanie gry i mogłyby myląco zaalarmowac
+    // podczas odtwarzania przeszlego ladowania.
+    _perfTime('replayPlayback', () => ReplaySystem.update(frameDt));
+    if (typeof updateReplayUI === 'function') updateReplayUI();
+  } else {
+    // Physics note.
+    _perfTime('updatePlaneInput', () => updatePlaneInput());
 
-  // Update sound system (GPWS callouts, warnings)
-  if (typeof SimSound !== 'undefined') _perfTime('SimSound.update', () => SimSound.update(frameDt));
+    // Advance physics
+    _perfTime('physicsTick', () => physicsTick(t));
+
+    // Nagrywanie do bufora replay + sledzenie czy samolot realnie leci (do
+    // odroznienia ladowania od kolowania) - TYLKO podczas zywego lotu,
+    // nigdy podczas samego replay (nie nagrywamy odtwarzania z powrotem).
+    if (typeof ReplayRecorder !== 'undefined') ReplayRecorder.update(activeEntity, frameDt);
+    if (typeof LandingScore !== 'undefined') LandingScore.trackAirborne(activeEntity, frameDt);
+
+    // Update sound system (GPWS callouts, warnings)
+    if (typeof SimSound !== 'undefined') _perfTime('SimSound.update', () => SimSound.update(frameDt));
+  }
 
   _perfTime('camera+controls', () => {
     updateOrbitKeyboard(frameDt);
@@ -95,6 +113,11 @@ function animate(t) {
 
   _perfTime('entities_update', () => {
     for (const e of entities.values()) {
+      // activeEntity juz zostal zaktualizowany (pozycja+wizualia) przez
+      // ReplaySystem.update() powyzej - dodatkowe renderUpdate() tutaj
+      // przeliczylby animacje sterow z ZYWEGO planeInput, psujac wiernosc
+      // odtwarzania. Inne entities (jesli istnieja) aktualizujemy normalnie.
+      if (inReplay && e === activeEntity) continue;
       e.syncMesh();
       e.renderUpdate(frameDt);
     }

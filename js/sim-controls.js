@@ -39,14 +39,20 @@ window.addEventListener('keyup', e => {
   keys.delete(e.key.toLowerCase());
   planeKeys[e.code] = false;
   const p = activeEntity;
+  // Podczas replay activeEntity jest tymczasowo sterowany przez
+  // ReplaySystem (patrz sim-replay.js) - blokujemy akcje ktore mutuja stan
+  // lotu (przypadkowe flaps/gear/reset zepsulyby zapisany-do-przywrocenia
+  // stan). Zmiana trybu kamery i mute zostaja dozwolone (nie dotykaja
+  // activeEntity, uzyteczne podczas ogladania replay).
+  const blockDuringReplay = typeof ReplaySystem !== 'undefined' && ReplaySystem.active;
   switch (e.code) {
-    case 'KeyF': if (p) { p.flaps = (p.flaps + 1) % 4; _syncFlapsLabel(); } break;
-    case 'KeyG': if (p && !p.onGround) { p.gearDown = !p.gearDown; p.updateGearVisibility(); _syncGearBtn(); } break;
-    case 'KeyB': if (p) { p.spoilers = !p.spoilers; _syncSplrBtn(); } break;
-    case 'KeyP': if (p) { p.parkingBrake = !p.parkingBrake; _syncParkBtn(); } break;
-    case 'KeyN': if (p) { p.autobrakeLevel = _nextAutobrakeLevel(p.autobrakeLevel); _syncAutobrakeBtn(); } break;
-    case 'KeyX': if (p) { p.ap.master = false; p.ap.hdgHold = false; p.ap.altHold = false; p.ap.vsHold = false; p.ap.spdHold = false; } break;
-    case 'KeyR': resetPlane(); break;
+    case 'KeyF': if (p && !blockDuringReplay) { p.flaps = (p.flaps + 1) % 4; _syncFlapsLabel(); } break;
+    case 'KeyG': if (p && !p.onGround && !blockDuringReplay) { p.gearDown = !p.gearDown; p.updateGearVisibility(); _syncGearBtn(); } break;
+    case 'KeyB': if (p && !blockDuringReplay) { p.spoilers = !p.spoilers; _syncSplrBtn(); } break;
+    case 'KeyP': if (p && !blockDuringReplay) { p.parkingBrake = !p.parkingBrake; _syncParkBtn(); } break;
+    case 'KeyN': if (p && !blockDuringReplay) { p.autobrakeLevel = _nextAutobrakeLevel(p.autobrakeLevel); _syncAutobrakeBtn(); } break;
+    case 'KeyX': if (p && !blockDuringReplay) { p.ap.master = false; p.ap.hdgHold = false; p.ap.altHold = false; p.ap.vsHold = false; p.ap.spdHold = false; } break;
+    case 'KeyR': if (!blockDuringReplay) resetPlane(); break;
     case 'KeyM': if (typeof SimSound !== 'undefined') { SimSound.toggleMute(); _syncMuteBtn(); } break;
     case 'KeyC': cycleCameraMode(); break;
     case 'Digit1': setCameraMode(CameraMode.ORBIT); break;
@@ -429,7 +435,7 @@ document.querySelectorAll('[data-apt]').forEach(btn => {
 });
 
 // UI layout note.
-_btn('btn-reset',      () => { resetPlane();    _setDrawer(false); });
+_btn('btn-reset',      () => { if (typeof ReplaySystem !== 'undefined' && ReplaySystem.active) return; resetPlane();    _setDrawer(false); });
 _btn('btn-approach',   () => { spawnApproach(); _setDrawer(false); });
 _btn('btn-orbit-free', () => {
   if (activeEntity) { orb.lat=activeEntity.lat; orb.lon=activeEntity.lon; orb.y=activeEntity.worldPos.y; }
@@ -487,21 +493,24 @@ if (tiltSensSlider) {
 
 // Airport lighting note.
 _btn('ar-flaps', () => {
-  if (!activeEntity) return;
+  if (!activeEntity || (typeof ReplaySystem !== 'undefined' && ReplaySystem.active)) return;
   activeEntity.flaps = (activeEntity.flaps+1)%4;
   _syncFlapsLabel();
 });
 _btn('ar-gear', () => {
   const p=activeEntity; if(!p||p.onGround) return;
+  if (typeof ReplaySystem !== 'undefined' && ReplaySystem.active) return;
   p.gearDown=!p.gearDown; p.updateGearVisibility(); _syncGearBtn();
 });
 _btn('ar-splr', () => {
   const p=activeEntity; if(!p) return;
+  if (typeof ReplaySystem !== 'undefined' && ReplaySystem.active) return;
   p.spoilers=!p.spoilers; _syncSplrBtn();
 });
 _btn('ar-ap', () => { if (typeof apUI !== 'undefined') apUI.toggleMaster(); });
 _btn('ar-abrk', () => {
   const p = activeEntity; if (!p) return;
+  if (typeof ReplaySystem !== 'undefined' && ReplaySystem.active) return;
   p.autobrakeLevel = _nextAutobrakeLevel(p.autobrakeLevel); _syncAutobrakeBtn();
 });
 _btn('ar-cam', cycleCameraMode);

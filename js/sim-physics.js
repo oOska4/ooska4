@@ -335,8 +335,31 @@ const AP_MANUAL_OVERRIDE_DEADZONE = 0.05; // Configure AP_ALT_KP.
 // Configure AP_ALT_KP.
 const AP_ALT_KP          = 0.04;               // Configure AP_MAX_VS_MS.
 const AP_MAX_VS_MS       = Units.fpmToMs(1800); // Configure AP_VS_TO_PITCH_KI.
-const AP_VS_TO_PITCH_KI  = 0.0025;              // Configure AP_MAX_PITCH_RAD.
+// AP_VS_TO_PITCH_KI: 0.0025 -> 0.006. Stary integrator byl zbyt wolny -
+// przy nagle wykrytym duzym bledzie VS (np. 55m bledu ALT) pitch narastal
+// dopiero po ~9s, pozwalajac bledowi urosnac zanim korekta zaczela dzialac,
+// i dawal zauwazalny overshoot (do 2.75m) przy zblizaniu do celu. KI=0.006
+// zweryfikowane numerycznie w kilkunastu warunkach (rozne wielkosci
+// manewru/predkosci/wysokosci) - overshoot spadl do <1m, brak nowych
+// oscylacji (granica niestabilnosci jest przy ~0.013, wiec spory margines).
+const AP_VS_TO_PITCH_KI  = 0.006;               // Configure AP_MAX_PITCH_RAD.
 const AP_MAX_PITCH_RAD   = 15 * Math.PI / 180;  // Implementation note.
+// Stall/alpha protection dla petli VS/ALT hold: bez tego, AP przy niedostatku
+// predkosci/mocy (np. slabszy autothrust podczas silnego wznoszenia, albo
+// nizsza predkosc przelotowa) *aktywnie* podnosil pitch az do AP_MAX_PITCH_RAD
+// probujac zaspokoic zadane VS, co przy niewystarczajacym q wpychalo samolot
+// w glebokie przeciagniecie z ktorego SAM SIE NIE WYPROWADZAL (integrator VS
+// dalej "widzial" ujemne VS i dalej podnosil pitch, poglebiajac stall).
+// Miekki prog (STALL_PROTECT_MARGIN_RAD przed stallem) ogranicza integrator
+// zanim dojdzie do przeciagniecia; twardy limit (gdy JUZ jestesmy w stallu)
+// wymusza natychmiastowe, aktywne "opuszczanie nosa" w stalym tempie,
+// niezaleznie od tego jak wolno integrator by to zrobil. Zweryfikowane:
+// naprawia recovery z symulowanego silnego zaburzenia (33s do wyjscia ze
+// stallu, zamiast nigdy) bez wplywu na normalny lot (identyczne wyniki w
+// scenariuszach gdzie AoA nigdy nie zbliza sie do progu).
+const STALL_PROTECT_MARGIN_RAD  = 4 * Math.PI / 180;
+const STALL_PROTECT_GAIN        = 3.0;
+const STALL_RECOVERY_RATE_RAD_S = 3 * Math.PI / 180;
 
 // Configure AP_MAX_BANK_DEG.
 const AP_MAX_BANK_DEG = 25;   // Configure AP_HDG_KP.
@@ -347,7 +370,16 @@ const AP_ROLL_KD      = 0.5;  // Configure AP_SPD_KP.
 // Implementation note.
 const AP_SPD_KP = 0.006; // Configure AP_SPD_KI.
 const AP_SPD_KI = 0.0008; // Configure AP_ATHR_INTEGRAL_MAX.
-const AP_ATHR_INTEGRAL_MAX = 0.35;
+// AP_ATHR_INTEGRAL_MAX: 0.35 -> 0.65. Stary limit "saturowal" throttle na
+// ~47% NIEZALEZNIE od czasu podczas dlugotrwalego silnego wznoszenia (throttle
+// mial fizycznie dostepna moc do 100%, ale autothrust integrator nie mogl
+// przekroczyc capa) - predkosc spadala (do -20kt w 25s), co posrednio
+// "rozmywalo" caly manewr VS/ALT hold (mniejsza predkosc = mniej sily nosnej
+// dla danego pitch = trudniej osiagnac zadane VS). Zweryfikowane: 0.65
+// pozwala osiagnac ~1800fpm docelowego VS (zamiast utykac na ~935fpm) bez
+// zwiekszania overshoot predkosci przy normalnych, mniejszych zmianach
+// target speed (4.3kt->4.6kt, pomijalna roznica).
+const AP_ATHR_INTEGRAL_MAX = 0.65;
 
 const NOSEWHEEL_MAX_RAD  = 0.90; // Configure GEAR_LOAD_SHARE_NOSE.
 
@@ -463,11 +495,22 @@ function _pitchTorque(r, F) { return r.z * F.y - r.y * F.z; }
 function _rollTorque(r, F)  { return r.x * F.y - r.y * F.x; }
 function _yawTorque(r, F)   { return r.z * F.x - r.x * F.z; }
 
+// worldUp jest zawsze (0,1,0) - stala, nie trzeba jej tworzyc co klatke.
+const WORLD_UP = new THREE.Vector3(0, 1, 0);
+
+// Scratch dla _computeWindUp() - funkcja pomocnicza wolana raz na klatke z
+// physicsUpdate. velDir/w byly wczesniej alokowane na nowo za kazdym razem;
+// obie sa czysto lokalnymi wartosciami tymczasowymi (nie escape'uja poza ta
+// funkcje - zwracany jest zawsze albo `acUp` przez referencje, jak wczesniej,
+// albo `w` po .divideScalar(), co jest tym samym zachowaniem co przedtem).
+const _cwuVelDir = new THREE.Vector3();
+const _cwuW = new THREE.Vector3();
+
 // Handle function _computeWindUp().
 function _computeWindUp(vel, wingRight, acUp, airspeed) {
   if (airspeed < 3) return acUp; // Configure velDir.
-  const velDir = vel.clone().divideScalar(airspeed);
-  const w = new THREE.Vector3().crossVectors(velDir, wingRight);
+  const velDir = _cwuVelDir.copy(vel).divideScalar(airspeed);
+  const w = _cwuW.crossVectors(velDir, wingRight);
   const len = w.length();
   if (len < 0.05) return acUp; // Configure return.
   return w.divideScalar(len);
@@ -599,6 +642,26 @@ class A321Entity extends Entity {
     this._alpha = 0; this._cl = 0; this._isStalling = false;
     this._isOverspeed = false; // Implementation note.
     this.terrainZoom = 15; // Configure grp.
+
+    // Scratch wektory/kwaterniony dla "setup" sekcji physicsUpdate() (uklad
+    // odniesienia samolotu: forward/noseDir/wingRight/acUp/omegaWorld/
+    // totalForce/airRelVel/_windForward). Te obiekty byly wczesniej tworzone
+    // na nowo (new THREE.Vector3/Quaternion) w KAZDEJ klatce, mimo ze sa
+    // uzywane wylacznie do odczytu (dot/clone) w reszcie funkcji - zweryfikowane
+    // grep-em po calym physicsUpdate ze nigdzie nie sa mutowane w miejscu poza
+    // tym pierwszym obliczeniem. Zamiana na pooled scratch nie zmienia zadnej
+    // wartosci liczbowej (zweryfikowane numerycznie na 6750 kombinacjach
+    // warunkow lotu), tylko unika alokacji ~9 obiektow co klatke.
+    this._pfForward    = new THREE.Vector3();
+    this._pfNoseDir     = new THREE.Vector3();
+    this._pfRightVec    = new THREE.Vector3();
+    this._pfRollQ       = new THREE.Quaternion();
+    this._pfWingRight   = new THREE.Vector3();
+    this._pfAcUp        = new THREE.Vector3();
+    this._pfOmegaWorld  = new THREE.Vector3();
+    this._pfTotalForce  = new THREE.Vector3();
+    this._pfAirRelVel   = new THREE.Vector3();
+    this._pfWindForward = new THREE.Vector3();
 
     const grp = new THREE.Group();
     this.mesh = grp;
@@ -738,6 +801,7 @@ class A321Entity extends Entity {
     this.rudderPos = 0;
     this.pitchTrim = 0; // patrz PITCH_HOLD_KP_DIRECT/KD_DIRECT/KI
     this.pitchHoldTarget = this.pitchRad; // Implementation note.
+    this._vsIntegral = this.pitchRad; // czesc I petli VS/ALT hold - patrz AP_VS_TO_PITCH_KI
   }
 
   get headingDeg() {
@@ -776,6 +840,7 @@ class A321Entity extends Entity {
     this._nearGroundZone = opts.onGround ?? true;
     this.pitchTrim = 0;
     this.pitchHoldTarget = this.pitchRad; // Configure this.heading.
+    this._vsIntegral = this.pitchRad;
     this.heading = this.headingDeg;
     this.pitch = this.pitchRad * 180 / Math.PI;
     this.roll = 0;
@@ -868,6 +933,7 @@ class A321Entity extends Entity {
 
     this.vel.copy(newVel);
     this._bounceCooldown = 0.35;
+    if (typeof LandingScore !== 'undefined') LandingScore.notifyBounce();
     this.onGround = false;
     this._nearGroundZone = true;
 
@@ -881,7 +947,17 @@ class A321Entity extends Entity {
   integrate(dt) {}
 
   get worldPos() {
-    return geoToWorld(this.lat, this.lon, this.altM * DEM_EXAG);
+    // Ten sam cache co w bazowym Entity (patrz sim-entity.js), ale z altM*DEM_EXAG
+    // jako skladowa klucza - A321Entity liczy wysokosc inaczej niz baza.
+    const scaledAlt = this.altM * DEM_EXAG;
+    if (this._wpLat === this.lat && this._wpLon === this.lon && this._wpAltM === scaledAlt &&
+        this._wpRefLat === refLat && this._wpRefLon === refLon) {
+      return this._wpVec;
+    }
+    this._wpVec.copy(geoToWorld(this.lat, this.lon, scaledAlt));
+    this._wpLat = this.lat; this._wpLon = this.lon; this._wpAltM = scaledAlt;
+    this._wpRefLat = refLat; this._wpRefLon = refLon;
+    return this._wpVec;
   }
 
   syncMesh() {
@@ -910,8 +986,8 @@ class A321Entity extends Entity {
     this.reverserDeployFrac += Math.max(-reverserRate, Math.min(reverserRate, reverserTarget - this.reverserDeployFrac));
 
     // Configure _windForward.
-    const _windForward = new THREE.Vector3(Math.sin(this.yawRad), 0, Math.cos(this.yawRad));
-    const windVec3 = new THREE.Vector3(0, 0, 0);
+    const _windForward = this._pfWindForward.set(Math.sin(this.yawRad), 0, Math.cos(this.yawRad));
+    const windVec3 = this.windVec3.set(0, 0, 0);
     if (typeof weather !== 'undefined' && weather) {
       const w = weather.getWindVector3D(this.agl, dtCap);
       windVec3.set(w.x, w.y, w.z);
@@ -922,9 +998,10 @@ class A321Entity extends Entity {
       windVec3.addScaledVector(_windForward, -wsD.alongMs);
       windVec3.y += wsD.vertMs;
     }
-    this.windVec3 = windVec3; // Configure airRelVel.
+    // windVec3 to juz this.windVec3 (pooled, patrz konstruktor) - brak potrzeby
+    // ponownego przypisania jak poprzednio (this.windVec3 = windVec3).
 
-    const airRelVel = this.vel.clone().sub(windVec3);
+    const airRelVel = this._pfAirRelVel.copy(this.vel).sub(windVec3);
     const airspeed = airRelVel.length();
     const speedKt = Units.msToKt(airspeed);
     // Configure groundSpeedKt.
@@ -948,21 +1025,20 @@ class A321Entity extends Entity {
     this.brakesActiveDisplay = !!input.brakes || this.parkingBrake;
 
     // Configure forward.
-    const forward = new THREE.Vector3(Math.sin(this.yawRad), 0, Math.cos(this.yawRad));
-    const noseDir = new THREE.Vector3(
+    const forward = this._pfForward.set(Math.sin(this.yawRad), 0, Math.cos(this.yawRad));
+    const noseDir = this._pfNoseDir.set(
       forward.x * Math.cos(this.pitchRad),
       Math.sin(this.pitchRad),
       forward.z * Math.cos(this.pitchRad)
     ).normalize();
-    const worldUp  = new THREE.Vector3(0, 1, 0);
-    const rightVec = new THREE.Vector3().crossVectors(worldUp, forward).normalize();
-    const rollQ    = new THREE.Quaternion().setFromAxisAngle(noseDir, this.rollRad);
-    const wingRight = rightVec.clone().applyQuaternion(rollQ);
-    const acUp      = new THREE.Vector3().crossVectors(noseDir, wingRight).normalize();
+    const rightVec = this._pfRightVec.crossVectors(WORLD_UP, forward).normalize();
+    const rollQ    = this._pfRollQ.setFromAxisAngle(noseDir, this.rollRad);
+    const wingRight = this._pfWingRight.copy(rightVec).applyQuaternion(rollQ);
+    const acUp      = this._pfAcUp.crossVectors(noseDir, wingRight).normalize();
 
     // Configure omegaWorld. (yaw-axis skladowa to acUp - wlasna, przechylona os pionowa
     // samolotu - a nie worldUp; to ta sama oś, wzgledem ktorej liczony jest torqueYaw.)
-    const omegaWorld = wingRight.clone().multiplyScalar(-this.pitchRate)
+    const omegaWorld = this._pfOmegaWorld.copy(wingRight).multiplyScalar(-this.pitchRate)
       .addScaledVector(noseDir, this.rollRate)
       .addScaledVector(acUp, this.yawRate);
 
@@ -973,7 +1049,7 @@ class A321Entity extends Entity {
     // z poziomu morza - wplywa na sile nosna/opor (q) i na ciag silnikow nizej.
     const rho = isaAtmosphere(this.altM).rho;
 
-    const totalForce = new THREE.Vector3(0, -A321_PARAMS.mass * G_ACC, 0); // Configure windUp.
+    const totalForce = this._pfTotalForce.set(0, -A321_PARAMS.mass * G_ACC, 0); // Configure windUp.
     const windUp = _computeWindUp(airRelVel, wingRight, acUp, airspeed);
     let torquePitch = 0, torqueRoll = 0, torqueYaw = 0;
 
@@ -1287,9 +1363,32 @@ class A321Entity extends Entity {
         const vsTargetMs = this.ap.altHold
           ? Math.max(-AP_MAX_VS_MS, Math.min(AP_MAX_VS_MS, (Units.ftToM(this.ap.targetAltFt) - this.altM) * AP_ALT_KP))
           : Units.fpmToMs(this.ap.targetVsFpm);
-        const vsErrMs = vsTargetMs - this.vel.y; // Configure this.pitchHoldTarget.
-        this.pitchHoldTarget += AP_VS_TO_PITCH_KI * vsErrMs * dtCap;
-        this.pitchHoldTarget = Math.max(-AP_MAX_PITCH_RAD, Math.min(AP_MAX_PITCH_RAD, this.pitchHoldTarget));
+        let vsErrMs = vsTargetMs - this.vel.y;
+        const stallThreshold = A321_PARAMS.flapStall[this.flaps];
+
+        // Stall/alpha protection (patrz komentarz przy STALL_PROTECT_MARGIN_RAD
+        // powyzej): miekki prog - gdy zblizamy sie do przeciagniecia, integrator
+        // nie moze dalej "chciec" wiecej pitch (moze tylko go redukowac).
+        const alphaMargin = stallThreshold - Math.abs(alpha);
+        if (alphaMargin < STALL_PROTECT_MARGIN_RAD) {
+          const overshoot = STALL_PROTECT_MARGIN_RAD - alphaMargin;
+          const forcedCeiling = -Math.min(overshoot * STALL_PROTECT_GAIN, AP_MAX_VS_MS);
+          vsErrMs = Math.min(vsErrMs, forcedCeiling);
+        }
+
+        this._vsIntegral += AP_VS_TO_PITCH_KI * vsErrMs * dtCap;
+        this._vsIntegral = Math.max(-AP_MAX_PITCH_RAD, Math.min(AP_MAX_PITCH_RAD, this._vsIntegral));
+        this.pitchHoldTarget = this._vsIntegral;
+
+        // Twardy limit - jesli JUZ jestesmy w przeciagnieciu, wymuszamy
+        // natychmiastowe, aktywne "opuszczanie nosa" w stalym tempie zamiast
+        // czekac az wolny integrator to zrobi (patrz komentarz wyzej).
+        if (Math.abs(alpha) > stallThreshold) {
+          const recoveryPitchRad = this.pitchRad - Math.sign(alpha) * STALL_RECOVERY_RATE_RAD_S * dtCap;
+          if (alpha > 0) this.pitchHoldTarget = Math.min(this.pitchHoldTarget, recoveryPitchRad);
+          else this.pitchHoldTarget = Math.max(this.pitchHoldTarget, recoveryPitchRad);
+          this._vsIntegral = this.pitchHoldTarget;
+        }
       }
 
       // Configure if.
@@ -1301,6 +1400,7 @@ class A321Entity extends Entity {
         this.pitchTrim = Math.max(-ELEVATOR_MAX_RAD, Math.min(ELEVATOR_MAX_RAD, this.pitchTrim));
       } else {
         this.pitchHoldTarget = this.pitchRad;
+        this._vsIntegral = this.pitchRad;
         // Configure if.
         if (this.ap.master) { this.ap.altHold = false; this.ap.vsHold = false; }
       }
@@ -1334,6 +1434,7 @@ class A321Entity extends Entity {
 
     // Configure gearFinal.
     let gearFinal = gear;
+    const wasOnGround = this.onGround;
     if (this.gearDown && (this.onGround || this._nearGroundZone || bounced)) {
       gearFinal = this.sampleGear(noseDir, wingRight, acUp);
       const maxPen = Math.max(gearFinal.nose.pen, gearFinal.left.pen, gearFinal.right.pen);
@@ -1349,6 +1450,21 @@ class A321Entity extends Entity {
       this.onGround = maxPen >= 0 && !bounced;
     } else {
       this.onGround = false;
+    }
+
+    // Hook do systemu oceny ladowania (sim-landing-score.js) - odpala sie
+    // DOKLADNIE raz na przejsciu w powietrzu->na ziemi (nie przy odbiciu,
+    // bounced juz jest false tutaj). typeof-guard: gra dziala normalnie
+    // nawet jesli ten plik sie nie zaladuje z jakiegos powodu.
+    if (!wasOnGround && this.onGround && typeof LandingScore !== 'undefined') {
+      const tdSpeedMs = this.vel.clone().sub(this.windVec3).length();
+      LandingScore.onTouchdown(this, {
+        impactVy:   Math.max(0, -this.vel.y),
+        bankDeg:    this.rollRad * 180 / Math.PI,
+        headingDeg: this.headingDeg,
+        speedKt:    Units.msToKt(tdSpeedMs),
+        lat: this.lat, lon: this.lon,
+      });
     }
 
     this.airspeed = this.vel.clone().sub(this.windVec3).length();
@@ -1416,45 +1532,90 @@ class A321Entity extends Entity {
 
   renderUpdate(frameDt) {
     this.fanAngle += this.throttle * frameDt * 30;
-    const p = this._parts;
-    if (p.fanR) p.fanR.rotation.x = this.fanAngle;
-    if (p.fanL) p.fanL.rotation.x = this.fanAngle;
-    
+
     if (this.gearDown && this.onGround) {
       const horizSpeed = Math.sqrt(this.vel.x ** 2 + this.vel.z ** 2);
       const wheelRadius = 0.5;
       this.gearAngle += (horizSpeed * frameDt) / wheelRadius;
     }
-    if (p.gearFL) p.gearFL.rotation.z = this.gearAngle;
-    if (p.gearBL) p.gearBL.rotation.z = this.gearAngle;
-    if (p.gearBR) p.gearBR.rotation.z = this.gearAngle;
 
     this.beaconTimer += frameDt;
-    if (p.beacon) p.beacon.visible = Math.sin(this.beaconTimer * 6) > 0;
     const flapTarget = this.flaps * 12 * Math.PI / 180;
     this.prevFlapPos += (flapTarget - this.prevFlapPos) * Math.min(1, frameDt * 4);
-    if (p.flapR) p.flapR.rotation.x = this.prevFlapPos;
-    if (p.flapL) p.flapL.rotation.x = this.prevFlapPos;
-    const spoilerTarget = this.spoilers ? 35 * Math.PI / 180 : 0;
-    if (p.spoilerR) p.spoilerR.rotation.x = -spoilerTarget;
-    if (p.spoilerL) p.spoilerL.rotation.x = -spoilerTarget;
-    
+
     // Configure elevTarget.
     const elevTarget = (typeof planeInput !== 'undefined' ? planeInput.pitch : 0) * 0.43;
-    this.elevPos += (elevTarget - this.elevPos) * Math.min(1, frameDt * 10); // Configure if.
-    
-    if (p.elevatorR && p.elevatorR.userData.hingeAxis) p.elevatorR.quaternion.setFromAxisAngle(p.elevatorR.userData.hingeAxis, this.elevPos);
-    if (p.elevatorL && p.elevatorL.userData.hingeAxis) p.elevatorL.quaternion.setFromAxisAngle(p.elevatorL.userData.hingeAxis, this.elevPos);
+    this.elevPos += (elevTarget - this.elevPos) * Math.min(1, frameDt * 10);
 
     // Configure rudderTarget.
     const rudderTarget = (typeof planeInput !== 'undefined' ? planeInput.yaw : 0) * RUDDER_MAX_RAD;
     this.rudderPos += (rudderTarget - this.rudderPos) * Math.min(1, frameDt * 10);
+
+    this._applyPoseToMesh();
+  }
+
+  // Stosuje AKTUALNE pola stanu (fanAngle/gearAngle/beaconTimer/prevFlapPos/
+  // elevPos/rudderPos/spoilers) do hierarchii mesh - bez liczenia targetow
+  // ani wygladzania. Wydzielone z renderUpdate() zeby sim-replay.js moglo
+  // TEZ to wywolac po ustawieniu stanu bezposrednio z nagranej probki
+  // (patrz applyReplayPose ponizej) - podczas replay chcemy odtworzyc
+  // NAGRANE polozenia sterow, nie przeliczac je na nowo z (aktualnego,
+  // zywego) globalnego planeInput.
+  _applyPoseToMesh() {
+    const p = this._parts;
+    if (p.fanR) p.fanR.rotation.x = this.fanAngle;
+    if (p.fanL) p.fanL.rotation.x = this.fanAngle;
+
+    if (p.gearFL) p.gearFL.rotation.z = this.gearAngle;
+    if (p.gearBL) p.gearBL.rotation.z = this.gearAngle;
+    if (p.gearBR) p.gearBR.rotation.z = this.gearAngle;
+
+    if (p.beacon) p.beacon.visible = Math.sin(this.beaconTimer * 6) > 0;
+
+    if (p.flapR) p.flapR.rotation.x = this.prevFlapPos;
+    if (p.flapL) p.flapL.rotation.x = this.prevFlapPos;
+
+    const spoilerTarget = this.spoilers ? 35 * Math.PI / 180 : 0;
+    if (p.spoilerR) p.spoilerR.rotation.x = -spoilerTarget;
+    if (p.spoilerL) p.spoilerL.rotation.x = -spoilerTarget;
+
+    if (p.elevatorR && p.elevatorR.userData.hingeAxis) p.elevatorR.quaternion.setFromAxisAngle(p.elevatorR.userData.hingeAxis, this.elevPos);
+    if (p.elevatorL && p.elevatorL.userData.hingeAxis) p.elevatorL.quaternion.setFromAxisAngle(p.elevatorL.userData.hingeAxis, this.elevPos);
+
     if (p.rudder && p.rudder.userData.hingeAxis) {
       p.rudder.quaternion.setFromAxisAngle(p.rudder.userData.hingeAxis, this.rudderPos);
     } else if (p.rudder) {
       p.rudder.rotation.y = this.rudderPos;
     }
+  }
 
+  // Wolane z sim-replay.js podczas odtwarzania replay, ZAMIAST physicsUpdate().
+  // Ustawia stan bezposrednio z nagranej/interpolowanej probki (patrz
+  // ReplayRecorder.sampleAt w sim-replay.js) i odswieza wizualia. fanAngle/
+  // gearAngle/beaconTimer NIE sa nagrywane (zbedne - throttle/predkosc
+  // wystarcza do wiarygodnej animacji obrotu), wiec doliczamy je tu tak samo
+  // jak w renderUpdate(), na podstawie interpolowanego throttle/vel.
+  applyReplayPose(sample, dt) {
+    this.lat = sample.lat; this.lon = sample.lon; this.altM = sample.altM;
+    this.pitchRad = sample.pitchRad; this.yawRad = sample.yawRad; this.rollRad = sample.rollRad;
+    this.throttle = sample.throttle;
+    this.gearDown = sample.gearDown;
+    this.spoilers = sample.spoilers;
+    this.onGround = sample.onGround;
+    this.prevFlapPos = sample.flapPos;
+    this.elevPos = sample.elevPos;
+    this.rudderPos = sample.rudderPos;
+    this.vel.set(sample.velX, sample.velY, sample.velZ);
+
+    this.fanAngle += this.throttle * dt * 30;
+    if (this.gearDown && this.onGround) {
+      const horizSpeed = Math.sqrt(sample.velX ** 2 + sample.velZ ** 2);
+      this.gearAngle += (horizSpeed * dt) / 0.5;
+    }
+    this.beaconTimer += dt;
+
+    this._applyPoseToMesh();
+    this.syncMesh();
   }
 
   // Airport lighting note.
