@@ -320,6 +320,40 @@
     <div class="arbtn" id="ar-menu"><span class="ar-i">☰</span><span class="ar-t">MENU</span></div>
   </div>
 
+  <!-- Ocena ladowania - pojawia sie automatycznie po dotknieciu pasa -->
+  <div id="landing-scorecard" class="hidden">
+    <div class="ls-header">
+      <span class="ls-grade" id="ls-grade">-</span>
+      <span class="ls-score" id="ls-score">-</span>
+      <span class="ls-close" id="ls-close">✕</span>
+    </div>
+    <div class="ls-rows">
+      <div class="ls-row"><span class="ls-label">Pionowa</span><span class="ls-val" id="ls-vs">-</span></div>
+      <div class="ls-row" id="ls-centerline-row"><span class="ls-label">Od osi</span><span class="ls-val" id="ls-centerline">-</span></div>
+      <div class="ls-row" id="ls-zone-row"><span class="ls-label">Strefa dotknięcia</span><span class="ls-val" id="ls-zone">-</span></div>
+      <div class="ls-row"><span class="ls-label">Prędkość</span><span class="ls-val" id="ls-speed">-</span></div>
+      <div class="ls-row"><span class="ls-label">Przechył</span><span class="ls-val" id="ls-bank">-</span></div>
+    </div>
+    <button id="ls-replay-btn">▶ Odtwórz lądowanie</button>
+  </div>
+
+  <!-- Pasek kontrolny odtwarzania replay -->
+  <div id="replay-bar" class="hidden">
+    <div class="rb-label">ODTWARZANIE LĄDOWANIA</div>
+    <input type="range" id="rb-scrub" min="0" max="1000" value="0" step="1">
+    <div class="rb-controls">
+      <button id="rb-play" class="rb-btn" title="Pauza/Odtwórz">⏸</button>
+      <button id="rb-td" class="rb-btn" title="Skocz do dotknięcia pasa">⏺ TD</button>
+      <div class="rb-speeds">
+        <button class="rb-speed" data-speed="0.25">¼×</button>
+        <button class="rb-speed" data-speed="0.5">½×</button>
+        <button class="rb-speed active" data-speed="1">1×</button>
+        <button class="rb-speed" data-speed="2">2×</button>
+      </div>
+      <button id="rb-close" class="rb-btn" title="Zakończ odtwarzanie">✕ Zakończ</button>
+    </div>
+  </div>
+
 </div><!-- /#hud -->
 
 <!-- MOBILE CONTROLS -->
@@ -375,13 +409,15 @@
 <script src="js/sim-sky.js?v=2"></script>
 <script src="js/sim-shadows.js?v=2"></script>
 <script src="js/sim-airport-lights.js?v=2"></script>
-<script src="js/sim-airport-terrain-smooth.js?v=1"></script>
 <script src="js/sim-weather-ui.js?v=2"></script>
 <script src="js/sim-weight-ui.js?v=2"></script>
 <script src="js/sim-ap-ui.js?v=2"></script>
 <script src="js/sim-contrails.js?v=2"></script>
 <script src="js/sim-controls.js?v=2"></script>
 <script src="js/sim-airport-spawn.js?v=2"></script>
+<script src="js/sim-replay.js?v=1"></script>
+<script src="js/sim-landing-score.js?v=1"></script>
+<script src="js/sim-replay-ui.js?v=1"></script>
 <script src="js/sim-sound.js?v=2"></script>
 <script src="js/sim-engine-sound.js?v=1"></script>
 <script src="js/sim-airport-select.js?v=2"></script>

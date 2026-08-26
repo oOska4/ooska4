@@ -700,3 +700,93 @@ body.is-touch #mcdu-drawer {
 body.is-touch #mcdu-drawer.open { transform: translateY(0); }
 body.is-touch #action-rail { bottom: clamp(3px, 1vh, 6px); }
 body.is-touch .arbtn { width: clamp(38px, 7.5vw, 50px); height: clamp(28px, 6vh, 36px); }
+
+/* ============================================================
+   Landing scorecard + replay controls
+   ============================================================ */
+.hidden { display: none !important; }
+
+#landing-scorecard {
+  position: fixed; top: clamp(50px, 10vh, 90px); left: 50%;
+  transform: translateX(-50%) translateY(-12px) scale(.96); opacity: 0;
+  transition: transform .32s cubic-bezier(.2,.8,.3,1), opacity .32s cubic-bezier(.2,.8,.3,1);
+  z-index: 70; pointer-events: none;
+  background: rgba(4,9,18,.96); border: 1px solid #2a5a8c; border-radius: 10px;
+  width: clamp(240px, 70vw, 320px);
+  font-family: 'Courier New', monospace; color: #c8e8ff;
+  box-shadow: 0 8px 30px rgba(0,0,0,.5);
+}
+#landing-scorecard.show {
+  transform: translateX(-50%) translateY(0) scale(1); opacity: 1;
+  pointer-events: auto;
+}
+.ls-header {
+  display: flex; align-items: center; gap: 10px; padding: 10px 12px;
+  border-bottom: 1px solid #1a3a5c;
+}
+.ls-grade {
+  font-family: 'Orbitron', 'Courier New', monospace; font-weight: 700;
+  font-size: clamp(20px, 5vh, 26px); color: #44ff88; line-height: 1;
+}
+.ls-grade.grade-warn { color: #ffb84a; }
+.ls-grade.grade-bad  { color: #ff5a5a; }
+.ls-score { font-size: 12px; color: #6a8aae; flex: 1; }
+.ls-close {
+  cursor: pointer; color: #6a8aae; font-size: 14px; padding: 2px 6px;
+  border-radius: 4px;
+}
+.ls-close:hover { color: #c8e8ff; background: rgba(58,138,191,.15); }
+.ls-rows { padding: 6px 12px; }
+.ls-row {
+  display: flex; justify-content: space-between; align-items: baseline;
+  padding: 4px 0; font-size: 12.5px;
+}
+.ls-label { color: #6a8aae; letter-spacing: .3px; }
+.ls-val { color: #eaf6ff; font-weight: 600; }
+.ls-val.val-warn { color: #ffb84a; }
+.ls-val.val-bad  { color: #ff5a5a; }
+#ls-replay-btn {
+  display: block; width: calc(100% - 20px); margin: 8px 10px 10px;
+  padding: 9px; border-radius: 7px; cursor: pointer;
+  background: rgba(30,70,160,.55); border: 1px solid #44aaff; color: #cfe8ff;
+  font-family: 'Orbitron', 'Courier New', monospace; font-size: 12px; letter-spacing: .4px;
+}
+#ls-replay-btn:hover { background: rgba(30,70,160,.8); }
+#ls-replay-btn:disabled { opacity: .4; cursor: default; background: rgba(6,18,40,.9); border-color: #1a3a5c; }
+
+#replay-bar {
+  position: fixed; bottom: clamp(4px, 1.2vh, 10px); left: 50%;
+  transform: translateX(-50%) translateY(20px); opacity: 0;
+  transition: transform .28s cubic-bezier(.2,.8,.3,1), opacity .28s cubic-bezier(.2,.8,.3,1);
+  z-index: 70; pointer-events: none;
+  background: rgba(4,9,18,.96); border: 1px solid #2a5a8c; border-radius: 10px;
+  width: clamp(280px, 88vw, 480px); padding: 8px 12px 10px;
+  font-family: 'Courier New', monospace; color: #c8e8ff;
+  box-shadow: 0 8px 30px rgba(0,0,0,.5);
+}
+#replay-bar.show { transform: translateX(-50%) translateY(0); opacity: 1; pointer-events: auto; }
+.rb-label {
+  font-family: 'Orbitron', 'Courier New', monospace; font-size: 10px;
+  letter-spacing: 1px; color: #44aaff; margin-bottom: 6px; text-align: center;
+}
+#rb-scrub { width: 100%; accent-color: #44aaff; margin-bottom: 8px; }
+.rb-controls { display: flex; align-items: center; gap: 6px; }
+.rb-btn {
+  background: rgba(6,18,40,.9); border: 1px solid #1a3a5c; color: #a0c8e8;
+  border-radius: 6px; padding: 6px 10px; cursor: pointer; font-size: 13px;
+  font-family: inherit;
+}
+.rb-btn:hover { background: rgba(21,40,71,.9); }
+#rb-close { color: #ff9a9a; border-color: #5a2a2a; margin-left: auto; }
+#rb-close:hover { background: rgba(90,30,30,.35); }
+.rb-speeds { display: flex; gap: 3px; }
+.rb-speed {
+  background: rgba(6,18,40,.9); border: 1px solid #1a3a5c; color: #6a8aae;
+  border-radius: 5px; padding: 5px 7px; cursor: pointer; font-size: 11px;
+  font-family: inherit;
+}
+.rb-speed.active { background: rgba(15,70,35,.85); border-color: #44ff88; color: #44ff88; }
+.rb-speed:hover  { background: rgba(21,40,71,.9); }
+
+body.is-touch #landing-scorecard { top: clamp(44px, 8vh, 70px); }
+body.is-touch #replay-bar { bottom: clamp(3px, 1vh, 6px); width: 92vw; }
