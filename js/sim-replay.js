@@ -16,7 +16,7 @@
 
 const REPLAY_SAMPLE_HZ      = 15;
 const REPLAY_SAMPLE_DT      = 1 / REPLAY_SAMPLE_HZ;
-const REPLAY_BUFFER_SECONDS = 90;
+const REPLAY_BUFFER_SECONDS = 130;
 const REPLAY_CAPACITY       = Math.ceil(REPLAY_BUFFER_SECONDS * REPLAY_SAMPLE_HZ);
 
 // Ile floatow na probke - musi sie zgadzac z F_* indeksami ponizej.
@@ -27,8 +27,8 @@ const F_T=0, F_LAT=1, F_LON=2, F_ALT=3, F_PITCH=4, F_YAW=5, F_ROLL=6,
 
 // Zakres odtwarzania wzgledem momentu touchdown (sekundy) - patrz
 // prepareForLanding() nizej.
-const REPLAY_PRE_TOUCHDOWN_S  = 12;
-const REPLAY_POST_TOUCHDOWN_S = 5;
+const REPLAY_PRE_TOUCHDOWN_S  = 18;
+const REPLAY_POST_TOUCHDOWN_S = 18;
 
 // ============================================================================
 // Ring buffer - plaski Float32Array, zero alokacji per-probke (pattern

@@ -500,6 +500,12 @@ function applyAircraftWeight(fuelKg, payloadKg) {
 }
 const GEAR_HARDSTOP_K_MULT = 12; // Configure TIRE_ROLLING_MU.
 
+// Ground roll stability: the real landing gear geometry resists a small bank
+// as soon as the main wheels carry load. Without this term a single contacted
+// wheel can keep the aircraft rotating instead of settling it on both mains.
+const GROUND_ROLL_NATURAL_FREQ = 2.6;
+const GROUND_ROLL_DAMPING      = 1.1;
+
 // Configure TIRE_ROLLING_MU.
 const TIRE_ROLLING_MU  = 0.02;
 const TIRE_BRAKE_MU    = 0.45;
@@ -631,6 +637,7 @@ class A321Entity extends Entity {
     this.rollRad  = 0;
     this.pitchRate = 0; this.rollRate = 0; this.yawRate = 0;
     this.vel = new THREE.Vector3(0, 0, 0);
+    this._wpVec = new THREE.Vector3();
     this.throttle = 0;
     this.reverserDeployFrac = 0; // Configure this.parkingBrake.
     this.parkingBrake = false;
@@ -1322,6 +1329,19 @@ class A321Entity extends Entity {
           torquePitch += _pitchTorque(localOff, Fg);
           torqueRoll  += _rollTorque(localOff, Fg);
           torqueYaw   += _yawTorque(localOff, Fg);
+        }
+
+        // Apply a bounded, damped righting moment while any wheel is in
+        // contact. This represents the stabilizing leverage of the main gear
+        // and prevents a light bank from turning into a ground-loop rollover.
+        if (gearContact && !bounced) {
+          const rollSpring = A321_IXX * GROUND_ROLL_NATURAL_FREQ ** 2 * this.rollRad;
+          const rollDamper = 2 * GROUND_ROLL_DAMPING * A321_IXX
+                           * GROUND_ROLL_NATURAL_FREQ * this.rollRate;
+          const maxRightingTorque = A321_PARAMS.mass * G_ACC * 3.0;
+          const rightingTorque = Math.max(-maxRightingTorque,
+            Math.min(maxRightingTorque, rollSpring + rollDamper));
+          torqueRoll -= rightingTorque;
         }
       }
     } else if (!this.gearDown) {

@@ -180,6 +180,7 @@ function apltAreaQuery(icao) {
   return `[out:json][timeout:25];area["icao"="${icao}"]->.a;(node(area.a)["aeroway"];way(area.a)["aeroway"];relation(area.a)["aeroway"];);out geom;`;
 }
 async function apltOverpassFetchOne(server, query) {
+  if (typeof simLoadLog === 'function') simLoadLog('overpass:start', server);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 20000);
   try {
@@ -189,11 +190,16 @@ async function apltOverpassFetchOne(server, query) {
       body: 'data=' + encodeURIComponent(query),
       signal: controller.signal,
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      if (typeof simLoadLog === 'function') simLoadLog('overpass:http-error', `${res.status} ${server}`);
+      return null;
+    }
     const json = await res.json();
     if (!json || !Array.isArray(json.elements)) return null;
+    if (typeof simLoadLog === 'function') simLoadLog('overpass:done', `${server} elements=${json.elements.length}`);
     return json.elements; // Implementation note.
   } catch (e) {
+    if (typeof simLoadError === 'function') simLoadError(`overpass:failed ${server}`, e);
     return null;
   } finally {
     clearTimeout(timeout);
@@ -292,7 +298,9 @@ function apltClassifyElements(elements) {
 
 // Section: function fetchAirportFullData().
 async function fetchAirportFullData(icao, onProgress) {
+  if (typeof simLoadLog === 'function') simLoadLog('airport:search:start', icao);
   const airportObj = await apltApiSearchByCode(icao);
+  if (typeof simLoadLog === 'function') simLoadLog('airport:search:done', `${icao} found=${!!airportObj}`);
   if (onProgress) onProgress('searched', airportObj);
   const apiId = airportObj ? apltGetId(airportObj) : null;
 
@@ -301,6 +309,7 @@ async function fetchAirportFullData(icao, onProgress) {
     apltResolveRunways(airportObj, apiId),
     apltOverpassRun(apltAreaQuery(icao)),
   ]);
+  if (typeof simLoadLog === 'function') simLoadLog('airport:raw-data:done', `${icao} runways=${validRunways.length} elements=${elements?.length || 0}`);
   const classified = apltClassifyElements(elements);
 
   if (!validRunways.length && classified.runways.length) {
@@ -319,6 +328,7 @@ async function fetchAirportFullData(icao, onProgress) {
     });
   }
   if (onProgress) onProgress('done');
+  if (typeof simLoadLog === 'function') simLoadLog('airport:classified:done', `${icao} runways=${validRunways.length} taxiways=${classified.taxiways.length}`);
   return { airportObj, validRunways, classified };
 }
 
@@ -680,6 +690,7 @@ let apltLoadEpoch      = 0;
 // Handle function loadAirportLights().
 async function loadAirportLights(icao, preFetched, onProgress) {
   if (!icao) return;
+  if (typeof simLoadLog === 'function') simLoadLog('lights:start', icao);
   const epoch = ++apltLoadEpoch;
 
   if (apltCurrentGroup) { scene.remove(apltCurrentGroup); apltCurrentGroup = null; }
@@ -717,7 +728,9 @@ async function loadAirportLights(icao, preFetched, onProgress) {
     apltCurrentGroup = built.group;
     apltCurrentPapi = built.papi;
     apltCurrentDynamic = built.dynamic;
+    if (typeof simLoadLog === 'function') simLoadLog('lights:done', icao);
   } catch (e) {
+    if (typeof simLoadError === 'function') simLoadError(`lights:failed ${icao}`, e);
     console.error('[airport-lights] Nie udało się wczytać świateł lotniska', icao, e);
   }
 }

@@ -123,7 +123,9 @@ function animate(t) {
     }
   });
 
-  if (fc % 3 === 0) _perfTime('updateHUD', () => updateHUD());
+  if (camMode === CameraMode.HUD || fc % 3 === 0) {
+    _perfTime('updateHUD', () => updateHUD());
+  }
   if (fc % 2 === 0 && weather) _perfTime('weather.update', () => weather.update(frameDt, camera.position, activeEntity ? activeEntity.altM : 0));
 
   // Rendering note.
@@ -160,6 +162,16 @@ const loadbar2     = document.getElementById('loadbar2');
 const loadingText2 = document.getElementById('loading-text2');
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// Detailed startup tracing. Disable with window.SIM_LOAD_DEBUG = false.
+window.SIM_LOAD_DEBUG = true;
+window.simLoadLog = function (event, details = '') {
+  if (!window.SIM_LOAD_DEBUG) return;
+  console.log(`[SIM LOAD] ${event}${details ? ` ${details}` : ''}`);
+};
+window.simLoadError = function (event, error) {
+  console.error(`[SIM LOAD] ${event}`, error);
+};
 
 // Section: function bootIntro().
 const bootIntroDone = (async function bootIntro() {
@@ -224,14 +236,18 @@ function aptTrackProgress(phase) {
 }
 
 (async function init() {
+  const initStartedAt = performance.now();
+  simLoadLog('init:start');
   // Configure choice.
   const choice = await airportSelectDone;
+  simLoadLog('airport:selected', `${choice.icao} preset=${!!choice.isPreset}`);
 
   // Configure currentAirport.
   currentAirport = choice.icao;
   refLat = choice.lat; refLon = choice.lon;
 
   try {
+    simLoadLog('dem:batch:start');
     await Promise.all([
       prefetchDEM(refLat, refLon, 2, 17),
       prefetchDEM(refLat, refLon, 3, 15),
@@ -239,6 +255,7 @@ function aptTrackProgress(phase) {
       prefetchDEM(refLat, refLon, 5, 11),
       prefetchDEM(refLat, refLon, 6,  9),
     ]);
+    simLoadLog('dem:batch:done', `${Math.round(performance.now() - initStartedAt)}ms`);
   } catch (e) { console.error('[init] DEM prefetch failed', e); }
   completeStage('dem');
 
@@ -266,11 +283,16 @@ function aptTrackProgress(phase) {
 
   // Configure satTilesP.
   const satTilesP = Promise.allSettled(updateTiles(refLat, refLon, initialGroundDist))
-    .then(() => completeStage('sat'));
+    .then(results => {
+      const rejected = results.filter(r => r.status === 'rejected').length;
+      simLoadLog('sat:batch:done', `tiles=${results.length} rejected=${rejected}`);
+      completeStage('sat');
+    });
+  simLoadLog('sat:batch:start', `dist=${Math.round(initialGroundDist)}`);
 
   const buildingsP = loadBuildings(refLat, refLon, initialGroundDist)
-    .then(() => completeStage('osm'))
-    .catch(e => { console.error('[init] loadBuildings failed', e); completeStage('osm'); });
+    .then(() => { simLoadLog('buildings:done'); completeStage('osm'); })
+    .catch(e => { simLoadError('buildings:failed', e); completeStage('osm'); });
 
   // Handle loading and error cases.
   aptTrackProgress('start');
@@ -283,12 +305,15 @@ function aptTrackProgress(phase) {
 
   // Configure modelP.
   const modelP = (plane.modelReadyPromise || Promise.resolve())
-    .then(() => completeStage('model'))
-    .catch(() => completeStage('model')); // Handle loading and error cases.
+    .then(() => { simLoadLog('model:done'); completeStage('model'); })
+    .catch(e => { simLoadError('model:failed', e); completeStage('model'); });
+
+  simLoadLog('airport-data:start');
 
   updateCameraHUD();
 
   await Promise.allSettled([satTilesP, buildingsP, modelP]);
+  simLoadLog('init:assets-settled', `${Math.round(performance.now() - initStartedAt)}ms`);
   await bootIntroDone; // Implementation note.
 
   clearInterval(statusTimer);
@@ -329,5 +354,6 @@ function aptTrackProgress(phase) {
 
     lastRenderT = performance.now();
     animate(lastRenderT);
+    simLoadLog('init:complete', `${Math.round(performance.now() - initStartedAt)}ms`);
   }, 400);
 })();

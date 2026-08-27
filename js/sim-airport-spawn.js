@@ -152,6 +152,7 @@ async function waptSearch(queryRaw) {
 // of once here and once for terrain smoothing.
 async function waptLoad(icao, hintObj, onProgress, preFetchedData) {
   if (!icao) return;
+  if (typeof simLoadLog === 'function') simLoadLog('wapt:start', icao);
   const myEpoch = ++waptLoadEpoch;
   waptSetStatus(`Ładowanie ${icao} (API+OSM, może potrwać do minuty)...`, true);
   waptSetResults([]);
@@ -170,6 +171,7 @@ async function waptLoad(icao, hintObj, onProgress, preFetchedData) {
 
   try {
     const data = preFetchedData || await fetchAirportFullData(icao, onProgress);
+    if (typeof simLoadLog === 'function') simLoadLog('wapt:data:done', `${icao} runways=${data.validRunways.length}`);
     if (myEpoch !== waptLoadEpoch) return; // Configure validRunways.
 
     // Kick off airport-surface terrain smoothing using the SAME classified
@@ -256,7 +258,9 @@ async function waptLoad(icao, hintObj, onProgress, preFetchedData) {
 
     // Airport lighting note.
     worldSpawnAtRunway(0);
+    if (typeof simLoadLog === 'function') simLoadLog('wapt:done', icao);
   } catch (e) {
+    if (typeof simLoadError === 'function') simLoadError(`wapt:failed ${icao}`, e);
     console.error('[airport-spawn]', e);
     waptSetStatus('Błąd podczas ładowania lotniska (sieć/API/Overpass).');
   }

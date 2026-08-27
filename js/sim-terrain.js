@@ -35,17 +35,28 @@ function _withTimeout(signal, ms) {
 }
 
 async function loadImageBlob(url, signal) {
+  const startedAt = performance.now();
+  if (typeof simLoadLog === 'function') simLoadLog('image:fetch:start', url);
   const { signal: combinedSignal, cleanup } = _withTimeout(signal, FETCH_TIMEOUT_MS);
   try {
     const r = await fetch(url, { mode: 'cors', signal: combinedSignal });
-    if (!r.ok) return null;
-    return URL.createObjectURL(await r.blob());
-  } catch { return null; }
+    if (!r.ok) {
+      if (typeof simLoadLog === 'function') simLoadLog('image:fetch:http-error', `${r.status} ${url}`);
+      return null;
+    }
+    const objectUrl = URL.createObjectURL(await r.blob());
+    if (typeof simLoadLog === 'function') simLoadLog('image:fetch:done', `${Math.round(performance.now() - startedAt)}ms ${url}`);
+    return objectUrl;
+  } catch (e) {
+    if (typeof simLoadError === 'function') simLoadError(`image:fetch:failed ${url}`, e);
+    return null;
+  }
   finally { cleanup(); }
 }
 
 function _decodeDEM(src) {
   return new Promise(res => {
+    if (typeof simLoadLog === 'function') simLoadLog('dem:image:start');
     const img = new Image();
     img.onload = () => {
       try {
@@ -64,10 +75,17 @@ function _decodeDEM(src) {
           if (Math.abs(h[i] - avg) > SPK) h[i] = avg;
         }
         URL.revokeObjectURL(src);
+        if (typeof simLoadLog === 'function') simLoadLog('dem:image:done');
         res(h);
-      } catch { res(null); }
+      } catch (e) {
+        if (typeof simLoadError === 'function') simLoadError('dem:image:decode-failed', e);
+        res(null);
+      }
     };
-    img.onerror = () => { URL.revokeObjectURL(src); res(null); };
+    img.onerror = e => {
+      if (typeof simLoadError === 'function') simLoadError('dem:image:error', e);
+      URL.revokeObjectURL(src); res(null);
+    };
     img.crossOrigin = 'anonymous';
     img.src = src;
   });
@@ -78,15 +96,20 @@ function loadDemData(z, x, y, signal) {
   if (demDataCache.has(key)) return Promise.resolve(demDataCache.get(key));
   if (demInflight.has(key))  return demInflight.get(key);
   const p = (async () => {
+    if (typeof simLoadLog === 'function') simLoadLog('dem:tile:start', key);
     const src = await loadImageBlob(DEM_URL(z, x, y), signal);
     demInflight.delete(key);
-    if (!src) return null;
+    if (!src) {
+      if (typeof simLoadLog === 'function') simLoadLog('dem:tile:empty', key);
+      return null;
+    }
     const dem = await _decodeDEM(src);
     if (dem) {
       demDataCache.set(key, dem);
       while (demDataCache.size > DEM_CACHE_MAX)
         demDataCache.delete(demDataCache.keys().next().value);
     }
+    if (typeof simLoadLog === 'function') simLoadLog('dem:tile:done', `${key} ok=${!!dem}`);
     return dem;
   })();
   demInflight.set(key, p);
@@ -251,6 +274,7 @@ function loadTilePixels(z, x, y, signal) {
 
 async function loadSatTex(z, x, y, signal) {
   const key    = `${z}_${x}_${y}`;
+  if (typeof simLoadLog === 'function') simLoadLog('sat:tile:start', key);
   const cached = getCachedSatTex(key);
   if (cached) return cached;
   for (const url of [SAT_URL(z, x, y), SAT_OSM(z, x, y)]) {
@@ -259,33 +283,45 @@ async function loadSatTex(z, x, y, signal) {
     const result = await new Promise(res => {
       const img = new Image();
       img.onload = () => {
-        const cv2 = document.createElement('canvas');
-        cv2.width = cv2.height = 256;
-        const ctx = cv2.getContext('2d', { willReadFrequently: true });
-        ctx.drawImage(img, 0, 0, 256, 256);
         try {
+          const cv2 = document.createElement('canvas');
+          cv2.width = cv2.height = 256;
+          const ctx = cv2.getContext('2d', { willReadFrequently: true });
+          ctx.drawImage(img, 0, 0, 256, 256);
           const pixels = ctx.getImageData(0, 0, 256, 256).data;
           if (!colorPixelCache.has(key)) {
             colorPixelCache.set(key, pixels);
             while (colorPixelCache.size > COLOR_PIX_MAX)
               colorPixelCache.delete(colorPixelCache.keys().next().value);
           }
-        } catch {}
-        const tex = new THREE.CanvasTexture(cv2);
-        tex.wrapS      = THREE.ClampToEdgeWrapping;
-        tex.wrapT      = THREE.ClampToEdgeWrapping;
-        tex.minFilter  = THREE.LinearMipmapLinearFilter;
-        tex.magFilter  = THREE.LinearFilter;
-        tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
-        URL.revokeObjectURL(src);
-        res(tex);
+          const tex = new THREE.CanvasTexture(cv2);
+          tex.wrapS = THREE.ClampToEdgeWrapping;
+          tex.wrapT = THREE.ClampToEdgeWrapping;
+          tex.minFilter = THREE.LinearMipmapLinearFilter;
+          tex.magFilter = THREE.LinearFilter;
+          tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+          URL.revokeObjectURL(src);
+          res(tex);
+        } catch (e) {
+          if (typeof simLoadError === 'function') simLoadError(`sat:image:decode-failed ${key}`, e);
+          URL.revokeObjectURL(src);
+          res(null);
+        }
       };
-      img.onerror = () => { URL.revokeObjectURL(src); res(null); };
+      img.onerror = e => {
+        if (typeof simLoadError === 'function') simLoadError(`sat:image:error ${key}`, e);
+        URL.revokeObjectURL(src); res(null);
+      };
       img.crossOrigin = 'anonymous';
       img.src = src;
     });
-    if (result) { putCachedSatTex(key, result); return result; }
+    if (result) {
+      putCachedSatTex(key, result);
+      if (typeof simLoadLog === 'function') simLoadLog('sat:tile:done', key);
+      return result;
+    }
   }
+  if (typeof simLoadLog === 'function') simLoadLog('sat:tile:fallback-empty', key);
   return null;
 }
 
@@ -610,6 +646,9 @@ async function loadTile(tx, ty, zoom, clipBoundsZ17 = null) {
     mesh.castShadow = (typeof shadowTerrainCastEnabled === 'function') ? shadowTerrainCastEnabled() : false;
     scene.add(mesh);
     tileMeshes.set(key, mesh);
+    if (typeof simLoadLog === 'function') simLoadLog('tile:done', key);
+  } catch (e) {
+    if (typeof simLoadError === 'function') simLoadError(`tile:failed ${key}`, e);
   } finally {
     loadingTiles.delete(key);
     tileAbort.delete(key);

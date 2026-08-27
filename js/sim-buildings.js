@@ -170,6 +170,7 @@ function parseBldgHeight(tags) {
 // Main building-loading function
 
 async function loadBuildings(lat, lon, camGroundDist) {
+  if (typeof simLoadLog === 'function') simLoadLog('buildings:start', `dist=${Math.round(camGroundDist)}`);
   const shouldShow = camGroundDist <= BLDG_MAX_DIST && camGroundDist >= BLDG_MIN_DIST;
   if (!shouldShow) {
     if (buildingMeshes.size > 0) { clearAllBldg(); lastBldgKey = null; }
@@ -209,6 +210,7 @@ async function loadBuildings(lat, lon, camGroundDist) {
       }
       return null;
     }));
+    if (typeof simLoadLog === 'function') simLoadLog('buildings:json:done', `tiles=${jsonResults.filter(Boolean).length}/${jsonResults.length}`);
     if (epoch !== bldgEpoch || sig.aborted) return;
 
     // Parse building GeoJSON
@@ -250,6 +252,7 @@ async function loadBuildings(lat, lon, camGroundDist) {
       ...[...demKeys].map(k => { const [z, x, y] = k.split('_').map(Number); return loadDemData(z, x, y, sig); }),
       ...[...satKeys].map(k => { const [z, x, y] = k.split('_').map(Number); return loadTilePixels(z, x, y, sig); }),
     ]);
+    if (typeof simLoadLog === 'function') simLoadLog('buildings:terrain:done', `raw=${raw.length}`);
     if (epoch !== bldgEpoch || sig.aborted) return;
 
     // Build data ready for extrusion
@@ -268,6 +271,10 @@ async function loadBuildings(lat, lon, camGroundDist) {
     putBldgCache(bKey, items);
     const m = buildBatchMesh(items);
     if (m) { scene.add(m); registerBldgTile(bKey, m); }
+    if (typeof simLoadLog === 'function') simLoadLog('buildings:done', bKey);
 
-  } catch (e) { if (e?.name !== 'AbortError') console.error('[buildings]', e); }
+  } catch (e) {
+    if (typeof simLoadError === 'function') simLoadError('buildings:failed', e);
+    if (e?.name !== 'AbortError') console.error('[buildings]', e);
+  }
 }
