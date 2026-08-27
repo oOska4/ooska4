@@ -117,11 +117,17 @@ const SimSound = (() => {
 
   function loadLoopBuffer(name) {
     const ctx = ensureAudioCtx();
-    fetch(`sounds/${name}.ogg`)
+    // Timeout - patrz analogiczna poprawka w sim-terrain.js/sim-physics.js/
+    // sim-engine-sound.js. Bez tego, zawieszony fetch oznaczalby ze ten
+    // dzwiek NIGDY sie nie zaladuje przez cala sesje, po cichu.
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+    fetch(`sounds/${name}.ogg`, { signal: controller.signal })
       .then(r => r.arrayBuffer())
       .then(data => ctx.decodeAudioData(data))
       .then(buf => { loopBuffers[name] = buf; })
-      .catch(err => console.warn(`[Sound] Nie udało się zdekodować "${name}":`, err));
+      .catch(err => console.warn(`[Sound] Nie udało się zdekodować "${name}":`, err))
+      .finally(() => clearTimeout(timeout));
   }
 
   function startLoop(name) {

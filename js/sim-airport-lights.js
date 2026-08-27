@@ -80,12 +80,19 @@ function apltHeadingToYawRad(headingDeg) {
 }
 
 // Implementation note.
-async function apltFetchJSON(url) {
+async function apltFetchJSON(url, ms = 15000) {
+  // Timeout - bez tego, na niestabilnym/wolnym internecie fetch moze
+  // "wisiec" w nieskonczonosc (ekran ladowania/wybor lotniska nigdy sie nie
+  // konczy, zero bledu w konsoli). Ten sam wzorzec co juz poprawnie
+  // zaimplementowany w apltOverpassFetchOne() w tym samym pliku.
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), ms);
   try {
-    const res = await fetch(url);
+    const res = await fetch(url, { signal: controller.signal });
     if (!res.ok) return null;
     return await res.json();
   } catch (e) { return null; }
+  finally { clearTimeout(timeout); }
 }
 function apltPick(obj, keys) {
   if (!obj) return undefined;

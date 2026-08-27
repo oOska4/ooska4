@@ -4,6 +4,10 @@
 
 const A321_OBJ_URL = './a321.obj';
 const A321_MTL_URL = './a321.mtl';
+// Model samolotu (OBJ+geometria) jest wiekszy niz pojedyncza tekstura DEM
+// terenu (256x256 PNG), wiec dajemy mu wiecej czasu niz FETCH_TIMEOUT_MS w
+// sim-terrain.js (15s) zanim uznamy fetch za zawieszony.
+const MODEL_FETCH_TIMEOUT_MS = 30000;
 
 // Model orientation and scale.
 const A321_MODEL_ROT_Y = Math.PI / 2;
@@ -27,7 +31,19 @@ async function loadA321Model() {
   // Configure materials by fetching the .mtl text first (no-cache) so we can log raw content.
   let materials;
   try {
-    const mtlResp = await fetch(A321_MTL_URL, { cache: 'no-store' });
+    // Timeout (patrz _withTimeout w sim-terrain.js) - bez tego, na niestabilnym/
+    // wolnym internecie fetch moze "wisiec" w nieskonczonosc (ekran ladowania
+    // nigdy sie nie konczy, zero bledu w konsoli). Model samolotu jest
+    // WYMAGANY (w przeciwienstwie do tekstur terenu), wiec po timeout chcemy
+    // JASNY BLAD zamiast cichego fallbacku - AbortError trafia do istniejacego
+    // catch ponizej, ktory juz generuje czytelny komunikat.
+    const { signal: mtlSignal, cleanup: mtlCleanup } = _withTimeout(null, MODEL_FETCH_TIMEOUT_MS);
+    let mtlResp;
+    try {
+      mtlResp = await fetch(A321_MTL_URL, { cache: 'no-store', signal: mtlSignal });
+    } finally {
+      mtlCleanup();
+    }
     const mtlText = await mtlResp.text();
     console.log('[A321] fetched MTL length:', mtlText.length, 'status:', mtlResp.status);
     console.log('[A321] MTL snippet:\n', mtlText.slice(0, 800));
@@ -85,7 +101,13 @@ async function loadA321Model() {
   // Fetch OBJ text (no-cache) and parse it so we can inspect the raw content.
   let group;
   try {
-    const objResp = await fetch(A321_OBJ_URL, { cache: 'no-store' });
+    const { signal: objSignal, cleanup: objCleanup } = _withTimeout(null, MODEL_FETCH_TIMEOUT_MS);
+    let objResp;
+    try {
+      objResp = await fetch(A321_OBJ_URL, { cache: 'no-store', signal: objSignal });
+    } finally {
+      objCleanup();
+    }
     const objText = await objResp.text();
     console.log('[A321] fetched OBJ length:', objText.length, 'status:', objResp.status);
     console.log('[A321] OBJ snippet:\n', objText.slice(0, 800));

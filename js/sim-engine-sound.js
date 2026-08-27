@@ -83,8 +83,19 @@ const SimEngineSound = (() => {
     return ctx;
   }
 
-  async function loadBuffer(url) {
-    const res = await fetch(url);
+  async function loadBuffer(url, ms = 15000) {
+    // Timeout - bez tego, zawieszony fetch (niestabilny internet) oznaczalby
+    // ze dzwiek silnika NIGDY sie nie zaladuje przez cala sesje, po cichu
+    // (preload() jest wolane bez await, wiec nie blokuje reszty gry, ale
+    // buffersReady tez nigdy by sie nie ustawilo).
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), ms);
+    let res;
+    try {
+      res = await fetch(url, { signal: controller.signal });
+    } finally {
+      clearTimeout(timeout);
+    }
     if (!res.ok) throw new Error(`[EngineSound] Brak pliku "${url}" (status ${res.status})`);
     const arrayBuffer = await res.arrayBuffer();
     return ensureCtx().decodeAudioData(arrayBuffer);
