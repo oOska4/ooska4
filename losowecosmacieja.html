@@ -1,0 +1,894 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#0F2136">
+<title>Atlas Słówek</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500;0,9..144,600;1,9..144,500&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --navy-deep:#0F2136;
+    --navy-panel:#16304C;
+    --navy-card:#173553;
+    --parchment:#ECE3C8;
+    --slate:#9FB0C4;
+    --brass:#CDA24A;
+    --brass-light:#E4BE6E;
+    --brick:#B3503E;
+    --card-border:rgba(236,227,200,0.12);
+    --font-display:'Fraunces', Georgia, serif;
+    --font-body:'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  }
+
+  *{box-sizing:border-box;}
+  html,body{height:100%;}
+  body{
+    margin:0;
+    background:var(--navy-deep);
+    color:var(--parchment);
+    font-family:var(--font-body);
+    -webkit-font-smoothing:antialiased;
+    text-rendering:optimizeLegibility;
+    position:relative;
+    overflow-x:hidden;
+  }
+
+  .chart-grid{
+    position:fixed;
+    inset:0;
+    pointer-events:none;
+    background-image:
+      linear-gradient(rgba(236,227,200,0.035) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(236,227,200,0.035) 1px, transparent 1px);
+    background-size:48px 48px;
+    mask-image:radial-gradient(ellipse 80% 60% at 50% 20%, black 40%, transparent 90%);
+    z-index:0;
+  }
+
+  .sr-only{
+    position:absolute; width:1px; height:1px; padding:0; margin:-1px;
+    overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0;
+  }
+
+  .app{
+    position:relative;
+    z-index:1;
+    max-width:640px;
+    margin:0 auto;
+    padding:2.75rem 1.5rem 4rem;
+  }
+
+  /* ---------- header ---------- */
+  .app__header{
+    display:flex;
+    align-items:flex-start;
+    justify-content:space-between;
+    gap:1rem;
+    margin-bottom:2rem;
+  }
+  .brand{
+    display:flex;
+    align-items:center;
+    gap:0.85rem;
+  }
+  .compass-icon{
+    width:32px; height:32px; flex:none;
+    color:var(--brass);
+    filter:drop-shadow(0 0 8px rgba(205,162,74,0.35));
+  }
+  .brand h1{
+    font-family:var(--font-display);
+    font-weight:600;
+    font-size:clamp(1.5rem, 1.15rem + 1.4vw, 2rem);
+    letter-spacing:-0.01em;
+    margin:0 0 0.15rem;
+    color:var(--parchment);
+  }
+  .brand .subtitle{
+    margin:0;
+    font-size:0.9rem;
+    color:var(--slate);
+    font-style:italic;
+    font-family:var(--font-display);
+  }
+  .reset-btn{
+    flex:none;
+    width:38px; height:38px;
+    border-radius:50%;
+    border:1px solid var(--card-border);
+    background:transparent;
+    color:var(--slate);
+    display:flex; align-items:center; justify-content:center;
+    cursor:pointer;
+    transition:border-color .15s ease, color .15s ease, transform .5s ease;
+  }
+  .reset-btn:hover{ color:var(--brass); border-color:var(--brass); }
+  .reset-btn:active svg{ transform:rotate(-45deg); }
+  .reset-btn svg{ width:16px; height:16px; transition:transform .4s ease; }
+
+  /* ---------- stats ---------- */
+  .stats{
+    display:flex;
+    justify-content:center;
+    gap:2.5rem;
+    padding:1.1rem 0;
+    margin-bottom:0.25rem;
+    border-top:1px solid var(--card-border);
+    border-bottom:1px solid var(--card-border);
+  }
+  .stat{ text-align:center; }
+  .stat__value{
+    display:block;
+    font-family:var(--font-display);
+    font-weight:600;
+    font-size:1.6rem;
+    color:var(--parchment);
+  }
+  .stat--bad .stat__value{ color:var(--brick); }
+  .stat__label{
+    display:block;
+    font-size:0.75rem;
+    color:var(--slate);
+    margin-top:0.15rem;
+  }
+
+  /* ---------- route progress ---------- */
+  .route{ margin:1.6rem 0 2.1rem; }
+  .route__track{
+    position:relative;
+    height:2px;
+    border-radius:2px;
+    background-image:repeating-linear-gradient(to right, rgba(159,176,196,0.5) 0 5px, transparent 5px 11px);
+  }
+  .route__fill{
+    position:absolute; top:0; left:0; height:2px; border-radius:2px;
+    background:var(--brass);
+    width:0%;
+    transition:width .5s ease;
+  }
+  .route__marker{
+    position:absolute; top:50%; left:0%;
+    width:9px; height:9px; border-radius:50%;
+    background:var(--brass);
+    box-shadow:0 0 0 4px var(--navy-deep), 0 0 12px 2px rgba(205,162,74,0.55);
+    transform:translate(-50%,-50%);
+    transition:left .5s ease;
+  }
+  .route__label{
+    margin-top:0.7rem;
+    text-align:center;
+    font-size:0.8rem;
+    color:var(--slate);
+  }
+
+  /* ---------- card ---------- */
+  .card{
+    position:relative;
+    background:var(--navy-card);
+    border:1px solid var(--card-border);
+    border-radius:12px;
+    padding:2.4rem 2rem 2rem;
+    box-shadow:0 25px 60px -25px rgba(0,0,0,0.55);
+  }
+  .card::before, .card::after{
+    content:"";
+    position:absolute;
+    width:16px; height:16px;
+    border-color:var(--brass);
+    opacity:0.45;
+  }
+  .card::before{ top:10px; left:10px; border-top:1.5px solid; border-left:1.5px solid; }
+  .card::after{ bottom:10px; right:10px; border-bottom:1.5px solid; border-right:1.5px solid; }
+
+  @keyframes cardGlow{
+    0%{ box-shadow:0 25px 60px -25px rgba(0,0,0,0.55), 0 0 0 1px var(--card-border); }
+    35%{ box-shadow:0 25px 60px -25px rgba(0,0,0,0.55), 0 0 0 1px var(--brass), 0 0 46px 6px rgba(205,162,74,0.3); }
+    100%{ box-shadow:0 25px 60px -25px rgba(0,0,0,0.55), 0 0 0 1px var(--card-border); }
+  }
+  .card.is-correct{ animation:cardGlow 0.9s ease-out; }
+
+  @keyframes shakeX{
+    0%,100%{ transform:translateX(0); }
+    20%{ transform:translateX(-6px); }
+    40%{ transform:translateX(5px); }
+    60%{ transform:translateX(-4px); }
+    80%{ transform:translateX(3px); }
+  }
+  .card.is-wrong{ animation:shakeX 0.4s ease-in-out; }
+
+  .card__kicker{
+    text-align:center;
+    margin:0 0 0.9rem;
+    font-family:var(--font-display);
+    font-style:italic;
+    font-size:0.95rem;
+    color:var(--slate);
+  }
+  .prompt{
+    text-align:center;
+    margin:0 0 1.9rem;
+    font-family:var(--font-display);
+    font-weight:500;
+    font-size:clamp(1.7rem, 1.35rem + 1.6vw, 2.5rem);
+    line-height:1.2;
+    color:var(--parchment);
+  }
+
+  #answerForm{ display:flex; flex-direction:column; align-items:center; }
+
+  .answer-input{
+    width:100%;
+    max-width:420px;
+    background:transparent;
+    border:none;
+    border-bottom:2px dashed rgba(236,227,200,0.3);
+    color:var(--parchment);
+    font-family:var(--font-body);
+    font-weight:500;
+    font-size:1.15rem;
+    text-align:center;
+    padding:0.5rem 0.25rem 0.65rem;
+    outline:none;
+    transition:border-color .15s ease;
+  }
+  .answer-input::placeholder{ color:rgba(159,176,196,0.65); font-weight:400; }
+  .answer-input:focus{ border-bottom-color:var(--brass); }
+  .answer-input:disabled{ opacity:0.6; }
+
+  .hint-display{
+    margin-top:0.85rem;
+    font-size:1rem;
+    letter-spacing:0.2em;
+    color:var(--brass-light);
+    text-align:center;
+  }
+
+  .warn{
+    margin-top:0.85rem;
+    font-size:0.88rem;
+    color:var(--brick);
+    text-align:center;
+  }
+
+  .actions{
+    display:flex;
+    flex-wrap:wrap;
+    justify-content:center;
+    align-items:center;
+    gap:0.6rem;
+    margin-top:1.6rem;
+  }
+  .btn{
+    font-family:var(--font-body);
+    font-weight:600;
+    font-size:0.92rem;
+    padding:0.65rem 1.35rem;
+    border-radius:6px;
+    border:1px solid transparent;
+    cursor:pointer;
+    background:transparent;
+    transition:background .15s ease, border-color .15s ease, color .15s ease, transform .1s ease;
+  }
+  .btn:active{ transform:translateY(1px); }
+  .btn--primary{ background:var(--brass); color:var(--navy-deep); }
+  .btn--primary:hover{ background:var(--brass-light); }
+  .btn--ghost{ color:var(--parchment); border-color:rgba(236,227,200,0.28); }
+  .btn--ghost:hover{ border-color:var(--brass); color:var(--brass-light); }
+  .btn--muted{
+    color:var(--slate);
+    font-weight:500;
+    padding:0.65rem 0.5rem;
+    text-decoration:underline;
+    text-underline-offset:3px;
+    text-decoration-color:rgba(159,176,196,0.4);
+  }
+  .btn--muted:hover{ color:var(--brick); text-decoration-color:var(--brick); }
+
+  .btn:focus-visible, .answer-input:focus-visible, .reset-btn:focus-visible, summary:focus-visible{
+    outline:2px solid var(--brass);
+    outline-offset:2px;
+  }
+
+  /* ---------- result area ---------- */
+  .result{ text-align:center; margin-top:1.5rem; }
+  .result__ok{
+    font-family:var(--font-display);
+    font-weight:600;
+    font-size:1.3rem;
+    color:var(--brass-light);
+    margin:0 0 0.35rem;
+  }
+  .result__continue{
+    font-size:0.8rem;
+    color:var(--slate);
+    margin:0;
+  }
+  .result__label{
+    font-size:0.78rem;
+    color:var(--slate);
+    margin:0 0 0.35rem;
+  }
+  .diff{
+    font-size:1.2rem;
+    font-weight:600;
+    letter-spacing:0.02em;
+    margin:0 0 1.1rem;
+  }
+  .diff-ok{ color:var(--brass-light); }
+  .diff-bad{ color:var(--brick); text-decoration:line-through; text-decoration-color:rgba(179,80,62,0.6); }
+  .diff-empty{ color:var(--slate); font-weight:400; font-style:italic; }
+  .correct-word{
+    font-family:var(--font-display);
+    font-weight:600;
+    font-size:1.5rem;
+    color:var(--parchment);
+    margin:0 0 1.4rem;
+  }
+
+  /* ---------- difficult words ---------- */
+  .difficult{
+    margin-top:1.75rem;
+    border:1px solid var(--card-border);
+    border-radius:10px;
+    padding:0 1.25rem;
+    background:rgba(255,255,255,0.015);
+  }
+  .difficult summary{
+    list-style:none;
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    padding:1rem 0;
+    cursor:pointer;
+    font-weight:600;
+    font-size:0.95rem;
+    color:var(--parchment);
+  }
+  .difficult summary::-webkit-details-marker{ display:none; }
+  .difficult summary::after{
+    content:"";
+    width:8px; height:8px;
+    border-right:1.5px solid var(--slate);
+    border-bottom:1.5px solid var(--slate);
+    transform:rotate(-45deg);
+    transition:transform .2s ease;
+    margin-left:auto;
+    margin-right:0.2rem;
+  }
+  .difficult[open] summary::after{ transform:rotate(45deg); }
+  .difficult summary > span:first-child{ display:flex; align-items:center; gap:0.6rem; }
+  .badge{
+    background:rgba(205,162,74,0.15);
+    color:var(--brass-light);
+    font-size:0.75rem;
+    font-weight:700;
+    padding:0.15rem 0.5rem;
+    border-radius:999px;
+  }
+  .difficult__list{
+    list-style:none;
+    margin:0;
+    padding:0 0 1rem;
+  }
+  .difficult__list li{
+    display:flex;
+    justify-content:space-between;
+    align-items:baseline;
+    gap:1rem;
+    padding:0.55rem 0;
+    border-top:1px solid var(--card-border);
+    font-size:0.92rem;
+  }
+  .difficult__pl{ color:var(--parchment); }
+  .difficult__en{ color:var(--slate); font-size:0.85rem; text-align:right; flex:none; }
+  .difficult__miss{ color:var(--brick); font-size:0.78rem; margin-left:0.5rem; }
+  .difficult__empty{
+    margin:0 0 1.1rem;
+    font-size:0.88rem;
+    color:var(--slate);
+    font-style:italic;
+  }
+
+  @media (max-width:480px){
+    .app{ padding:2rem 1.1rem 3rem; }
+    .stats{ gap:1.4rem; }
+    .card{ padding:2rem 1.25rem 1.6rem; }
+    .difficult__list li{ flex-direction:column; gap:0.15rem; }
+    .difficult__en{ text-align:left; }
+  }
+
+  @media (prefers-reduced-motion:reduce){
+    *{ animation:none !important; transition:none !important; }
+  }
+</style>
+</head>
+<body>
+
+<div class="chart-grid" aria-hidden="true"></div>
+
+<main class="app">
+
+  <header class="app__header">
+    <div class="brand">
+      <svg class="compass-icon" viewBox="0 0 100 100" aria-hidden="true">
+        <path fill="currentColor" d="M50,4 L59.9,40.1 L96,50 L59.9,59.9 L50,96 L40.1,59.9 L4,50 L40.1,40.1 Z"/>
+      </svg>
+      <div>
+        <h1>Atlas Słówek</h1>
+        <p class="subtitle">115 słów o miastach, domach i podróżach</p>
+      </div>
+    </div>
+    <button type="button" class="reset-btn" id="resetBtn" aria-label="Zacznij sesję od nowa" title="Zacznij od nowa">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M3 12a9 9 0 1 0 2.6-6.3"/>
+        <path d="M3 4v5h5"/>
+      </svg>
+    </button>
+  </header>
+
+  <section class="stats" aria-label="Statystyki sesji">
+    <div class="stat">
+      <span class="stat__value" id="goodCount">0</span>
+      <span class="stat__label">dobre</span>
+    </div>
+    <div class="stat stat--bad">
+      <span class="stat__value" id="badCount">0</span>
+      <span class="stat__label">złe</span>
+    </div>
+    <div class="stat">
+      <span class="stat__value" id="accuracyValue">—</span>
+      <span class="stat__label">celność</span>
+    </div>
+  </section>
+
+  <div class="route" aria-hidden="true">
+    <div class="route__track">
+      <div class="route__fill" id="routeFill"></div>
+      <div class="route__marker" id="routeMarker"></div>
+    </div>
+    <div class="route__label"><span id="exploredCount">0</span> / 115 zbadanych słów</div>
+  </div>
+
+  <section class="card" id="card">
+    <p class="card__kicker">Przetłumacz na angielski</p>
+    <p class="prompt" id="promptWord">…</p>
+
+    <form id="answerForm" autocomplete="off" novalidate>
+      <label class="sr-only" for="answerInput">Wpisz angielskie tłumaczenie</label>
+      <input
+        type="text"
+        id="answerInput"
+        class="answer-input"
+        placeholder="wpisz odpowiedź…"
+        autocapitalize="off"
+        autocomplete="off"
+        spellcheck="false"
+        aria-describedby="promptWord"
+      />
+      <div class="hint-display" id="hintDisplay" hidden></div>
+      <div class="warn" id="warnMsg" role="status" hidden>To nie to. Spróbuj jeszcze raz.</div>
+
+      <div class="actions" id="actionsRow">
+        <button type="submit" class="btn btn--primary">Sprawdź</button>
+        <button type="button" class="btn btn--ghost" id="hintBtn">Podpowiedź</button>
+        <button type="button" class="btn btn--muted" id="giveUpBtn">Poddaj się</button>
+      </div>
+    </form>
+
+    <div class="result" id="resultArea" role="status" aria-live="polite" hidden></div>
+  </section>
+
+  <details class="difficult" id="difficultPanel">
+    <summary>
+      <span>Trudne słowa</span>
+      <span class="badge" id="difficultCount">0</span>
+    </summary>
+    <p class="difficult__empty" id="difficultEmpty">Żadne słowo nie sprawiło Ci jeszcze trudności.</p>
+    <ul class="difficult__list" id="difficultList" hidden></ul>
+  </details>
+
+</main>
+
+<script>
+(function(){
+  "use strict";
+
+  // [english, polish] — faithfully ported from the original quiz's word lists
+  const WORDS = [
+    ["flourish","rozkwitać, prosperować"],
+    ["get a facelift","przejść modernizację"],
+    ["home town","miasto rodzinne"],
+    ["in decline","podupadający"],
+    ["in the city centre","w centrum miasta"],
+    ["in the park","w parku"],
+    ["in the suburbs","na przedmieściach"],
+    ["inhabitant","mieszkaniec"],
+    ["limit","ograniczać"],
+    ["mayor","burmistrz"],
+    ["medieval","średniowieczny"],
+    ["noise pollution","zagrożenie hałasem"],
+    ["on the border","na granicy"],
+    ["on the coast","na wybrzeżu"],
+    ["on the outskirts","na obrzeżach, na peryferiach"],
+    ["on-street parking","parkowanie na ulicy"],
+    ["open-air market","targ na świeżym powietrzu"],
+    ["pavement","chodnik"],
+    ["pedestrian zone","strefa dla pieszych, deptak"],
+    ["pedestrianisation","zamknięcie dla ruchu kołowego"],
+    ["picturesque","malowniczy"],
+    ["popular with","popularny wśród"],
+    ["preserve","zachować, chronić"],
+    ["quaint","urokliwy"],
+    ["reliable network","niezawodna sieć"],
+    ["replace","zastąpić"],
+    ["resident","mieszkaniec"],
+    ["rolling hills","pofalowane wzgórza"],
+    ["scenery","sceneria"],
+    ["shabby","zaniedbany, odrapany"],
+    ["smooth","gładki"],
+    ["surface","powierzchnia"],
+    ["street furniture","mała architektura"],
+    ["surround","otaczać"],
+    ["gear","nonsens, bzdury"],
+    ["laugh sth off","obracać coś w żart"],
+    ["tension","napięcie"],
+    ["endeavour","próba, wysiłek"],
+    ["tempt fate","kusić los"],
+    ["mere mortals","zwykli śmiertelnicy"],
+    ["slick","przebiegły, podstępny"],
+    ["gruelling","wyczerpujący"],
+    ["minor","drobny, niewielki"],
+    ["subject sb to sth","poddawać kogoś czemuś, narażać kogoś na coś"],
+    ["footprint","zakres działalności"],
+    ["lash out","naskoczyć na kogoś (werbalnie)"],
+    ["solidify","utrwalać, umacniać"],
+    ["ponder","rozważać"],
+    ["ruthless","bezlitosny"],
+    ["with flying colours","śpiewająco"],
+    ["ambiguous","dwuznaczny"],
+    ["tarmac","asfalt"],
+    ["tweet","ćwierkać"],
+    ["underground car park","parking podziemny"],
+    ["urban","miejski"],
+    ["urban development","urbanizacja"],
+    ["vibrant","tętniący życiem"],
+    ["vibrant colour","żywy kolor"],
+    ["within 500 metres","w odległości 500 metrów"],
+    ["within easy reach","w pobliżu"],
+    ["within walking distance","w odległości spaceru"],
+    ["chart","wytyczać, nakreślać"],
+    ["embark on","rozpoczynać coś, wyruszać"],
+    ["first-aid course","kurs pierwszej pomocy"],
+    ["route","trasa, kurs"],
+    ["set off","wyruszać w podróż"],
+    ["take a chance","zaryzykować"],
+    ["top-of-the-range","najwyższej klasy"],
+    ["voyage of a lifetime","rejs życia"],
+    ["affordable","w przystępnej cenie"],
+    ["casino","kasyno"],
+    ["co-housing","życie we wspólnocie mieszkaniowej"],
+    ["communal","wspólny, dzielony"],
+    ["communal house","wspólny dom"],
+    ["disposable income","przychód do wydania"],
+    ["dock","dokować"],
+    ["domestic chore","obowiązek domowy"],
+    ["homeowner","właściciel domu"],
+    ["household","gospodarstwo domowe"],
+    ["household appliance","sprzęt gospodarstwa domowego"],
+    ["housing development","osiedle mieszkaniowe"],
+    ["light fixture","oprawa oświetleniowa"],
+    ["multi-storey car park","parking wielopoziomowy"],
+    ["neighbourly","życzliwy, sąsiedzki"],
+    ["profitable","opłcalny, dochodowy"],
+    ["provider","dostawca"],
+    ["residental area","dzielnica mieszkaniowa"],
+    ["run low on sth","posiadać niewiele czegoś"],
+    ["second home","drugi dom"],
+    ["self-contained flat","samodzielne mieszkanie"],
+    ["smart house","inteligentny dom"],
+    ["social housing","mieszkania socjalne"],
+    ["solar panel","panel słoneczny"],
+    ["sustainable","zrównoważony"],
+    ["store","magazynować"],
+    ["tower block","wieżowiec"],
+    ["well-established","uznany, o ugruntowanej pozycji"],
+    ["wireless","bezprzewodowy"],
+    ["alert","czujny, uważny"],
+    ["be/become second nature to sb","być/stać się czyjąś drugą naturą"],
+    ["blanket","koc"],
+    ["blazing","płonący"],
+    ["canvas camp bed","łóżko polowe pokryte płótnem"],
+    ["carve wood","rzeźbić w drewnie"],
+    ["central heating","centralne ogrzewanie"],
+    ["cramped","zatłoczony, ciasny"],
+    ["damp","wilgotny"],
+    ["directions","wskazówki"],
+    ["drag","ciągnąć, wlec"],
+    ["draughty","pełen przeciągów"],
+    ["en suite bathroom","łazienka przylegająca do pokoju"],
+    ["enjoy your own company","czuć się dobrze samemu, we własnym towarzystwie"],
+    ["fireplace","kominek"],
+    ["fitted kitchen","kuchnia na wymiar"],
+    ["flickering fire","migoczący ogień"]
+  ];
+
+  const AFFIRMATIONS = ["Świetnie!","Dokładnie tak!","Brawo!","Tak jest!","Celny strzał!"];
+
+  const els = {
+    goodCount: document.getElementById('goodCount'),
+    badCount: document.getElementById('badCount'),
+    accuracyValue: document.getElementById('accuracyValue'),
+    exploredCount: document.getElementById('exploredCount'),
+    routeFill: document.getElementById('routeFill'),
+    routeMarker: document.getElementById('routeMarker'),
+    card: document.getElementById('card'),
+    promptWord: document.getElementById('promptWord'),
+    form: document.getElementById('answerForm'),
+    input: document.getElementById('answerInput'),
+    hintDisplay: document.getElementById('hintDisplay'),
+    warnMsg: document.getElementById('warnMsg'),
+    actionsRow: document.getElementById('actionsRow'),
+    hintBtn: document.getElementById('hintBtn'),
+    giveUpBtn: document.getElementById('giveUpBtn'),
+    resultArea: document.getElementById('resultArea'),
+    resetBtn: document.getElementById('resetBtn'),
+    difficultPanel: document.getElementById('difficultPanel'),
+    difficultCount: document.getElementById('difficultCount'),
+    difficultList: document.getElementById('difficultList'),
+    difficultEmpty: document.getElementById('difficultEmpty')
+  };
+
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  let drawCounts = new Array(WORDS.length).fill(0);
+  let currentIndex = null;
+  let goodCount = 0;
+  let badCount = 0;
+  let hintRevealCount = 0;
+  let hasWrongAttempt = false;
+  let exploredSet = new Set();
+  let difficultMap = new Map(); // index -> misses
+  let appState = 'active'; // 'active' | 'correct' | 'revealed'
+  let nextTimer = null;
+
+  function escapeHtml(str){
+    return str.replace(/[&<>"']/g, function(c){
+      return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c];
+    });
+  }
+
+  function pickIndex(){
+    let idx, guard = 0;
+    do{
+      idx = Math.floor(Math.random() * WORDS.length);
+      guard++;
+    } while ((drawCounts[idx] > 3 || idx === currentIndex) && guard < 300);
+    drawCounts[idx] = (drawCounts[idx] || 0) + 1;
+    return idx;
+  }
+
+  function buildHintDisplay(word, revealCount){
+    let letterSeen = 0;
+    let out = '';
+    for (const ch of word){
+      if (/[a-zA-Z]/.test(ch)){
+        letterSeen++;
+        out += (letterSeen <= revealCount) ? ch : '\u2013';
+      } else {
+        out += ch;
+      }
+    }
+    return out;
+  }
+
+  function countLetters(word){
+    let n = 0;
+    for (const ch of word){ if (/[a-zA-Z]/.test(ch)) n++; }
+    return n;
+  }
+
+  function buildDiffHtml(userAnswer, correct){
+    if (!userAnswer){
+      return '<span class="diff-empty">(brak odpowiedzi)</span>';
+    }
+    let html = '';
+    for (let i = 0; i < userAnswer.length; i++){
+      const uch = userAnswer[i];
+      const cch = correct[i];
+      const match = cch !== undefined && uch.toLowerCase() === cch.toLowerCase();
+      html += '<span class="' + (match ? 'diff-ok' : 'diff-bad') + '">' + escapeHtml(uch) + '</span>';
+    }
+    return html;
+  }
+
+  function updateStatsUI(){
+    els.goodCount.textContent = goodCount;
+    els.badCount.textContent = badCount;
+    const total = goodCount + badCount;
+    els.accuracyValue.textContent = total === 0 ? '\u2014' : Math.round((goodCount / total) * 100) + '%';
+
+    const explored = exploredSet.size;
+    els.exploredCount.textContent = explored;
+    const pct = (explored / WORDS.length) * 100;
+    els.routeFill.style.width = pct + '%';
+    els.routeMarker.style.left = pct + '%';
+  }
+
+  function updateDifficultUI(){
+    const count = difficultMap.size;
+    els.difficultCount.textContent = count;
+    if (count === 0){
+      els.difficultEmpty.hidden = false;
+      els.difficultList.hidden = true;
+      els.difficultList.innerHTML = '';
+      return;
+    }
+    els.difficultEmpty.hidden = true;
+    els.difficultList.hidden = false;
+
+    const rows = Array.from(difficultMap.entries()).sort((a, b) => b[1] - a[1]);
+    els.difficultList.innerHTML = rows.map(function(entry){
+      const idx = entry[0], misses = entry[1];
+      const w = WORDS[idx];
+      return '<li>' +
+        '<span class="difficult__pl">' + escapeHtml(w[1]) + '</span>' +
+        '<span class="difficult__en">' + escapeHtml(w[0]) +
+          '<span class="difficult__miss">\u00d7' + misses + '</span></span>' +
+      '</li>';
+    }).join('');
+  }
+
+  function setCardState(cls){
+    els.card.classList.remove('is-correct', 'is-wrong');
+    if (cls && !reduceMotion){
+      // force reflow so the animation can retrigger
+      void els.card.offsetWidth;
+      els.card.classList.add(cls);
+    }
+  }
+
+  function loadWord(){
+    clearTimeout(nextTimer);
+    appState = 'active';
+    hasWrongAttempt = false;
+    hintRevealCount = 0;
+
+    currentIndex = pickIndex();
+    exploredSet.add(currentIndex);
+    updateStatsUI();
+
+    els.promptWord.textContent = WORDS[currentIndex][1];
+    els.input.value = '';
+    els.input.disabled = false;
+    els.input.hidden = false;
+    els.hintDisplay.hidden = true;
+    els.warnMsg.hidden = true;
+    els.actionsRow.hidden = false;
+    els.hintBtn.disabled = false;
+    els.resultArea.hidden = true;
+    els.resultArea.innerHTML = '';
+
+    setCardState(null);
+    els.input.focus();
+  }
+
+  function markCorrect(){
+    appState = 'correct';
+    goodCount++;
+    updateStatsUI();
+
+    els.input.disabled = true;
+    els.actionsRow.hidden = true;
+    els.hintDisplay.hidden = true;
+    els.warnMsg.hidden = true;
+
+    const msg = AFFIRMATIONS[Math.floor(Math.random() * AFFIRMATIONS.length)];
+    els.resultArea.hidden = false;
+    els.resultArea.innerHTML =
+      '<p class="result__ok">' + escapeHtml(msg) + '</p>' +
+      '<p class="result__continue">Enter, aby przejść dalej</p>';
+
+    setCardState('is-correct');
+    nextTimer = setTimeout(loadWord, 900);
+  }
+
+  function revealAnswer(){
+    appState = 'revealed';
+    badCount++;
+
+    const idx = currentIndex;
+    difficultMap.set(idx, (difficultMap.get(idx) || 0) + 1);
+    updateDifficultUI();
+    updateStatsUI();
+
+    const correct = WORDS[idx][0];
+    const userAnswer = els.input.value.trim();
+
+    els.input.disabled = true;
+    els.actionsRow.hidden = true;
+    els.hintDisplay.hidden = true;
+    els.warnMsg.hidden = true;
+
+    els.resultArea.hidden = false;
+    els.resultArea.innerHTML =
+      '<p class="result__label">Twoja odpowiedź</p>' +
+      '<p class="diff">' + buildDiffHtml(userAnswer, correct) + '</p>' +
+      '<p class="result__label">Poprawna odpowiedź</p>' +
+      '<p class="correct-word">' + escapeHtml(correct) + '</p>' +
+      '<button type="button" class="btn btn--primary" id="nextBtn">Dalej</button>';
+
+    document.getElementById('nextBtn').addEventListener('click', loadWord);
+  }
+
+  function checkAnswer(){
+    if (appState !== 'active') return;
+    const answer = els.input.value.trim().toLowerCase();
+    const correct = WORDS[currentIndex][0];
+
+    if (answer === correct){
+      markCorrect();
+    } else {
+      hasWrongAttempt = true;
+      els.warnMsg.hidden = false;
+      setCardState('is-wrong');
+      els.input.focus();
+      els.input.select();
+    }
+  }
+
+  function useHint(){
+    if (appState !== 'active') return;
+    const word = WORDS[currentIndex][0];
+    const total = countLetters(word);
+    if (hintRevealCount >= total) return;
+    hintRevealCount++;
+    els.hintDisplay.hidden = false;
+    els.hintDisplay.textContent = buildHintDisplay(word, hintRevealCount);
+    if (hintRevealCount >= total){
+      els.hintBtn.disabled = true;
+    }
+  }
+
+  function resetSession(){
+    clearTimeout(nextTimer);
+    drawCounts = new Array(WORDS.length).fill(0);
+    currentIndex = null;
+    goodCount = 0;
+    badCount = 0;
+    exploredSet = new Set();
+    difficultMap = new Map();
+    updateDifficultUI();
+    loadWord();
+  }
+
+  els.form.addEventListener('submit', function(e){
+    e.preventDefault();
+    checkAnswer();
+  });
+  els.hintBtn.addEventListener('click', useHint);
+  els.giveUpBtn.addEventListener('click', revealAnswer);
+  els.resetBtn.addEventListener('click', resetSession);
+
+  window.addEventListener('keydown', function(e){
+    if (e.key !== 'Enter') return;
+    if (appState === 'correct'){
+      e.preventDefault();
+      clearTimeout(nextTimer);
+      loadWord();
+    } else if (appState === 'revealed'){
+      e.preventDefault();
+      loadWord();
+    }
+  });
+
+  updateDifficultUI();
+  loadWord();
+})();
+</script>
+
+</body>
+</html>
