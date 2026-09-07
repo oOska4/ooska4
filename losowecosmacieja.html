@@ -419,7 +419,7 @@
       </svg>
       <div>
         <h1>Atlas Słówek</h1>
-        <p class="subtitle">115 słów o miastach, domach i podróżach</p>
+        <p class="subtitle">217 słów o miastach, domach i podróżach</p>
       </div>
     </div>
     <button type="button" class="reset-btn" id="resetBtn" aria-label="Zacznij sesję od nowa" title="Zacznij od nowa">
@@ -450,7 +450,7 @@
       <div class="route__fill" id="routeFill"></div>
       <div class="route__marker" id="routeMarker"></div>
     </div>
-    <div class="route__label"><span id="exploredCount">0</span> / 115 zbadanych słów</div>
+    <div class="route__label"><span id="exploredCount">0</span> / 217 zbadanych słów</div>
   </div>
 
   <section class="card" id="card">
@@ -601,7 +601,7 @@
     ["neighbourly","życzliwy, sąsiedzki"],
     ["profitable","opłcalny, dochodowy"],
     ["provider","dostawca"],
-    ["residental area","dzielnica mieszkaniowa"],
+    ["residential area","dzielnica mieszkaniowa"],
     ["run low on sth","posiadać niewiele czegoś"],
     ["second home","drugi dom"],
     ["self-contained flat","samodzielne mieszkanie"],
@@ -730,6 +730,37 @@
   let difficultMap = new Map(); // index -> misses
   let appState = 'active'; // 'active' | 'correct' | 'revealed'
   let nextTimer = null;
+
+  const AFFIRMATIONS = [
+    "Świetnie!",
+    "Brawo!",
+    "Doskonale!",
+    "Poprawna odpowiedź!",
+    "Tak jest!"
+  ];
+
+  const els = {
+    form: document.getElementById('answerForm'),
+    input: document.getElementById('answerInput'),
+    promptWord: document.getElementById('promptWord'),
+    hintDisplay: document.getElementById('hintDisplay'),
+    warnMsg: document.getElementById('warnMsg'),
+    actionsRow: document.getElementById('actionsRow'),
+    hintBtn: document.getElementById('hintBtn'),
+    giveUpBtn: document.getElementById('giveUpBtn'),
+    resetBtn: document.getElementById('resetBtn'),
+    resultArea: document.getElementById('resultArea'),
+    card: document.getElementById('card'),
+    goodCount: document.getElementById('goodCount'),
+    badCount: document.getElementById('badCount'),
+    accuracyValue: document.getElementById('accuracyValue'),
+    exploredCount: document.getElementById('exploredCount'),
+    routeFill: document.getElementById('routeFill'),
+    routeMarker: document.getElementById('routeMarker'),
+    difficultCount: document.getElementById('difficultCount'),
+    difficultEmpty: document.getElementById('difficultEmpty'),
+    difficultList: document.getElementById('difficultList')
+  };
 
   function escapeHtml(str){
     return str.replace(/[&<>"']/g, function(c){
